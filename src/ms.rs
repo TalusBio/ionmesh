@@ -1,6 +1,8 @@
-pub use timsrust::{FileReader,Frame2RtConverter, Tof2MzConverter, Scan2ImConverter, ConvertableIndex};
 pub use timsrust::Frame;
 pub use timsrust::FrameType;
+pub use timsrust::{
+    ConvertableIndex, FileReader, Frame2RtConverter, Scan2ImConverter, Tof2MzConverter,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct TimsPeak {
@@ -82,9 +84,13 @@ impl<T: Ord + Clone> SortExt<T> for Vec<T> {
     }
 }
 
-
 impl DenseFrame {
-    pub fn new(frame: &Frame, ims_converter: &Scan2ImConverter, mz_converter: &Tof2MzConverter, rt_converter: &Frame2RtConverter) -> DenseFrame {
+    pub fn new(
+        frame: &Frame,
+        ims_converter: &Scan2ImConverter,
+        mz_converter: &Tof2MzConverter,
+        rt_converter: &Frame2RtConverter,
+    ) -> DenseFrame {
         let mut expanded_scan_indices = Vec::with_capacity(frame.tof_indices.len());
         let mut last_scan_offset = frame.scan_offsets[0].clone();
         for (scan_index, index_offset) in frame.scan_offsets[1..].iter().enumerate() {
@@ -127,33 +133,28 @@ impl DenseFrame {
 
     fn sort_by_mz(mut self) {
         match self.sorted {
-            Some(SortingOrder::Mz) => {
-                return
-            },
+            Some(SortingOrder::Mz) => return,
             _ => {
-                self.raw_peaks.sort_unstable_by(|a, b| a.mz.partial_cmp(&b.mz).unwrap());
+                self.raw_peaks
+                    .sort_unstable_by(|a, b| a.mz.partial_cmp(&b.mz).unwrap());
                 self.sorted = Some(SortingOrder::Mz);
-                return
-            },
+                return;
+            }
         }
     }
 
     fn sort_by_mobility(mut self) {
         match self.sorted {
-            Some(SortingOrder::Mobility) => {
-                return
-            },
+            Some(SortingOrder::Mobility) => return,
             _ => {
-                self.raw_peaks.sort_unstable_by(|a, b| a.mobility.partial_cmp(&b.mobility).unwrap());
+                self.raw_peaks
+                    .sort_unstable_by(|a, b| a.mobility.partial_cmp(&b.mobility).unwrap());
                 self.sorted = Some(SortingOrder::Mobility);
-                return
-            },
+                return;
+            }
         }
     }
-
 }
-
-
 
 #[cfg(test)]
 mod test_argsort {
@@ -170,4 +171,3 @@ mod test_argsort {
         assert_eq!(vec2, vec!["q", "s", "r", "p", "t"]);
     }
 }
-

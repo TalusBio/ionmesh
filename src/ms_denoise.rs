@@ -28,7 +28,10 @@ fn min_max_points(points: &[quad::Point]) -> (quad::Point, quad::Point) {
         }
     }
 
-    (quad::Point { x: min_x, y: min_y }, quad::Point { x: max_x, y: max_y })
+    (
+        quad::Point { x: min_x, y: min_y },
+        quad::Point { x: max_x, y: max_y },
+    )
 }
 
 #[cfg(test)]

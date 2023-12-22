@@ -51,9 +51,9 @@ impl<'a, T> RadiusQuadTree<'a, T> {
 
         self.count += 1;
 
-        if self.division_point.is_none(){
-            let distance_squared =
-                (point.x - self.boundary.x_center).powi(2) + (point.y - self.boundary.y_center).powi(2);
+        if self.division_point.is_none() {
+            let distance_squared = (point.x - self.boundary.x_center).powi(2)
+                + (point.y - self.boundary.y_center).powi(2);
             let radius_squared = self.radius.powi(2);
             if self.points.len() < self.capacity || distance_squared <= radius_squared {
                 self.points.push((point, data));
@@ -61,7 +61,7 @@ impl<'a, T> RadiusQuadTree<'a, T> {
                 self.subdivide();
             }
         };
-        
+
         if self.division_point.is_some() {
             let div_x = self.division_point.unwrap().x;
             let div_y = self.division_point.unwrap().y;
@@ -91,10 +91,7 @@ impl<'a, T> RadiusQuadTree<'a, T> {
         let w_offset = self.boundary.width / 4.0;
         let h_offset = self.boundary.height / 4.0;
 
-        let division_point = Point {
-            x: x,
-            y: y
-        };
+        let division_point = Point { x: x, y: y };
 
         // Define boundaries for each quadrant
         let ne_boundary = Boundary {
@@ -265,6 +262,5 @@ impl Boundary {
         let ymax2 = other.y_center + other.height;
 
         !(xmin > xmax2 || xmax < xmin2 || ymin > ymax2 || ymax < ymin2)
-        
     }
 }
