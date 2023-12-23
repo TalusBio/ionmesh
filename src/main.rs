@@ -8,9 +8,9 @@
 //
 
 use apache_avro::{Codec, Error, Schema, Writer};
-mod quad;
-mod ms_denoise;
 mod ms;
+mod ms_denoise;
+mod quad;
 
 // https://github.com/lerouxrgd/rsgen-avro
 // This can be used to generate the structs from
@@ -109,12 +109,7 @@ mod tests {
 }
 
 fn quad_main() {
-    let boundary = quad::Boundary::new ( 
-        0.0,
-        0.0,
-        50.0,
-        50.0,
-     );
+    let boundary = quad::Boundary::new(0.0, 0.0, 50.0, 50.0);
     let radius = 5.0;
     let mut quad_tree = quad::RadiusQuadTree::new(boundary, 2, radius);
 
