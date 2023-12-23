@@ -131,7 +131,7 @@ impl DenseFrame {
         self
     }
 
-    fn sort_by_mz(mut self) {
+    pub fn sort_by_mz(&mut self) {
         match self.sorted {
             Some(SortingOrder::Mz) => return,
             _ => {
@@ -143,7 +143,7 @@ impl DenseFrame {
         }
     }
 
-    fn sort_by_mobility(mut self) {
+    pub fn sort_by_mobility(&mut self) {
         match self.sorted {
             Some(SortingOrder::Mobility) => return,
             _ => {

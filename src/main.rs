@@ -9,6 +9,8 @@
 
 use apache_avro::{Codec, Error, Schema, Writer};
 mod quad;
+mod ms_denoise;
+mod ms;
 
 // https://github.com/lerouxrgd/rsgen-avro
 // This can be used to generate the structs from
@@ -107,12 +109,12 @@ mod tests {
 }
 
 fn quad_main() {
-    let boundary = quad::Boundary {
-        x_center: 0.0,
-        y_center: 0.0,
-        width: 50.0,
-        height: 50.0,
-    };
+    let boundary = quad::Boundary::new ( 
+        0.0,
+        0.0,
+        50.0,
+        50.0,
+     );
     let radius = 5.0;
     let mut quad_tree = quad::RadiusQuadTree::new(boundary, 2, radius);
 
@@ -140,7 +142,8 @@ fn quad_main() {
     std::fs::write("quad_tree.json", qt_json).unwrap();
 }
 
-fn main() -> Result<(), Error> {
+// TODO make this a test
+fn serialize_main() {
     let ion = Peak {
         ion_id: 0,
         charge: Some(1),
@@ -160,10 +163,30 @@ fn main() -> Result<(), Error> {
     let serialized = serde_json::to_string(&extract_parent).unwrap();
     println!("serialized = {}", serialized);
 
-    let schema = Schema::parse_str(RAW_SCHEMA)?;
+    let schema = Schema::parse_str(RAW_SCHEMA);
+    let schema = match schema {
+        Ok(s) => s,
+        Err(e) => {
+            println!("error: {}", e);
+            panic!("error")
+        }
+    };
     let mut writer = Writer::with_codec(&schema, Vec::new(), Codec::Deflate);
-    writer.append_ser(extract_parent)?;
+    let res = writer.append_ser(extract_parent);
+    match res {
+        Ok(_) => println!("success"),
+        Err(e) => {
+            println!("error: {}", e);
+            panic!("error")
+        }
+    }
+}
 
+fn main() -> Result<(), Error> {
+    serialize_main();
     quad_main();
+
+    let path_use = String::from("/Users/sebastianpaez/git/2023_dev_diadem_report/data/231121_RH30_NMIAA_E3_DIA_S2-B3_1_5353.d");
+    ms_denoise::read_all_ms1_denoising(path_use);
     Ok(())
 }

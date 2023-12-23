@@ -1,3 +1,5 @@
+use core::panic;
+
 #[derive(Debug, Clone, Copy, serde::Serialize, PartialEq)]
 pub struct Point {
     pub x: f64,
@@ -10,6 +12,26 @@ pub struct Boundary {
     pub y_center: f64,
     pub width: f64,
     pub height: f64,
+    xmin: f64,
+    xmax: f64,
+    ymin: f64,
+    ymax: f64,
+}
+
+impl Boundary {
+    pub fn new(x_center: f64, y_center: f64, width: f64, height: f64) -> Boundary {
+        const EPS: f64 = 1e-6;
+        Boundary {
+            x_center,
+            y_center,
+            width,
+            height,
+            xmin: x_center - (width / 2.0) - EPS,
+            xmax: x_center + (width / 2.0) + EPS,
+            ymin: y_center - (height / 2.0) - EPS,
+            ymax: y_center + (height / 2.0) + EPS,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -45,7 +67,13 @@ impl<'a, T> RadiusQuadTree<'a, T> {
     pub fn insert(&mut self, point: Point, data: &'a T) {
         if !self.boundary.contains(&point) {
             // Should this be an error?
-            println!("Point outside of boundary {:?} {:?}", point, self.boundary);
+            println!("(Error??) Point outside of boundary {:?} {:?}", point, self.boundary);
+            // print xs and ys
+            //
+            println!("x: {:?} y: {:?}", point.x, point.y);
+            println!("xmin: {:?} xmax: {:?}", self.boundary.xmin, self.boundary.xmax);
+            println!("ymin: {:?} ymax: {:?}", self.boundary.ymin, self.boundary.ymax);
+            panic!("Point outside of boundary");
             return;
         }
 
@@ -54,12 +82,23 @@ impl<'a, T> RadiusQuadTree<'a, T> {
         if self.division_point.is_none() {
             let distance_squared = (point.x - self.boundary.x_center).powi(2)
                 + (point.y - self.boundary.y_center).powi(2);
-            let radius_squared = self.radius.powi(2);
-            if self.points.len() < self.capacity || distance_squared <= radius_squared {
+
+            // This can be pre-computed
+            // let radius_squared = self.radius.powi(2);
+            let radius_squared = (self.radius * 2.).powi(2);
+
+            // This means any sub-division will be smaller than the radius
+            let query_contained = radius_squared > distance_squared;
+            if self.points.len() < self.capacity {
                 self.points.push((point, data));
             } else {
-                self.subdivide();
+                if query_contained {
+                    self.points.push((point, data));
+                } else {
+                    self.subdivide();
+                }
             }
+
         };
 
         if self.division_point.is_some() {
@@ -83,7 +122,7 @@ impl<'a, T> RadiusQuadTree<'a, T> {
     }
 
     pub fn subdivide(&mut self) {
-        println!("Subdividing");
+        // println!("Subdividing");
         let x = self.boundary.x_center;
         let y = self.boundary.y_center;
         let w = self.boundary.width / 2.0;
@@ -94,36 +133,36 @@ impl<'a, T> RadiusQuadTree<'a, T> {
         let division_point = Point { x: x, y: y };
 
         // Define boundaries for each quadrant
-        let ne_boundary = Boundary {
-            x_center: x + w_offset,
-            y_center: y + h_offset,
-            width: w,
-            height: h,
-        };
-        let nw_boundary = Boundary {
-            x_center: x - w_offset,
-            y_center: y + h_offset,
-            width: w,
-            height: h,
-        };
-        let se_boundary = Boundary {
-            x_center: x + w_offset,
-            y_center: y - h_offset,
-            width: w,
-            height: h,
-        };
-        let sw_boundary = Boundary {
-            x_center: x - w_offset,
-            y_center: y - h_offset,
-            width: w,
-            height: h,
-        };
+        let ne_boundary = Boundary::new( 
+            x + w_offset,
+            y + h_offset,
+            w,
+            h,
+         );
+        let nw_boundary = Boundary::new ( 
+            x - w_offset,
+            y + h_offset,
+            w,
+            h,
+         );
+        let se_boundary = Boundary::new ( 
+            x + w_offset,
+            y - h_offset,
+            w,
+            h,
+         );
+        let sw_boundary = Boundary::new ( 
+            x - w_offset,
+            y - h_offset,
+            w,
+             h,
+         );
 
-        println!("boundary {:?}", self.boundary);
-        println!("ne_boundary {:?}", ne_boundary);
-        println!("nw_boundary {:?}", nw_boundary);
-        println!("se_boundary {:?}", se_boundary);
-        println!("sw_boundary {:?}", sw_boundary);
+        // println!("boundary {:?}", self.boundary);
+        // println!("ne_boundary {:?}", ne_boundary);
+        // println!("nw_boundary {:?}", nw_boundary);
+        // println!("se_boundary {:?}", se_boundary);
+        // println!("sw_boundary {:?}", sw_boundary);
 
         // Create sub-trees for each quadrant
         self.northeast = Some(Box::new(RadiusQuadTree::new(
@@ -160,13 +199,45 @@ impl<'a, T> RadiusQuadTree<'a, T> {
     }
 
     pub fn query(&self, point: Point, result: &mut Vec<(Point, &'a T)>) {
-        let range = Boundary {
-            x_center: point.x,
-            y_center: point.y,
-            width: self.radius,
-            height: self.radius,
-        };
+        let range = Boundary::new ( 
+            point.x,
+            point.y,
+            self.radius,
+            self.radius,
+         );
         self.query_range(&range, result);
+    }
+
+    pub fn count_query(&self, point: Point, count_keeper: &mut u64) {
+        let range = Boundary::new ( 
+            point.x,
+            point.y,
+            self.radius,
+            self.radius,
+         );
+        self.count_query_range(&range, count_keeper);
+    }
+
+    pub fn count_query_range(&self, range: &Boundary, count_keeper: &mut u64) {
+        if !self.boundary.intersects(range) || self.count == 0 {
+            return;
+        }
+
+        let mut local_count = 0;
+        for &(point, _) in &self.points {
+            if range.contains(&point) {
+                local_count += 1;
+            }
+        }
+
+        *count_keeper += local_count;
+
+        if self.division_point.is_some() {
+            self.northeast.as_ref().unwrap().count_query_range(range, count_keeper);
+            self.northwest.as_ref().unwrap().count_query_range(range, count_keeper);
+            self.southeast.as_ref().unwrap().count_query_range(range, count_keeper);
+            self.southwest.as_ref().unwrap().count_query_range(range, count_keeper);
+        }
     }
 
     pub fn query_range(&self, range: &Boundary, result: &mut Vec<(Point, &'a T)>) {
@@ -174,6 +245,10 @@ impl<'a, T> RadiusQuadTree<'a, T> {
             return;
         }
 
+        // There might be some optimization possible if we divide further the trees,
+        // we could check if the range is fully contained in the boundary and if so
+        // we could skip the containment checks.
+        //
         for &(point, data) in &self.points {
             if range.contains(&point) {
                 result.push((point, data));
@@ -242,25 +317,95 @@ impl<'a, T> RadiusQuadTree<'a, T> {
 
 impl Boundary {
     pub fn contains(&self, point: &Point) -> bool {
-        let xmin = self.x_center - self.width;
-        let xmax = self.x_center + self.width;
-        let ymin = self.y_center - self.height;
-        let ymax = self.y_center + self.height;
+        point.x >= self.xmin && point.x <= self.xmax && point.y >= self.ymin && point.y <= self.ymax
+    }
 
-        point.x >= xmin && point.x <= xmax && point.y >= ymin && point.y <= ymax
+    pub fn intersection(&self, other: &Boundary) -> f64 {
+        // Returns the fraction of the area of self that is overlapped by other.
+
+        // Top left corner
+        let max_xmin = self.xmin.max(other.xmin);
+        let max_ymin = self.ymin.max(other.ymin);
+
+        // Bottom right corner
+        let min_xmin = self.xmax.min(other.xmax);
+        let min_ymin = self.ymax.min(other.ymax);
+
+        let overlap = (min_xmin - max_xmin).max(0.0) * (min_ymin - max_ymin).max(0.0);
+    
+        let intersection = overlap / (self.width * self.height);
+        intersection
     }
 
     pub fn intersects(&self, other: &Boundary) -> bool {
-        let xmin = self.x_center - self.width;
-        let xmax = self.x_center + self.width;
-        let ymin = self.y_center - self.height;
-        let ymax = self.y_center + self.height;
+        // Returns true if the two boundaries intersect.
+        self.xmin <= other.xmax
+            && self.xmax >= other.xmin
+            && self.ymin <= other.ymax
+            && self.ymax >= other.ymin
+    }
 
-        let xmin2 = other.x_center - other.width;
-        let xmax2 = other.x_center + other.width;
-        let ymin2 = other.y_center - other.height;
-        let ymax2 = other.y_center + other.height;
+}
 
-        !(xmin > xmax2 || xmax < xmin2 || ymin > ymax2 || ymax < ymin2)
+#[cfg(test)]
+mod test_boundary {
+    use super::*;
+
+    #[test]
+    fn test_contains() {
+        let boundary = Boundary::new(0.0, 0.0, 50.0, 50.0);
+        let point = Point { x: 25.0, y: 25.0 };
+        assert!(boundary.contains(&point));
+    }
+
+    #[test]
+    fn test_not_contains() {
+        let boundary = Boundary::new(0.0, 0.0, 50.0, 50.0);
+        let point = Point { x: 75.0, y: 75.0 };
+        assert!(!boundary.contains(&point));
+    }
+
+    #[test]
+    fn test_intersects() {
+        let boundary = Boundary::new(0.0, 0.0, 50.0, 50.0);
+        let other = Boundary::new(25.0, 25.0, 50.0, 50.0);
+        assert!(boundary.intersects(&other));
+    }
+
+    #[test]
+    fn test_not_intersects() {
+        let boundary = Boundary::new(0.0, 0.0, 50.0, 50.0);
+        let other = Boundary::new(75.0, 75.0, 50.0, 50.0);
+        assert!(!boundary.intersects(&other));
+    }
+
+    #[test]
+    fn test_intersection() {
+        let boundary = Boundary::new(0.0, 0.0, 50.0, 50.0);
+        let other = Boundary::new(25.0, 25.0, 50.0, 50.0);
+        let expect = 0.25;
+        let max_diff = 1e-6;
+        assert!(boundary.intersection(&other) - expect < max_diff);
+    }
+
+    #[test]
+    fn test_no_intersection() {
+        let boundary = Boundary::new(0.0, 0.0, 50.0, 50.0);
+        let other = Boundary::new(75.0, 75.0, 50.0, 50.0);
+        assert_eq!(boundary.intersection(&other), 0.0);
+    }
+
+    #[test]
+    fn test_intersection_inside() {
+        let boundary = Boundary::new(0.0, 0.0, 20.0, 10.0);
+        let other = Boundary::new(0.0, 0.0, 10.0, 10.0);
+
+        let expect = 0.5;
+        let max_diff = 1e-6;
+
+        assert!(boundary.intersection(&other) - expect < max_diff);
+
+        let expect = 1.00;
+        assert!(other.intersection(&boundary) - expect < max_diff);
     }
 }
