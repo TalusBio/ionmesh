@@ -230,6 +230,7 @@ impl<'a, T> RadiusQuadTree<'a, T> {
         }
     }
 
+    // This function is used a lot so any optimization here will have a big impact.
     pub fn query_range(&self, range: &Boundary, result: &mut Vec<(Point, &'a T)>) {
         if !self.boundary.intersects(range) || self.count == 0 {
             return;

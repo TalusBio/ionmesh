@@ -17,5 +17,5 @@ rand = "0.8.5"
 [features]
 viz = []
 
-[profile.release]
-debug = true
+# [profile.release]
+# debug = true

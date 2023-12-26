@@ -136,16 +136,72 @@ mod test_count_neigh {
     }
 }
 
+fn denseframe_to_quadtree_points(
+    denseframe: &mut ms::DenseFrame,
+    mz_scaling: f64,
+    ims_scaling: f64,
+    min_n: usize,
+) -> (Vec<quad::Point>, Vec<TimsPeak>, quad::Boundary) {
+    // Initial pre-filtering step
+    denseframe.sort_by_mz();
+
+    let num_neigh = count_neigh_monotonocally_increasing(
+        &denseframe.raw_peaks,
+        &|peak| peak.mz,
+        mz_scaling,
+        &|i_right, i_left| (i_right - i_left) >= min_n,
+    );
+
+    // Filter the peaks and replace the raw peaks with the filtered peaks.
+    let prefiltered_peaks = denseframe
+        .raw_peaks
+        .clone()
+        .into_iter()
+        .zip(num_neigh.into_iter())
+        .filter(|(_, b)| *b)
+        .map(|(peak, _)| peak.clone()) // Clone the TimsPeak
+        .collect::<Vec<_>>();
+
+    let quad_points = prefiltered_peaks
+        .iter()
+        .map(|peak| quad::Point {
+            x: (peak.mz / mz_scaling),
+            y: (peak.mobility as f64 / ims_scaling),
+        })
+        .collect::<Vec<_>>();
+
+    let (min_point, max_point) = min_max_points(&quad_points);
+    let min_x = min_point.x;
+    let min_y = min_point.y;
+    let max_x = max_point.x;
+    let max_y = max_point.y;
+
+    let boundary = quad::Boundary::new(
+        (max_x + min_x) / 2.0,
+        (max_y + min_y) / 2.0,
+        max_x - min_x,
+        max_y - min_y,
+    );
+
+    (quad_points, prefiltered_peaks, boundary)
+
+    // NOTE: I would like to do this, but I dont know how to fix the lifetime issues...
+    // let mut tree: RadiusQuadTree<'_, TimsPeak> = quad::RadiusQuadTree::new(boundary, 20, 1.);
+    // for (point, timspeak) in quad_points.iter().zip(prefiltered_peaks.iter()) {
+    //     tree.insert(point.clone(), timspeak);
+    // }
+
+    // (quad_points, prefiltered_peaks, tree)
+}
+
 impl DenoisableFrame for ms::DenseFrame {
+    /// Drops peaks that dont have at least one neighbor within a given mz/mobility tolerance
     fn min_neighbor_denoise(
         &mut self,
         mz_scaling: f64,
         ims_scaling: f64,
         min_n: usize,
     ) -> ms::DenseFrame {
-        // I could pre-sort here and use the window iterator,
-        // to pre-filter for points with no neighbors in the mz dimension.
-
         // AKA could filter out the points with no mz neighbors sorting
         // and the use the tree to filter points with no mz+mobility neighbors.
 
@@ -154,71 +210,25 @@ impl DenoisableFrame for ms::DenseFrame {
         let out_rt = self.rt.clone();
         let out_index = self.index.clone();
 
-        self.sort_by_mz();
+        let (quad_points, prefiltered_peaks, boundary) =
+            denseframe_to_quadtree_points(self, mz_scaling, ims_scaling, min_n);
 
-        let num_neigh = count_neigh_monotonocally_increasing(
-            &self.raw_peaks,
-            &|peak| peak.mz,
-            mz_scaling,
-            &|i_right, i_left| (i_right - i_left) >= min_n,
-        );
+        let mut tree: RadiusQuadTree<'_, TimsPeak> = RadiusQuadTree::new(boundary, 20, 1.);
 
-        // let skipped = prefiltered_peaks_bool
-        //     .iter()
-        //     .filter(|&b| !*b)
-        //     .collect::<Vec<_>>()
-        //     .len();
-
-        // println!(
-        //     "Skipped {} peaks out of {} total peaks",
-        //     skipped,
-        //     self.raw_peaks.len()
-        // );
-
-        // Filter the peaks and replace the raw peaks with the filtered peaks.
-        let prefiltered_peaks = self
-            .raw_peaks
-            .clone()
-            .into_iter()
-            .zip(num_neigh.into_iter())
-            .filter(|(_, b)| *b)
-            .map(|(peak, _)| peak)
-            .collect::<Vec<_>>();
-
-        let quad_points = prefiltered_peaks
-            .iter()
-            .map(|peak| quad::Point {
-                x: (peak.mz / mz_scaling),
-                y: (peak.mobility as f64 / ims_scaling),
-            })
-            .collect::<Vec<_>>();
-
-        let (min_point, max_point) = min_max_points(&quad_points);
-        let min_x = min_point.x;
-        let min_y = min_point.y;
-        let max_x = max_point.x;
-        let max_y = max_point.y;
-
-        let boundary = quad::Boundary::new(
-            (max_x + min_x) / 2.0,
-            (max_y + min_y) / 2.0,
-            max_x - min_x,
-            max_y - min_y,
-        );
-
-        let mut tree: RadiusQuadTree<'_, TimsPeak> = quad::RadiusQuadTree::new(boundary, 20, 1.);
-        for (point, timspeak) in quad_points.iter().zip(prefiltered_peaks.iter()) {
-            tree.insert(point.clone(), timspeak);
+        for (point, peak) in quad_points.iter().zip(prefiltered_peaks.iter()) {
+            tree.insert(point.clone(), peak);
         }
 
         let mut denoised_peaks = Vec::with_capacity(prefiltered_peaks.len());
+
+        let min_n = min_n as u64;
         for (point, peaks) in quad_points.iter().zip(prefiltered_peaks.iter()) {
             let mut result_counts = 0;
 
             // TODO: implement an 'any neighbor' method.
             tree.count_query(*point, &mut result_counts);
 
-            if result_counts as usize >= min_n {
+            if result_counts >= min_n {
                 denoised_peaks.push(peaks.clone());
             }
         }
@@ -270,6 +280,12 @@ fn log_denseframe_points(
         })
         .collect::<Vec<_>>();
 
+    let radii = frame
+        .raw_peaks
+        .iter()
+        .map(|peak| (peak.intensity as f32).log2() / 50.)
+        .collect::<Vec<_>>();
+
     rec.log(
         entry_path,
         &rerun::Points2D::new(
@@ -277,7 +293,7 @@ fn log_denseframe_points(
                 .iter()
                 .map(|point| (point.x as f32, point.y as f32)),
         )
-        .with_radii([0.08]),
+        .with_radii(radii),
     )?;
 
     Ok(())
@@ -288,6 +304,200 @@ fn setup_recorder() -> rerun::RecordingStream {
     let rec = rerun::RecordingStreamBuilder::new("rerun_jspp_denoiser").connect();
 
     return rec.unwrap();
+}
+
+// Pseudocode from wikipedia.
+// Donate to wikipedia y'all. :3
+// DBSCAN(DB, distFunc, eps, minPts) {
+//     C := 0                                                  /* Cluster counter */
+//     for each point P in database DB {
+//         if label(P) ≠ undefined then continue               /* Previously processed in inner loop */
+//         Neighbors N := RangeQuery(DB, distFunc, P, eps)     /* Find neighbors */
+//         if |N| < minPts then {                              /* Density check */
+//             label(P) := Noise                               /* Label as Noise */
+//             continue
+//         }
+//         C := C + 1                                          /* next cluster label */
+//         label(P) := C                                       /* Label initial point */
+//         SeedSet S := N \ {P}                                /* Neighbors to expand */
+//         for each point Q in S {                             /* Process every seed point Q */
+//             if label(Q) = Noise then label(Q) := C          /* Change Noise to border point */
+//             if label(Q) ≠ undefined then continue           /* Previously processed (e.g., border point) */
+//             label(Q) := C                                   /* Label neighbor */
+//             Neighbors N := RangeQuery(DB, distFunc, Q, eps) /* Find neighbors */
+//             if |N| ≥ minPts then {                          /* Density check (if Q is a core point) */
+//                 S := S ∪ N                                  /* Add new neighbors to seed set */
+//             }
+//         }
+//     }
+// }
+
+// Variations ...
+// 1. Use a quadtree to find neighbors
+// 2. Sort the pointd by decreasing intensity (more intense points adopt first).
+// 3. Use an intensity threshold intead of a minimum number of neighbors.
+
+#[derive(Debug, PartialEq, Clone)]
+enum ClusterLabel<T> {
+    Noise,
+    Border(T),
+    Core(T),
+    Unassigned,
+}
+
+fn dbscan(
+    denseframe: &mut ms::DenseFrame,
+    mz_scaling: f64,
+    ims_scaling: f64,
+    min_n: usize,
+    min_intensity: u64,
+) -> ms::DenseFrame {
+    // I could pre-sort here and use the window iterator,
+    // to pre-filter for points with no neighbors in the mz dimension.
+
+    // AKA could filter out the points with no mz neighbors sorting
+    // and the use the tree to filter points with no mz+mobility neighbors.
+
+    // NOTE: the multiple quad isolation windows in DIA are not being handled just yet.
+    let out_frame_type: timsrust::FrameType = denseframe.frame_type.clone();
+    let out_rt: f64 = denseframe.rt.clone();
+    let out_index: usize = denseframe.index.clone();
+
+    let (quad_points, prefiltered_peaks, boundary) =
+        denseframe_to_quadtree_points(denseframe, mz_scaling, ims_scaling, min_n.saturating_sub(1));
+
+    let mut tree = RadiusQuadTree::new(boundary, 20, 1.);
+
+    // // Sort by decreasing intensity
+    // // I am not the biggest fan of this nested tuple ...
+
+    // let mut intensity_sorted_peaks = quad_points
+    //     .iter()
+    //     .zip(prefiltered_peaks.iter())
+    //     .enumerate()
+    //     .collect::<Vec<(usize, (&quad::Point, &ms::TimsPeak))>>();
+    // intensity_sorted_peaks.sort_unstable_by(|a, b| {
+    //     b.1.1.intensity.partial_cmp(&a.1.1.intensity).unwrap()
+    // });
+
+    // let isp = intensity_sorted_peaks.clone();
+    // for (i, (point, peak)) in isp.iter() {
+    //     tree.insert(*point.clone(), (i, peak.clone()));
+    // }
+
+    // >>>>>> this reimplement this to use an index pointer instead of
+    // >>>>>> sorting!
+
+    let quad_indices: Vec<usize> = quad_points
+        .iter()
+        .enumerate()
+        .map(|(i, _)| i)
+        .collect::<Vec<_>>();
+
+    for (quad_point, i) in quad_points.iter().zip(quad_indices.iter()) {
+        tree.insert(quad_point.clone(), i);
+    }
+    let mut intensity_sorted_indices = prefiltered_peaks
+        .iter()
+        .enumerate()
+        .map(|(i, peak)| (i.clone(), peak.intensity.clone()))
+        .collect::<Vec<_>>();
+
+    intensity_sorted_indices.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+    let mut cluster_labels = vec![ClusterLabel::Unassigned; prefiltered_peaks.len()];
+    let mut cluster_vecs: Vec<Vec<usize>> = Vec::with_capacity(prefiltered_peaks.len());
+    let mut cluster_id = 0;
+
+    for (point_index, _intensity) in intensity_sorted_indices.iter() {
+        let point_index = *point_index;
+        if cluster_labels[point_index] != ClusterLabel::Unassigned {
+            continue;
+        }
+
+        let mut neighbors = Vec::new();
+        let query_point = quad_points[point_index].clone();
+        tree.query(query_point, &mut neighbors);
+
+        // Do I need to care about overflows here?
+        let neighbor_intensity_total = neighbors
+            .iter()
+            .map(|(_, i)| prefiltered_peaks[**i].intensity as u64)
+            .sum::<u64>();
+
+        // Add here intensity cutoff
+        if neighbors.len() < min_n || neighbor_intensity_total < min_intensity {
+            cluster_labels[point_index] = ClusterLabel::Noise;
+            continue;
+        }
+
+        cluster_id += 1;
+        cluster_labels[point_index] = ClusterLabel::Core(cluster_id);
+        let mut cluster_vec_local = vec![point_index];
+        let mut seed_set = neighbors.clone();
+
+        while let Some(neighbor) = seed_set.pop() {
+            let neighbor_index = neighbor.1.clone();
+            if cluster_labels[neighbor_index] == ClusterLabel::Noise {
+                cluster_labels[neighbor_index] = ClusterLabel::Border(cluster_id);
+                cluster_vec_local.push(neighbor_index);
+            }
+
+            if cluster_labels[neighbor_index] != ClusterLabel::Unassigned {
+                continue;
+            }
+
+            cluster_labels[neighbor_index] = ClusterLabel::Core(cluster_id);
+            cluster_vec_local.push(neighbor_index);
+
+            // Add here intensity cutoff
+
+            let mut neighbors = Vec::new();
+            tree.query(neighbor.0, &mut neighbors);
+
+            let neighbor_intensity_total = neighbors
+                .iter()
+                .map(|(_, i)| prefiltered_peaks[**i].intensity as u64)
+                .sum::<u64>();
+
+            if neighbors.len() >= min_n && neighbor_intensity_total >= min_intensity {
+                seed_set.extend(neighbors);
+            }
+        }
+
+        cluster_vecs.push(cluster_vec_local);
+    }
+
+    let denoised_peaks = cluster_vecs
+        .iter()
+        .map(|cluster| {
+            let mut cluster_intensity = 0;
+            let mut cluster_mz = 0.0;
+            let mut cluster_mobility = 0.0;
+            for point_index in cluster {
+                let timspeak = prefiltered_peaks[*point_index];
+                let f64_intensity = timspeak.intensity as f64;
+                cluster_intensity += timspeak.intensity as u64;
+                cluster_mz += (timspeak.mz as f64) * f64_intensity;
+                cluster_mobility += (timspeak.mobility as f64) * f64_intensity;
+            }
+            let cluster_intensity = cluster_intensity; // Note not averaged
+            let cluster_mz = cluster_mz / cluster_intensity as f64;
+            let cluster_mobility = cluster_mobility / cluster_intensity as f64;
+            ms::TimsPeak {
+                intensity: cluster_intensity as u32,
+                mz: cluster_mz,
+                mobility: cluster_mobility as f32,
+            }
+        })
+        .collect::<Vec<_>>();
+    ms::DenseFrame {
+        raw_peaks: denoised_peaks,
+        index: out_index,
+        rt: out_rt,
+        frame_type: out_frame_type,
+        sorted: None,
+    }
 }
 
 pub fn read_all_ms1_denoising(path: String) -> Vec<ms::DenseFrame> {
@@ -325,10 +535,10 @@ pub fn read_all_ms1_denoising(path: String) -> Vec<ms::DenseFrame> {
         })
         .collect();
 
-    // randomly viz 1/500 frames
+    // randomly viz 1/200 frames
     if cfg!(feature = "viz") {
-        let rec = rec.as_mut().unwrap();
-        let frames_keep = frames
+        let rec: &mut rerun::RecordingStream = rec.as_mut().unwrap();
+        let frames_keep: Vec<timsrust::Frame> = frames
             .into_iter()
             .filter_map(|x| {
                 if rand::random::<f64>() < (1. / 200.) {
@@ -349,7 +559,7 @@ pub fn read_all_ms1_denoising(path: String) -> Vec<ms::DenseFrame> {
         }
     }
 
-    let denoised_frames = frames
+    let denoised_frames: Vec<ms::DenseFrame> = frames
         .par_iter_mut()
         .map(|frame| {
             let mut dense =
@@ -360,7 +570,8 @@ pub fn read_all_ms1_denoising(path: String) -> Vec<ms::DenseFrame> {
                 .iter()
                 .map(|peak| peak.intensity as f64)
                 .sum::<f64>();
-            let denoised_frame = dense.min_neighbor_denoise(0.015, 0.015, 3);
+            // let denoised_frame = dense.min_neighbor_denoise(0.015, 0.015, 2);
+            let denoised_frame = dbscan(&mut dense, 0.02, 0.02, 2, 500);
             let tot_intensity_end = denoised_frame
                 .raw_peaks
                 .iter()
