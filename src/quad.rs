@@ -65,7 +65,7 @@ impl<'a, T> RadiusQuadTree<'a, T> {
     }
 
     pub fn insert(&mut self, point: Point, data: &'a T) {
-        if !self.boundary.contains(&point) {
+        if cfg!(debug_assertions) && !self.boundary.contains(&point) {
             // Should this be an error?
             println!(
                 "(Error??) Point outside of boundary {:?} {:?}",
@@ -83,7 +83,6 @@ impl<'a, T> RadiusQuadTree<'a, T> {
                 self.boundary.ymin, self.boundary.ymax
             );
             panic!("Point outside of boundary");
-            return;
         }
 
         self.count += 1;
