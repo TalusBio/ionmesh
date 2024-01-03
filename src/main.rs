@@ -182,6 +182,7 @@ fn main() -> Result<(), Error> {
     quad_main();
 
     let path_use = String::from("/Users/sebastianpaez/git/2023_dev_diadem_report/data/231121_RH30_NMIAA_E3_DIA_S2-B3_1_5353.d");
-    ms_denoise::read_all_ms1_denoising(path_use);
+    ms_denoise::read_all_ms1_denoising(path_use.clone());
+    ms_denoise::read_all_dia_denoising(path_use.clone());
     Ok(())
 }

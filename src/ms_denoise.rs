@@ -339,10 +339,9 @@ fn setup_recorder() -> rerun::RecordingStream {
 
 #[derive(Debug, PartialEq, Clone)]
 enum ClusterLabel<T> {
-    Noise,
-    Border(T),
-    Core(T),
     Unassigned,
+    Noise,
+    Cluster(T),
 }
 
 fn dbscan(
@@ -425,21 +424,22 @@ fn dbscan(
             .map(|(_, i)| prefiltered_peaks[**i].intensity as u64)
             .sum::<u64>();
 
-        // Add here intensity cutoff
         if neighbors.len() < min_n || neighbor_intensity_total < min_intensity {
             cluster_labels[point_index] = ClusterLabel::Noise;
             continue;
         }
 
         cluster_id += 1;
-        cluster_labels[point_index] = ClusterLabel::Core(cluster_id);
+        cluster_labels[point_index] = ClusterLabel::Cluster(cluster_id);
         let mut cluster_vec_local = vec![point_index];
         let mut seed_set = neighbors.clone();
 
+        const MAX_GROWTH_ITERS: usize = 5;
+        let mut growth_iters = 0;
         while let Some(neighbor) = seed_set.pop() {
             let neighbor_index = neighbor.1.clone();
             if cluster_labels[neighbor_index] == ClusterLabel::Noise {
-                cluster_labels[neighbor_index] = ClusterLabel::Border(cluster_id);
+                cluster_labels[neighbor_index] = ClusterLabel::Cluster(cluster_id);
                 cluster_vec_local.push(neighbor_index);
             }
 
@@ -447,10 +447,8 @@ fn dbscan(
                 continue;
             }
 
-            cluster_labels[neighbor_index] = ClusterLabel::Core(cluster_id);
+            cluster_labels[neighbor_index] = ClusterLabel::Cluster(cluster_id);
             cluster_vec_local.push(neighbor_index);
-
-            // Add here intensity cutoff
 
             let mut neighbors = Vec::new();
             tree.query(neighbor.0, &mut neighbors);
@@ -461,6 +459,20 @@ fn dbscan(
                 .sum::<u64>();
 
             if neighbors.len() >= min_n && neighbor_intensity_total >= min_intensity {
+                growth_iters += 1;
+                if growth_iters > MAX_GROWTH_ITERS {
+                    break;
+                }
+
+                // Keep only the neighbors that are not already in a cluster
+                let neighbors = neighbors
+                    .into_iter()
+                    .filter(|(_, i)| match cluster_labels[**i] {
+                        ClusterLabel::Cluster(_) => false,
+                        _ => true,
+                    })
+                    .collect::<Vec<_>>();
+
                 seed_set.extend(neighbors);
             }
         }
@@ -491,6 +503,9 @@ fn dbscan(
             }
         })
         .collect::<Vec<_>>();
+
+    // TODO add an option to keep noise points
+
     ms::DenseFrame {
         raw_peaks: denoised_peaks,
         index: out_index,
@@ -500,40 +515,18 @@ fn dbscan(
     }
 }
 
-pub fn read_all_ms1_denoising(path: String) -> Vec<ms::DenseFrame> {
+fn denoise_frame_vec(
+    mut frames: Vec<timsrust::Frame>,
+    rt_converter: timsrust::Frame2RtConverter,
+    ims_converter: timsrust::Scan2ImConverter,
+    mz_converter: timsrust::Tof2MzConverter,
+    min_intensity: u64,
+    min_n: usize,
+) -> Vec<ms::DenseFrame> {
     let mut rec = Option::None;
     if cfg!(feature = "viz") {
         rec = Some(setup_recorder());
     }
-
-    let reader = timsrust::FileReader::new(path).unwrap();
-    let mut frames = reader.read_all_ms1_frames();
-
-    let ims_converter = reader.get_scan_converter().unwrap();
-    let mz_converter = reader.get_tof_converter().unwrap();
-    let rt_converter = reader.get_frame_converter().unwrap();
-
-    // let mut denoised_frames = Vec::new();
-
-    // // TODO: parallelize this
-    // for frame in frames.iter_mut() {
-    //     match frame.frame_type {
-    //         timsrust::FrameType::MS1 => {}
-    //         _ => continue,
-    //     }
-    //     println!("Denoising frame {}", frame.index);
-    //     let dense = ms::DenseFrame::new(frame, &ims_converter, &mz_converter, &rt_converter);
-    //     let denoised_frame = dense.min_neighbor_denoise(0.015, 0.015, 5);
-    //     denoised_frames.push(denoised_frame);
-    // }
-
-    frames = frames
-        .into_iter()
-        .filter(|frame| match frame.frame_type {
-            timsrust::FrameType::MS1 => true,
-            _ => false,
-        })
-        .collect();
 
     // randomly viz 1/200 frames
     if cfg!(feature = "viz") {
@@ -559,29 +552,58 @@ pub fn read_all_ms1_denoising(path: String) -> Vec<ms::DenseFrame> {
         }
     }
 
+    // let mut denoised_frames = Vec::new();
+
+    // // TODO: parallelize this
+    // for frame in frames.iter_mut() {
+    //     match frame.frame_type {
+    //         timsrust::FrameType::MS1 => {}
+    //         _ => continue,
+    //     }
+    //     println!("Denoising frame {}", frame.index);
+    //     let dense = ms::DenseFrame::new(frame, &ims_converter, &mz_converter, &rt_converter);
+    //     let denoised_frame = dense.min_neighbor_denoise(0.015, 0.015, 5);
+    //     denoised_frames.push(denoised_frame);
+    // }
+
     let denoised_frames: Vec<ms::DenseFrame> = frames
         .par_iter_mut()
         .map(|frame| {
             let mut dense =
                 ms::DenseFrame::new(frame, &ims_converter, &mz_converter, &rt_converter);
 
+            let max_intensity_start = dense
+                .raw_peaks
+                .iter()
+                .map(|peak| peak.intensity)
+                .max()
+                .unwrap_or(0);
+            let num_peaks_start = dense.raw_peaks.len();
             let tot_intensity_start = dense
                 .raw_peaks
                 .iter()
                 .map(|peak| peak.intensity as f64)
                 .sum::<f64>();
             // let denoised_frame = dense.min_neighbor_denoise(0.015, 0.015, 2);
-            let denoised_frame = dbscan(&mut dense, 0.02, 0.02, 2, 500);
+            let denoised_frame = dbscan(&mut dense, 0.015, 0.03, min_n, min_intensity);
             let tot_intensity_end = denoised_frame
                 .raw_peaks
                 .iter()
                 .map(|peak| peak.intensity as f64)
                 .sum::<f64>();
+            let num_peaks_end = denoised_frame.raw_peaks.len();
+            let max_intensity_end = denoised_frame
+                .raw_peaks
+                .iter()
+                .map(|peak| peak.intensity)
+                .max()
+                .unwrap_or(0);
             let intensity_ratio = tot_intensity_end / tot_intensity_start;
+            let peak_ratio = num_peaks_end as f64 / num_peaks_start as f64;
 
             println!(
-                "Denoising frame {} with intensity ratio {}",
-                frame.index, intensity_ratio
+                "Denoising frame {} with intensity ratio {:.2}, peak_ratio {:.2}, prior_max {}, curr_max {}",
+                frame.index, intensity_ratio, peak_ratio, max_intensity_start, max_intensity_end
             );
             denoised_frame
         })
@@ -597,4 +619,47 @@ pub fn read_all_ms1_denoising(path: String) -> Vec<ms::DenseFrame> {
     }
 
     denoised_frames
+}
+
+pub fn read_all_ms1_denoising(path: String) -> Vec<ms::DenseFrame> {
+    let reader = timsrust::FileReader::new(path).unwrap();
+    let mut frames = reader.read_all_ms1_frames();
+
+    let ims_converter = reader.get_scan_converter().unwrap();
+    let mz_converter = reader.get_tof_converter().unwrap();
+    let rt_converter = reader.get_frame_converter().unwrap();
+
+    frames = frames
+        .into_iter()
+        .filter(|frame| match frame.frame_type {
+            timsrust::FrameType::MS1 => true,
+            _ => false,
+        })
+        .collect();
+
+    let min_intensity = 100u64;
+    let min_n: usize = 3;
+    denoise_frame_vec(frames, rt_converter, ims_converter, mz_converter, min_intensity, min_n)
+}
+
+// This could probably be a macro ...
+pub fn read_all_dia_denoising(path: String) -> Vec<ms::DenseFrame> {
+    let reader = timsrust::FileReader::new(path).unwrap();
+    let mut frames = reader.read_all_ms2_frames();
+
+    let ims_converter = reader.get_scan_converter().unwrap();
+    let mz_converter = reader.get_tof_converter().unwrap();
+    let rt_converter = reader.get_frame_converter().unwrap();
+
+    frames = frames
+        .into_iter()
+        .filter(|frame| match frame.frame_type {
+            timsrust::FrameType::MS2(timsrust::AcquisitionType::DIAPASEF) => true,
+            _ => false,
+        })
+        .collect();
+
+    let min_intensity = 50u64;
+    let min_n:usize = 2;
+    denoise_frame_vec(frames, rt_converter, ims_converter, mz_converter, min_intensity, min_n)
 }
