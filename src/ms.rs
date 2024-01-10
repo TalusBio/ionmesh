@@ -4,6 +4,8 @@ pub use timsrust::{
     ConvertableIndex, FileReader, Frame2RtConverter, Scan2ImConverter, Tof2MzConverter,
 };
 
+use crate::quad::{Boundary, Point};
+
 #[derive(Debug, Clone, Copy)]
 pub struct TimsPeak {
     pub intensity: u32,
@@ -50,6 +52,46 @@ fn binary_search<T: PartialOrd>(vec: &[T], target: &T) -> Option<usize> {
         }
     }
     None
+}
+
+pub struct DenseFrameWindow {
+    pub frame: DenseFrame,
+    pub ims_start: f32,
+    pub ims_end: f32,
+    pub mz_start: f64,
+    pub mz_end: f64,
+    pub group_id: usize,
+    pub quad_group_id: usize,
+    bounds: Boundary,
+}
+
+impl DenseFrameWindow {
+    pub fn new(
+        frame: DenseFrame,
+        ims_start: f32,
+        ims_end: f32,
+        mz_start: f64,
+        mz_end: f64,
+        group_id: usize,
+        quad_group_id: usize,
+    ) -> DenseFrameWindow {
+        let bounds = Boundary::from_xxyy(ims_start.into(), ims_end.into(), mz_start.into(), mz_end.into());
+        DenseFrameWindow {
+            frame,
+            ims_start,
+            ims_end,
+            mz_start,
+            mz_end,
+            group_id,
+            quad_group_id,
+            bounds,
+        }
+    }
+
+    pub fn contains(&self, ims: f32, mz: f64) -> bool {
+        let point_use = Point{ x: ims.into(), y: mz.into() };
+        self.bounds.contains(&point_use)
+    }
 }
 
 // From: https://github.com/mbhall88/psdm/blob/0c8c4be5e4a6d566193b688824197fac2d233108/src/lib.rs#L13-L41

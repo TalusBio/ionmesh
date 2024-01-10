@@ -18,9 +18,10 @@ pub struct Boundary {
     ymax: f64,
 }
 
+const EPS: f64 = 1e-6;
+
 impl Boundary {
     pub fn new(x_center: f64, y_center: f64, width: f64, height: f64) -> Boundary {
-        const EPS: f64 = 1e-6;
         Boundary {
             x_center,
             y_center,
@@ -30,6 +31,23 @@ impl Boundary {
             xmax: x_center + (width / 2.0) + EPS,
             ymin: y_center - (height / 2.0) - EPS,
             ymax: y_center + (height / 2.0) + EPS,
+        }
+    }
+
+    pub fn from_xxyy(xmin: f64, xmax: f64, ymin: f64, ymax: f64) -> Boundary {
+        let x_center = (xmin + xmax) / 2.0;
+        let y_center = (ymin + ymax) / 2.0;
+        let width = xmax - xmin;
+        let height = ymax - ymin;
+        Boundary {
+            x_center,
+            y_center,
+            width,
+            height,
+            xmin: xmin - EPS,
+            xmax: xmax + EPS,
+            ymin: ymin - EPS,
+            ymax: ymax + EPS,
         }
     }
 }
@@ -66,13 +84,11 @@ impl<'a, T> RadiusQuadTree<'a, T> {
 
     pub fn insert(&mut self, point: Point, data: &'a T) {
         if cfg!(debug_assertions) && !self.boundary.contains(&point) {
-            // Should this be an error?
             println!(
                 "(Error??) Point outside of boundary {:?} {:?}",
                 point, self.boundary
             );
             // print xs and ys
-            //
             println!("x: {:?} y: {:?}", point.x, point.y);
             println!(
                 "xmin: {:?} xmax: {:?}",

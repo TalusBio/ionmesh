@@ -8,9 +8,14 @@
 //
 
 use apache_avro::{Codec, Error, Schema, Writer};
+mod extraction;
 mod ms;
 mod ms_denoise;
 mod quad;
+mod tdf;
+
+extern crate pretty_env_logger;
+#[macro_use] extern crate log;
 
 // https://github.com/lerouxrgd/rsgen-avro
 // This can be used to generate the structs from
@@ -102,7 +107,7 @@ mod tests {
         };
 
         let serialized = serde_json::to_string(&extract_parent).unwrap();
-        println!("serialized = {}", serialized);
+        info!("serialized = {}", serialized);
         let deserialized: Parent = serde_json::from_str(&serialized).unwrap();
         assert_eq!(extract_parent, deserialized);
     }
@@ -156,33 +161,39 @@ fn serialize_main() {
     };
 
     let serialized = serde_json::to_string(&extract_parent).unwrap();
-    println!("serialized = {}", serialized);
+    info!("serialized = {}", serialized);
 
     let schema = Schema::parse_str(RAW_SCHEMA);
     let schema = match schema {
         Ok(s) => s,
         Err(e) => {
-            println!("error: {}", e);
+            error!("error: {}", e);
             panic!("error")
         }
     };
     let mut writer = Writer::with_codec(&schema, Vec::new(), Codec::Deflate);
     let res = writer.append_ser(extract_parent);
     match res {
-        Ok(_) => println!("success"),
+        Ok(_) => info!("success"),
         Err(e) => {
-            println!("error: {}", e);
+            error!("error: {}", e);
             panic!("error")
         }
     }
 }
 
 fn main() -> Result<(), Error> {
+    pretty_env_logger::init();
+
     serialize_main();
     quad_main();
 
     let path_use = String::from("/Users/sebastianpaez/git/2023_dev_diadem_report/data/231121_RH30_NMIAA_E3_DIA_S2-B3_1_5353.d");
+    let dia_info = tdf::read_dia_frame_info(path_use.clone());
     ms_denoise::read_all_ms1_denoising(path_use.clone());
-    ms_denoise::read_all_dia_denoising(path_use.clone());
+    let mut dia_frames = ms_denoise::read_all_dia_denoising(path_use.clone());
+
+    dia_info.unwrap().split_dense_frames(dia_frames);
+
     Ok(())
 }
