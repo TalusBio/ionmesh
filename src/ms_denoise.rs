@@ -1,12 +1,12 @@
-use crate::ms;
+use crate::ms::DenseFrame;
 use crate::ms::TimsPeak;
 use crate::quad;
 use crate::quad::RadiusQuadTree;
+use crate::{ms, tdf};
 
+use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
+use log::{info, trace, warn};
 use rayon::prelude::*;
-use indicatif::{ProgressBar, ParallelProgressIterator, ProgressStyle};
-use log::{info, warn, trace};
-
 
 trait DenoisableFrame {
     // Drops peaks that dont have at least one neighbor within a given mz/mobility tolerance
@@ -168,7 +168,7 @@ fn denseframe_to_quadtree_points(
         .map(|(peak, _)| peak.clone()) // Clone the TimsPeak
         .collect::<Vec<_>>();
 
-    let quad_points = prefiltered_peaks // denseframe.raw_peaks // 
+    let quad_points = prefiltered_peaks // denseframe.raw_peaks //
         .iter()
         .map(|peak| quad::Point {
             x: (peak.mz / mz_scaling),
@@ -252,7 +252,6 @@ impl DenoisableFrame for ms::DenseFrame {
         }
     }
 }
-
 
 fn log_denseframe_points(
     frame: &ms::DenseFrame,
@@ -382,11 +381,7 @@ fn dbscan(
     // >>>>>> this reimplement this to use an index pointer instead of
     // >>>>>> sorting!
 
-    let quad_indices: Vec<usize> = quad_points
-        .iter()
-        .enumerate()
-        .map(|(i, _)| i)
-        .collect::<Vec<_>>();
+    let quad_indices = (0..quad_points.len()).collect::<Vec<_>>();
 
     for (quad_point, i) in quad_points.iter().zip(quad_indices.iter()) {
         tree.insert(quad_point.clone(), i);
@@ -517,8 +512,8 @@ fn dbscan(
     }
 }
 
-fn denoise_frame_vec(
-    mut frames: Vec<timsrust::Frame>,
+fn denoise_denseframe_vec(
+    mut frames: Vec<DenseFrame>,
     rt_converter: timsrust::Frame2RtConverter,
     ims_converter: timsrust::Scan2ImConverter,
     mz_converter: timsrust::Tof2MzConverter,
@@ -536,7 +531,7 @@ fn denoise_frame_vec(
         let rec: &mut rerun::RecordingStream = rec.as_mut().unwrap();
 
         warn!("Viz is enabled, randomly subsetting 1/200 frames");
-        let frames_keep: Vec<timsrust::Frame> = frames
+        let frames_keep: Vec<DenseFrame> = frames
             .into_iter()
             .filter_map(|x| {
                 if rand::random::<f64>() < (1. / 200.) {
@@ -552,8 +547,7 @@ fn denoise_frame_vec(
         for frame in frames.iter() {
             info!("Logging frame {}", frame.index);
             rec.set_time_sequence("frame_idx", frame.index as i64);
-            let dense = ms::DenseFrame::new(frame, &ims_converter, &mz_converter, &rt_converter);
-            log_denseframe_points(&dense, rec, String::from("points/Original")).unwrap();
+            log_denseframe_points(&frame, rec, String::from("points/Original")).unwrap();
         }
     }
 
@@ -577,23 +571,20 @@ fn denoise_frame_vec(
         .par_iter_mut()
         .progress_with_style(style)
         .map(|frame| {
-            let mut dense =
-                ms::DenseFrame::new(frame, &ims_converter, &mz_converter, &rt_converter);
-
-            let max_intensity_start = dense
+            let max_intensity_start = frame
                 .raw_peaks
                 .iter()
                 .map(|peak| peak.intensity)
                 .max()
                 .unwrap_or(0);
-            let num_peaks_start = dense.raw_peaks.len();
-            let tot_intensity_start = dense
+            let num_peaks_start = frame.raw_peaks.len();
+            let tot_intensity_start = frame
                 .raw_peaks
                 .iter()
                 .map(|peak| peak.intensity as f64)
                 .sum::<f64>();
             // let denoised_frame = dense.min_neighbor_denoise(0.015, 0.015, 2);
-            let denoised_frame = dbscan(&mut dense, 0.015, 0.03, min_n, min_intensity);
+            let denoised_frame = dbscan(frame, 0.015, 0.03, min_n, min_intensity);
             let tot_intensity_end = denoised_frame
                 .raw_peaks
                 .iter()
@@ -615,11 +606,13 @@ fn denoise_frame_vec(
                     frame.index, intensity_ratio, peak_ratio, max_intensity_start, max_intensity_end
                 );
                 if max_intensity_end < max_intensity_start {
-                    warn!("End max intensity is greater than start max intensity for frame {}!", frame.index);
-                    warn!("Before: {}", max_intensity_start);
-                    warn!("After: {}", max_intensity_end);
+                    println!("End max intensity is greater than start max intensity for frame {}!", frame.index);
+                    println!("Before: {}", max_intensity_start);
+                    println!("After: {}", max_intensity_end);
                 }
-                assert!((max_intensity_end >= max_intensity_start) && (max_intensity_start > 1000));
+
+                // Allow the next one to fail if there is very low intensity to start with.
+                assert!((max_intensity_end >= max_intensity_start) || (max_intensity_start < 1000));
                 assert!(peak_ratio <= 1.);
             };
             denoised_frame
@@ -655,11 +648,19 @@ pub fn read_all_ms1_denoising(path: String) -> Vec<ms::DenseFrame> {
         })
         .collect();
 
+    let denseframes = frames
+        .into_par_iter()
+        .map(|frame| {
+            let dense = ms::DenseFrame::new(&frame, &ims_converter, &mz_converter, &rt_converter);
+            dense
+        })
+        .collect();
+
     let min_intensity = 100u64;
     let min_n: usize = 3;
 
-    denoise_frame_vec(
-        frames,
+    denoise_denseframe_vec(
+        denseframes,
         rt_converter,
         ims_converter,
         mz_converter,
@@ -671,7 +672,7 @@ pub fn read_all_ms1_denoising(path: String) -> Vec<ms::DenseFrame> {
 // This could probably be a macro ...
 pub fn read_all_dia_denoising(path: String) -> Vec<ms::DenseFrame> {
     info!("Reading all DIA frames");
-    let reader = timsrust::FileReader::new(path).unwrap();
+    let reader = timsrust::FileReader::new(path.clone()).unwrap();
     let mut frames = reader.read_all_ms2_frames();
 
     let ims_converter = reader.get_scan_converter().unwrap();
@@ -686,14 +687,34 @@ pub fn read_all_dia_denoising(path: String) -> Vec<ms::DenseFrame> {
         })
         .collect();
 
+    let denseframes = frames
+        .into_par_iter()
+        .map(|frame| {
+            let dense = ms::DenseFrame::new(&frame, &ims_converter, &mz_converter, &rt_converter);
+            dense
+        })
+        .collect();
+
+    let dia_info = tdf::read_dia_frame_info(path.clone()).unwrap();
+    let split_frames = dia_info.split_dense_frames(denseframes);
+
     let min_intensity = 50u64;
     let min_n: usize = 2;
-    denoise_frame_vec(
-        frames,
-        rt_converter,
-        ims_converter,
-        mz_converter,
-        min_intensity,
-        min_n,
-    )
+
+    let mut out = Vec::new();
+    for dia_group in split_frames {
+        for quad_group in dia_group {
+            let denoised_frames = denoise_denseframe_vec(
+                quad_group.into_iter().map(|x| x.frame).collect(),
+                rt_converter.clone(),
+                ims_converter.clone(),
+                mz_converter.clone(),
+                min_intensity,
+                min_n,
+            );
+            out.extend(denoised_frames);
+        }
+    }
+
+    out
 }

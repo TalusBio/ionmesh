@@ -36,24 +36,6 @@ pub struct DenseFrame {
     pub sorted: Option<SortingOrder>,
 }
 
-// binary search ...
-fn binary_search<T: PartialOrd>(vec: &[T], target: &T) -> Option<usize> {
-    let mut low = 0;
-    let mut high = vec.len() - 1;
-
-    while low <= high {
-        let mid = (low + high) / 2;
-        if vec[mid] > *target {
-            high = mid - 1;
-        } else if vec[mid] < *target {
-            low = mid + 1;
-        } else {
-            return Some(mid);
-        }
-    }
-    None
-}
-
 pub struct DenseFrameWindow {
     pub frame: DenseFrame,
     pub ims_start: f32,
@@ -75,7 +57,12 @@ impl DenseFrameWindow {
         group_id: usize,
         quad_group_id: usize,
     ) -> DenseFrameWindow {
-        let bounds = Boundary::from_xxyy(ims_start.into(), ims_end.into(), mz_start.into(), mz_end.into());
+        let bounds = Boundary::from_xxyy(
+            ims_start.into(),
+            ims_end.into(),
+            mz_start.into(),
+            mz_end.into(),
+        );
         DenseFrameWindow {
             frame,
             ims_start,
@@ -89,7 +76,10 @@ impl DenseFrameWindow {
     }
 
     pub fn contains(&self, ims: f32, mz: f64) -> bool {
-        let point_use = Point{ x: ims.into(), y: mz.into() };
+        let point_use = Point {
+            x: ims.into(),
+            y: mz.into(),
+        };
         self.bounds.contains(&point_use)
     }
 }

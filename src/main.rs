@@ -15,7 +15,8 @@ mod quad;
 mod tdf;
 
 extern crate pretty_env_logger;
-#[macro_use] extern crate log;
+#[macro_use]
+extern crate log;
 
 // https://github.com/lerouxrgd/rsgen-avro
 // This can be used to generate the structs from
@@ -190,10 +191,8 @@ fn main() -> Result<(), Error> {
 
     let path_use = String::from("/Users/sebastianpaez/git/2023_dev_diadem_report/data/231121_RH30_NMIAA_E3_DIA_S2-B3_1_5353.d");
     let dia_info = tdf::read_dia_frame_info(path_use.clone());
-    ms_denoise::read_all_ms1_denoising(path_use.clone());
+    // ms_denoise::read_all_ms1_denoising(path_use.clone());
     let mut dia_frames = ms_denoise::read_all_dia_denoising(path_use.clone());
-
-    dia_info.unwrap().split_dense_frames(dia_frames);
 
     Ok(())
 }

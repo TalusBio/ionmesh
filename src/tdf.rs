@@ -1,11 +1,14 @@
+use log::{error, info, trace};
 use rerun::external::arrow2::io::print;
 use rusqlite::{Connection, Result};
-use timsrust::ConvertableIndex;
 use std::path::Path;
-use log::{info, error};
+use timsrust::ConvertableIndex;
 
 use crate::quad;
-use crate::{quad::Boundary, ms::{DenseFrame, DenseFrameWindow}};
+use crate::{
+    ms::{DenseFrame, DenseFrameWindow},
+    quad::Boundary,
+};
 
 // Diaframemsmsinfo = vec of frame_id -> windowgroup_id
 // diaframemsmswindows = vec[(windowgroup_id, scanstart, scanend, iso_mz, iso_with, nce)]
@@ -36,8 +39,8 @@ impl ScanRange {
         // Note that here I swap the start and end,
         // because lower scan numbers are actually
         // higher 1/k0 values. ... i think...
-        let ims_end  = scan_converter.convert(scan_start as u32);
-        let ims_start= scan_converter.convert(scan_end as u32);
+        let ims_end = scan_converter.convert(scan_start as u32);
+        let ims_start = scan_converter.convert(scan_end as u32);
 
         debug_assert!(ims_start < ims_end);
         let iso_low = iso_mz - iso_width / 2.0;
@@ -45,7 +48,12 @@ impl ScanRange {
 
         let ims_center = (ims_start + ims_end) / 2.0;
         let ims_width = ims_end - ims_start;
-        let ims_bounds = Boundary::new(ims_center as f64, iso_mz.clone() as f64, ims_width as f64, iso_width.clone() as f64);
+        let ims_bounds = Boundary::new(
+            ims_center as f64,
+            iso_mz.clone() as f64,
+            ims_width as f64,
+            iso_width.clone() as f64,
+        );
 
         Self {
             scan_start,
@@ -87,9 +95,7 @@ impl DIAFrameInfo {
 
         match group_id {
             None => return None,
-            Some(group_id) => {
-                self.groups[group_id].as_ref()
-            }
+            Some(group_id) => self.groups[group_id].as_ref(),
         }
     }
 
@@ -106,10 +112,15 @@ impl DIAFrameInfo {
         // 3. Binary search for start and end
         denseframe.sort_by_mobility();
         let mut frames = Vec::new();
-        let imss = denseframe.raw_peaks.iter().map(|peak| peak.mobility).collect::<Vec<_>>();
-        for(i, scan_range) in group.scan_ranges.iter().enumerate() {
+        let imss = denseframe
+            .raw_peaks
+            .iter()
+            .map(|peak| peak.mobility)
+            .collect::<Vec<_>>();
+        for (i, scan_range) in group.scan_ranges.iter().enumerate() {
             let start = imss.binary_search_by(|v| {
-                v.partial_cmp(&scan_range.ims_start).expect("Couldn't compare values")
+                v.partial_cmp(&scan_range.ims_start)
+                    .expect("Couldn't compare values")
             });
 
             let start = match start {
@@ -118,7 +129,8 @@ impl DIAFrameInfo {
             };
 
             let end = imss.binary_search_by(|v| {
-                v.partial_cmp(&scan_range.ims_end).expect("Couldn't compare values")
+                v.partial_cmp(&scan_range.ims_end)
+                    .expect("Couldn't compare values")
             });
 
             // i might need to add 1 here to make the range [closed, open)
@@ -127,7 +139,7 @@ impl DIAFrameInfo {
                 Err(x) => x,
             };
 
-            let frame = DenseFrame{
+            let frame = DenseFrame {
                 raw_peaks: denseframe.raw_peaks[start..end].to_vec(),
                 index: denseframe.index.clone(),
                 rt: denseframe.rt.clone(),
@@ -176,13 +188,18 @@ impl DIAFrameInfo {
         // Each element is a vector with length equal to the number of quad groups within
         // that group.
         // Each element of that vector is a vector of frames that belong to that quad group.
-        let max_num_quad_groups = self.groups.iter().map(|group| {
-            if group.is_none() {
-                0
-            } else {
-                group.as_ref().unwrap().scan_ranges.len()
-            }
-        }).max().unwrap();
+        let max_num_quad_groups = self
+            .groups
+            .iter()
+            .map(|group| {
+                if group.is_none() {
+                    0
+                } else {
+                    group.as_ref().unwrap().scan_ranges.len()
+                }
+            })
+            .max()
+            .unwrap();
 
         let num_groups = self.groups.len();
 
@@ -197,7 +214,7 @@ impl DIAFrameInfo {
 
         let bundled_split_frames = self.bundle_by_group(frames);
         for (i, frame_bundle) in bundled_split_frames.into_iter().enumerate() {
-            println!("Processing group {}", i);
+            info!("Processing group {}", i);
             for frame in frame_bundle {
                 let frame_windows = self.split_dense_frame(frame);
                 match frame_windows {
@@ -213,26 +230,28 @@ impl DIAFrameInfo {
             }
         }
 
-        let counts = out.iter().map(|group| {
-            group.iter().map(|quad_group| {
-                quad_group.len()
-            }).collect::<Vec<_>>()
-        }).collect::<Vec<_>>();
+        let counts = out
+            .iter()
+            .map(|group| {
+                group
+                    .iter()
+                    .map(|quad_group| quad_group.len())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
 
-        println!("Counts: {:?}", counts);
+        trace!("Counts: {:?}", counts);
 
         for (i, group) in counts.iter().enumerate() {
-            println!("Group {}", i);
+            trace!("Group {}", i);
             for (j, quad_group) in group.iter().enumerate() {
-                println!("  Quad group {}: {}", j, quad_group);
+                trace!("  Quad group {}: {}", j, quad_group);
             }
         }
 
         out
     }
-
 }
-
 
 // TODO implement splitting frames into dia group+quad groups.
 // [usize, math::round::floor(quad_mz_center)]
@@ -257,9 +276,7 @@ impl DIAFrameInfo {
 //     FOREIGN KEY (WindowGroup) REFERENCES DiaFrameMsMsWindowGroups (Id)
 //  ) WITHOUT ROWID
 
-pub fn read_dia_frame_info(
-    dotd_file: String,
-) -> Result<DIAFrameInfo> {
+pub fn read_dia_frame_info(dotd_file: String) -> Result<DIAFrameInfo> {
     let reader = timsrust::FileReader::new(dotd_file.clone()).unwrap();
     let scan_converter = reader.get_scan_converter().unwrap();
 
@@ -269,9 +286,7 @@ pub fn read_dia_frame_info(
     info!("tdf_path: {:?}", tdf_path);
     let conn = Connection::open(tdf_path)?;
 
-    let mut stmt_ids = conn.prepare(
-        "SELECT Frame, WindowGroup FROM DiaFrameMsMsInfo",
-    )?;
+    let mut stmt_ids = conn.prepare("SELECT Frame, WindowGroup FROM DiaFrameMsMsInfo")?;
 
     let mut ids_vec: Vec<(usize, usize)> = Vec::new();
     let res = stmt_ids.query_map([], |row| {
@@ -336,10 +351,18 @@ pub fn read_dia_frame_info(
         .max()
         .unwrap();
 
-    let mut groups_map_vec: Vec<Option<Vec<ScanRange>>> = (0..(max_window_id + 1)).map(|_| None).collect();
+    let mut groups_map_vec: Vec<Option<Vec<ScanRange>>> =
+        (0..(max_window_id + 1)).map(|_| None).collect();
 
     for (group, scan_start, scan_end, iso_mz, iso_width, nce) in groups_vec {
-        let scan_range = ScanRange::new(scan_start, scan_end, iso_mz, iso_width, nce, &scan_converter);
+        let scan_range = ScanRange::new(
+            scan_start,
+            scan_end,
+            iso_mz,
+            iso_width,
+            nce,
+            &scan_converter,
+        );
 
         if groups_map_vec[group].is_none() {
             groups_map_vec[group] = Some(Vec::new());
@@ -357,17 +380,12 @@ pub fn read_dia_frame_info(
     for (i, scan_ranges) in groups_map_vec.into_iter().enumerate() {
         let scan_ranges = match scan_ranges {
             None => continue,
-            Some(scan_ranges) => {
-                scan_ranges
-            }
+            Some(scan_ranges) => scan_ranges,
         };
         if scan_ranges.len() == 0 {
-            continue;            
+            continue;
         } else {
-            groups_vec_o[i] = Some(DIAWindowGroup {
-                id: i,
-                scan_ranges,
-            });
+            groups_vec_o[i] = Some(DIAWindowGroup { id: i, scan_ranges });
         }
     }
 
