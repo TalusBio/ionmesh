@@ -123,15 +123,9 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
         low_bounds[division_axis] = self.boundary.starts[division_axis];
         high_bounds[division_axis] = self.boundary.ends[division_axis];
 
-        let low_boundary = NDBoundary::new( 
-            low_bounds,
-            high_bounds,
-         );
+        let low_boundary = NDBoundary::new(low_bounds, high_bounds);
 
-        let high_boundary = NDBoundary::new( 
-            low_bounds,
-            high_bounds,
-         );
+        let high_boundary = NDBoundary::new(low_bounds, high_bounds);
 
         let mut low_split = RadiusKDTree::new_empty(low_boundary, self.capacity, self.radius);
         let mut high_split = RadiusKDTree::new_empty(high_boundary, self.capacity, self.radius);
@@ -157,7 +151,7 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
     pub fn query(&'a self, point: NDPoint<D>, result: &mut Vec<&'a T>) {
         let mut candidates = Vec::new();
         self.query_range(
-            NDBoundary::new( 
+            NDBoundary::new(
                 point
                     .values
                     .iter()
@@ -172,7 +166,7 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
                     .collect::<Vec<Float>>()
                     .try_into()
                     .unwrap(),
-             ),
+            ),
             &mut candidates,
         );
 

@@ -140,8 +140,9 @@ fn _dbscan<'a>(
                         let going_downhill =
                             prefiltered_peaks[**i].intensity() <= neighbor_intensity;
 
-                        // Using minkowski distance with p = 1, manhattan distance. 
-                        let dist = (p.values[0] - query_point.values[0]).abs() + (p.values[1] - query_point.values[1]).abs();
+                        // Using minkowski distance with p = 1, manhattan distance.
+                        let dist = (p.values[0] - query_point.values[0]).abs()
+                            + (p.values[1] - query_point.values[1]).abs();
                         let within_distance = dist <= MAX_EXTENSION_DISTANCE.powi(2);
                         going_downhill && within_distance
                     })

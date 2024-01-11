@@ -18,20 +18,24 @@ cargo run --release  389.74s user 13.00s system 662% cpu 1:00.82 total # Impleme
 cargo build --release && /usr/bin/time -lh ./target/release/timsextractor 
         1m18.01s real           8m4.77s user            11.41s sys
           2949349376  maximum resident set size
-                   0  average shared memory size
-                   0  average unshared data size
-                   0  average unshared stack size
-              694628  page reclaims
+              694,628  page reclaims
                    5  page faults
-                   0  swaps
-                   0  block input operations
-                   0  block output operations
-                   0  messages sent
-                   0  messages received
-                   0  signals received
                16024  voluntary context switches
               668389  involuntary context switches
        2435814934281  instructions retired
        1387001725171  cycles elapsed
           4859898368  peak memory footprint
+
+# First splitting the frames...
+possible oprimization: split frames without making a dense rep of the peaks. (implement frame section with scan offset)
+... maybe later ...
+        1m41.24s real           10m29.08s user          14.52s sys
+          5595365376  maximum resident set size
+           2,395,108  page reclaims
+                   4  page faults
+               16377  voluntary context switches
+              907012  involuntary context switches
+       4433147446666  instructions retired
+       1752673168780  cycles elapsed
+          7639286144  peak memory footprint
 ```

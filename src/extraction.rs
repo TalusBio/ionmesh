@@ -8,3 +8,6 @@ const EXTRACTION_WINDOW_PCT: f64 = 0.02;
 
 // Number of bins in which the grid will be divided.
 const NUM_BINS: usize = 20;
+
+const MS1_ISOTOPES: usize = 3;
+const MS2_ISOTOPES: usize = 2;

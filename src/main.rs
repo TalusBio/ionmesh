@@ -117,7 +117,6 @@ mod tests {
     }
 }
 
-
 fn main() -> Result<(), Error> {
     pretty_env_logger::init();
 

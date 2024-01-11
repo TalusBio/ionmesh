@@ -148,7 +148,9 @@ impl<'a, T> RadiusQuadTree<'a, T> {
     }
 
     pub fn subdivide(&mut self) {
-        let division_point = NDPoint{values: self.boundary.centers};
+        let division_point = NDPoint {
+            values: self.boundary.centers,
+        };
 
         //     |-----------------[c0, e1]-------------  ends
         //     |                    |                    |
@@ -168,10 +170,12 @@ impl<'a, T> RadiusQuadTree<'a, T> {
         let ne_boundary = NDBoundary::new(self.boundary.centers, self.boundary.ends);
         let nw_boundary = NDBoundary::new(
             [self.boundary.starts[0], self.boundary.centers[1]],
-            [self.boundary.centers[0], self.boundary.ends[1]]);
+            [self.boundary.centers[0], self.boundary.ends[1]],
+        );
         let se_boundary = NDBoundary::new(
             [self.boundary.centers[0], self.boundary.starts[1]],
-            [self.boundary.ends[0], self.boundary.centers[1]]);
+            [self.boundary.ends[0], self.boundary.centers[1]],
+        );
         let sw_boundary = NDBoundary::new(self.boundary.starts, self.boundary.centers);
 
         // println!("boundary {:?}", self.boundary);
@@ -217,14 +221,16 @@ impl<'a, T> RadiusQuadTree<'a, T> {
     pub fn query(&self, point: NDPoint<2>, result: &mut Vec<(NDPoint<2>, &'a T)>) {
         let range = NDBoundary::new(
             [point.values[0] - self.radius, point.values[1] - self.radius],
-            [point.values[0] + self.radius, point.values[1] + self.radius],);
+            [point.values[0] + self.radius, point.values[1] + self.radius],
+        );
         self.query_range(&range, result);
     }
 
     pub fn count_query(&self, point: NDPoint<2>, count_keeper: &mut u64) {
         let range = NDBoundary::new(
             [point.values[0] - self.radius, point.values[1] - self.radius],
-            [point.values[0] + self.radius, point.values[1] + self.radius],);
+            [point.values[0] + self.radius, point.values[1] + self.radius],
+        );
         self.count_query_range(&range, count_keeper);
     }
 
@@ -410,7 +416,10 @@ pub fn denseframe_to_quadtree_points(
     let quad_points = prefiltered_peaks // denseframe.raw_peaks //
         .iter()
         .map(|peak| NDPoint {
-            values: [(peak.mz / mz_scaling) as Float, (peak.mobility / ims_scaling) as Float],
+            values: [
+                (peak.mz / mz_scaling) as Float,
+                (peak.mobility / ims_scaling) as Float,
+            ],
         })
         .collect::<Vec<_>>();
 
