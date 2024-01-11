@@ -25,6 +25,7 @@ pretty_env_logger = "0.4"
 
 [features]
 viz = []
+f32 = []
 
 # [profile.release]
 # debug = true

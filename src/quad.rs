@@ -447,8 +447,8 @@ pub fn denseframe_to_quadtree_points(
     let quad_points = prefiltered_peaks // denseframe.raw_peaks //
         .iter()
         .map(|peak| Point {
-            x: (peak.mz / mz_scaling).into(),
-            y: (peak.mobility / ims_scaling).into(),
+            x: (peak.mz / mz_scaling) as Float,
+            y: (peak.mobility / ims_scaling) as Float,
         })
         .collect::<Vec<_>>();
 

@@ -4,6 +4,7 @@ pub use timsrust::{
     ConvertableIndex, FileReader, Frame2RtConverter, Scan2ImConverter, Tof2MzConverter,
 };
 
+use crate::mod_types::Float;
 use crate::quad::{Boundary, Point};
 
 #[derive(Debug, Clone, Copy)]
@@ -58,10 +59,10 @@ impl DenseFrameWindow {
         quad_group_id: usize,
     ) -> DenseFrameWindow {
         let bounds = Boundary::from_xxyy(
-            ims_start.into(),
-            ims_end.into(),
-            mz_start.into(),
-            mz_end.into(),
+            ims_start as Float,
+            ims_end as Float,
+            mz_start as Float,
+            mz_end as Float,
         );
         DenseFrameWindow {
             frame,
@@ -77,8 +78,8 @@ impl DenseFrameWindow {
 
     pub fn contains(&self, ims: f32, mz: f64) -> bool {
         let point_use = Point {
-            x: ims.into(),
-            y: mz.into(),
+            x: ims as Float,
+            y: mz as Float,
         };
         self.bounds.contains(&point_use)
     }

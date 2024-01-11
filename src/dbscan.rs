@@ -1,6 +1,7 @@
 use crate::ms;
 use crate::quad;
 use crate::quad::{denseframe_to_quadtree_points, RadiusQuadTree};
+use crate::mod_types::Float;
 
 // Pseudocode from wikipedia.
 // Donate to wikipedia y'all. :3
@@ -96,7 +97,7 @@ fn _dbscan<'a>(
         cluster_labels[point_index] = ClusterLabel::Cluster(cluster_id);
         let mut seed_set = neighbors.clone();
 
-        const MAX_EXTENSION_DISTANCE: f64 = 5.;
+        const MAX_EXTENSION_DISTANCE: Float = 5.;
 
         while let Some(neighbor) = seed_set.pop() {
             let neighbor_index = neighbor.1.clone();
@@ -155,7 +156,7 @@ fn _dbscan<'a>(
 pub fn dbscan(
     denseframe: &mut ms::DenseFrame,
     mz_scaling: f64,
-    ims_scaling: f64,
+    ims_scaling: f32,
     min_n: usize,
     min_intensity: u64,
 ) -> ms::DenseFrame {

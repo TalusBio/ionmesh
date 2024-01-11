@@ -4,6 +4,7 @@ use crate::ms::TimsPeak;
 use crate::quad;
 use crate::quad::{denseframe_to_quadtree_points, Boundary, RadiusQuadTree};
 use crate::{ms, tdf};
+use crate::mod_types::Float;
 
 use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 use log::{info, trace, warn};
@@ -11,7 +12,7 @@ use rayon::prelude::*;
 
 trait DenoisableFrame {
     // Drops peaks that dont have at least one neighbor within a given mz/mobility tolerance
-    fn min_neighbor_denoise(&mut self, mz_scaling: f64, ims_scaling: f64, min_n: usize) -> Self;
+    fn min_neighbor_denoise(&mut self, mz_scaling: f64, ims_scaling: f32, min_n: usize) -> Self;
 }
 
 impl DenoisableFrame for ms::DenseFrame {
@@ -19,7 +20,7 @@ impl DenoisableFrame for ms::DenseFrame {
     fn min_neighbor_denoise(
         &mut self,
         mz_scaling: f64,
-        ims_scaling: f64,
+        ims_scaling: f32,
         min_n: usize,
     ) -> ms::DenseFrame {
         // AKA could filter out the points with no mz neighbors sorting
@@ -75,8 +76,8 @@ fn log_denseframe_points(
         .raw_peaks
         .iter()
         .map(|peak| quad::Point {
-            x: (peak.mz / 10.),
-            y: (100. * peak.mobility as f64),
+            x: (peak.mz / 10.) as Float,
+            y: (100. * peak.mobility as Float),
         })
         .collect::<Vec<_>>();
 

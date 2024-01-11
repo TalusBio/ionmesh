@@ -9,6 +9,7 @@ use crate::{
     ms::{DenseFrame, DenseFrameWindow},
     quad::Boundary,
 };
+use crate::mod_types::Float;
 
 // Diaframemsmsinfo = vec of frame_id -> windowgroup_id
 // diaframemsmswindows = vec[(windowgroup_id, scanstart, scanend, iso_mz, iso_with, nce)]
@@ -49,10 +50,10 @@ impl ScanRange {
         let ims_center = (ims_start + ims_end) / 2.0;
         let ims_width = ims_end - ims_start;
         let ims_bounds = Boundary::new(
-            ims_center as f64,
-            iso_mz.clone() as f64,
-            ims_width as f64,
-            iso_width.clone() as f64,
+            ims_center as Float,
+            iso_mz.clone() as Float,
+            ims_width as Float,
+            iso_width.clone() as Float,
         );
 
         Self {
@@ -71,8 +72,8 @@ impl ScanRange {
 
     pub fn contains(&self, ims: f32, mz: f32) -> bool {
         let point = quad::Point {
-            x: ims as f64,
-            y: mz as f64,
+            x: ims as Float,
+            y: mz as Float,
         };
         self.ims_boundary.contains(&point)
     }
