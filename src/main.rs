@@ -8,6 +8,7 @@
 //
 
 use apache_avro::{Codec, Error, Schema, Writer};
+mod dbscan;
 mod extraction;
 mod ms;
 mod ms_denoise;

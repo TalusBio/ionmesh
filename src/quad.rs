@@ -1,3 +1,4 @@
+use crate::ms::{DenseFrame, TimsPeak};
 use core::panic;
 
 #[derive(Debug, Clone, Copy, serde::Serialize, PartialEq)]
@@ -412,5 +413,190 @@ mod test_boundary {
 
         let expect = 1.00;
         assert!(other.intersection(&boundary) - expect < max_diff);
+    }
+}
+
+pub fn denseframe_to_quadtree_points(
+    denseframe: &mut DenseFrame,
+    mz_scaling: f64,
+    ims_scaling: f64,
+    min_n: usize,
+) -> (Vec<Point>, Vec<TimsPeak>, Boundary) {
+    // Initial pre-filtering step
+    denseframe.sort_by_mz();
+
+    let num_neigh = count_neigh_monotonocally_increasing(
+        &denseframe.raw_peaks,
+        &|peak| peak.mz,
+        mz_scaling,
+        &|i_right, i_left| (i_right - i_left) >= min_n,
+    );
+
+    // Filter the peaks and replace the raw peaks with the filtered peaks.
+    let prefiltered_peaks = denseframe
+        .raw_peaks
+        .clone()
+        .into_iter()
+        .zip(num_neigh.into_iter())
+        .filter(|(_, b)| *b)
+        .map(|(peak, _)| peak.clone()) // Clone the TimsPeak
+        .collect::<Vec<_>>();
+
+    let quad_points = prefiltered_peaks // denseframe.raw_peaks //
+        .iter()
+        .map(|peak| Point {
+            x: (peak.mz / mz_scaling),
+            y: (peak.mobility as f64 / ims_scaling),
+        })
+        .collect::<Vec<_>>();
+
+    let (min_point, max_point) = min_max_points(&quad_points);
+    let min_x = min_point.x;
+    let min_y = min_point.y;
+    let max_x = max_point.x;
+    let max_y = max_point.y;
+
+    let boundary = Boundary::new(
+        (max_x + min_x) / 2.0,
+        (max_y + min_y) / 2.0,
+        max_x - min_x,
+        max_y - min_y,
+    );
+
+    (quad_points, prefiltered_peaks, boundary)
+    // (quad_points, denseframe.raw_peaks.clone(), boundary)
+
+    // NOTE: I would like to do this, but I dont know how to fix the lifetime issues...
+    // let mut tree: RadiusQuadTree<'_, TimsPeak> = quad::RadiusQuadTree::new(boundary, 20, 1.);
+    // for (point, timspeak) in quad_points.iter().zip(prefiltered_peaks.iter()) {
+    //     tree.insert(point.clone(), timspeak);
+    // }
+
+    // (quad_points, prefiltered_peaks, tree)
+}
+
+// TODO: rename count_neigh_monotonocally_increasing
+// because it can do more than just count neighbors....
+
+#[inline(always)]
+fn count_neigh_monotonocally_increasing<T, R, W>(
+    elems: &[T],
+    key: &dyn Fn(&T) -> R,
+    max_dist: R,
+    out_func: &dyn Fn(&usize, &usize) -> W,
+) -> Vec<W>
+where
+    R: PartialOrd + Copy + std::ops::Sub<Output = R> + std::ops::Add<Output = R> + Default,
+    T: Copy,
+    W: Default + Copy,
+{
+    let mut prefiltered_peaks_bool: Vec<W> = vec![W::default(); elems.len()];
+
+    let mut i_left = 0;
+    let mut i_right = 0;
+    let mut mz_left = key(&elems[0]);
+    let mut mz_right = key(&elems[0]);
+
+    // Does the cmpiler re-use the memory here?
+    // let mut curr_mz = R::default();
+    // let mut left_mz_diff = R::default();
+    // let mut right_mz_diff = R::default();
+
+    // 1. Slide the left index until the mz difference while sliding is more than the mz tolerance.
+    // 2. Slide the right index until the mz difference while sliding is greater than the mz tolerance.
+    // 3. If the number of points between the left and right index is greater than the minimum number of points, add them to the prefiltered peaks.
+
+    let elems_len = elems.len();
+    let elems_len_minus_one = elems_len - 1;
+    for (curr_i, elem) in elems.iter().enumerate() {
+        let curr_mz = key(elem);
+        let mut left_mz_diff = curr_mz - mz_left;
+        let mut right_mz_diff = mz_right - curr_mz;
+
+        while left_mz_diff > max_dist {
+            i_left += 1;
+            mz_left = key(&elems[i_left]);
+            left_mz_diff = curr_mz - mz_left;
+        }
+
+        // Slide the right index until the mz difference while sliding is greater than the mz tolerance.
+        while (right_mz_diff < max_dist) && (i_right < elems_len) {
+            i_right += 1;
+            mz_right = key(&elems[i_right.min(elems_len_minus_one)]);
+            right_mz_diff = mz_right - curr_mz;
+        }
+
+        // If the number of points between the left and right index is greater than the minimum number of points, add them to the prefiltered peaks.
+        // println!("{} {}", i_left, i_right);
+        if i_left < i_right {
+            prefiltered_peaks_bool[curr_i] = out_func(&i_right, &(i_left));
+        }
+
+        if cfg!(test) {
+            assert!(i_left <= i_right);
+        }
+    }
+
+    prefiltered_peaks_bool
+}
+
+#[cfg(test)]
+mod test_count_neigh {
+    use super::*;
+
+    #[test]
+    fn test_count_neigh() {
+        let elems = vec![0.0, 1.0, 2.0, 3.0, 4.0];
+
+        let prefiltered_peaks_bool =
+            count_neigh_monotonocally_increasing(&elems, &|x| *x, 1.1, &|i_right, i_left| {
+                (i_right - i_left) >= 3
+            });
+
+        assert_eq!(prefiltered_peaks_bool, vec![false, true, true, true, false]);
+    }
+}
+
+fn min_max_points(points: &[Point]) -> (Point, Point) {
+    let mut min_x = points[0].x;
+    let mut max_x = points[0].x;
+    let mut min_y = points[0].y;
+    let mut max_y = points[0].y;
+
+    for p in points.iter() {
+        if p.x < min_x {
+            min_x = p.x;
+        } else if p.x > max_x {
+            max_x = p.x;
+        }
+
+        if p.y < min_y {
+            min_y = p.y;
+        } else if p.y > max_y {
+            max_y = p.y;
+        }
+    }
+
+    (Point { x: min_x, y: min_y }, Point { x: max_x, y: max_y })
+}
+
+#[cfg(test)]
+mod test_min_max {
+    use super::*;
+
+    #[test]
+    fn test_min_max() {
+        let points = vec![
+            Point { x: 0.0, y: 0.0 },
+            Point { x: 1.0, y: 1.0 },
+            Point { x: 2.0, y: 2.0 },
+            Point { x: 3.0, y: 3.0 },
+            Point { x: 4.0, y: 4.0 },
+        ];
+
+        let (min_point, max_point) = min_max_points(&points);
+
+        assert_eq!(min_point, Point { x: 0.0, y: 0.0 });
+        assert_eq!(max_point, Point { x: 4.0, y: 4.0 });
     }
 }
