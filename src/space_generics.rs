@@ -71,7 +71,9 @@ impl<const D: usize> NDBoundary<D> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+// #[derive(Debug, Clone, Copy)]
+// Oddly enough ... adding copy makes it slower ...
+#[derive(Debug, Clone)]
 pub struct NDPoint<const DIMENSIONALITY: usize> {
     pub values: [Float; DIMENSIONALITY],
 }

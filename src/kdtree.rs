@@ -56,12 +56,11 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
 
                 if split_check.is_err() {
                     self.points.push((point, value));
+                } else {
+                    self.insert_ndpoint(point, value);
                 }
-                // Ok case handled in the next chunk.
             }
-        };
-
-        if self.division_value.is_some() {
+        } else {
             let division_value = self.division_value.unwrap();
             let division_axis = self.division_axis.unwrap();
             if point.values[division_axis] < division_value {

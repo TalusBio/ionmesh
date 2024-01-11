@@ -80,24 +80,30 @@ fn _dbscan<'a>(
             continue;
         }
 
-        let mut neighbors = Vec::new();
         let query_point = quad_points[point_index].clone();
-        tree.query(query_point, &mut neighbors);
+        let neighbors = tree.query(&query_point);
+
+        if neighbors.len() < min_n {
+            cluster_labels[point_index] = ClusterLabel::Noise;
+            continue;
+        }
 
         // Do I need to care about overflows here?
-        let neighbor_intensity_total: u64 = neighbors
-            .iter()
-            .map(|(_, i)| prefiltered_peaks[**i].intensity() as u64)
-            .sum::<u64>();
+        let mut neighbor_intensity_total: u64 = 0;
+        
+        for (_, i) in neighbors.iter() {
+            neighbor_intensity_total += prefiltered_peaks[**i].intensity() as u64;
+        }
 
-        if neighbors.len() < min_n || neighbor_intensity_total < min_intensity {
+        if neighbor_intensity_total < min_intensity {
             cluster_labels[point_index] = ClusterLabel::Noise;
             continue;
         }
 
         cluster_id += 1;
         cluster_labels[point_index] = ClusterLabel::Cluster(cluster_id);
-        let mut seed_set = neighbors.clone();
+        let mut seed_set: Vec<(&NDPoint<2>, &usize)> = Vec::new();
+        seed_set.extend(neighbors);
 
         const MAX_EXTENSION_DISTANCE: Float = 5.;
 
@@ -113,8 +119,7 @@ fn _dbscan<'a>(
 
             cluster_labels[neighbor_index] = ClusterLabel::Cluster(cluster_id);
 
-            let mut neighbors = Vec::new();
-            tree.query(neighbor.0, &mut neighbors);
+            let neighbors = tree.query(neighbor.0);
 
             let neighbor_intensity: u32 = prefiltered_peaks[neighbor_index].intensity();
             let neighbor_intensity_total = neighbors
@@ -124,7 +129,7 @@ fn _dbscan<'a>(
 
             if neighbors.len() >= min_n && neighbor_intensity_total >= min_intensity {
                 // Keep only the neighbors that are not already in a cluster
-                neighbors = neighbors
+                let local_neighbors = neighbors
                     .into_iter()
                     .filter(|(_, i)| match cluster_labels[**i] {
                         ClusterLabel::Cluster(_) => false,
@@ -134,7 +139,7 @@ fn _dbscan<'a>(
 
                 // Keep only the neighbors that are within the max extension distance
                 // It might be worth setting a different max extension distance for the mz and mobility dimensions.
-                neighbors = neighbors
+                let local_neighbors2 = local_neighbors
                     .into_iter()
                     .filter(|(p, i)| {
                         let going_downhill =
@@ -148,7 +153,7 @@ fn _dbscan<'a>(
                     })
                     .collect::<Vec<_>>();
 
-                seed_set.extend(neighbors);
+                seed_set.extend(local_neighbors2);
             }
         }
     }

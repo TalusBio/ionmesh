@@ -50,7 +50,7 @@ impl DenoisableFrame for ms::DenseFrame {
             let mut result_counts = 0;
 
             // TODO: implement an 'any neighbor' method.
-            tree.count_query(*point, &mut result_counts);
+            tree.count_query(point, &mut result_counts);
 
             if result_counts >= min_n {
                 denoised_peaks.push(*peaks);

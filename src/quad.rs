@@ -122,14 +122,12 @@ impl<'a, T> RadiusQuadTree<'a, T> {
                     self.points.push((point, data));
                 } else {
                     self.subdivide();
+                    self.insert(point, data);
                 }
             }
-        };
-
-        if self.division_point.is_some() {
-            let div_point = self.division_point.unwrap();
-            let div_x = div_point.values[0];
-            let div_y = div_point.values[1];
+        } else { 
+            let div_x = self.division_point.as_ref().unwrap().values[0];
+            let div_y = self.division_point.as_ref().unwrap().values[1];
 
             if point.values[0] >= div_x {
                 if point.values[1] >= div_y {
@@ -209,24 +207,24 @@ impl<'a, T> RadiusQuadTree<'a, T> {
         self.division_point = Some(division_point);
 
         // Move points into sub-trees
-        let mut i = 0;
-        while i < self.points.len() {
-            let (point, data) = self.points[i];
-            self.insert(point, data);
-            i += 1;
+        while let Some(point) = self.points.pop() {
+            self.insert(point.0, point.1);
         }
         self.points.clear();
     }
 
-    pub fn query(&self, point: NDPoint<2>, result: &mut Vec<(NDPoint<2>, &'a T)>) {
+    pub fn query(&'a self, point: &NDPoint<2>) -> Vec<(&'a NDPoint<2>, &'a T)> {
+        let mut result = Vec::new();
         let range = NDBoundary::new(
             [point.values[0] - self.radius, point.values[1] - self.radius],
             [point.values[0] + self.radius, point.values[1] + self.radius],
         );
-        self.query_range(&range, result);
+        self.query_range(&range, &mut result);
+
+        return result;
     }
 
-    pub fn count_query(&self, point: NDPoint<2>, count_keeper: &mut u64) {
+    pub fn count_query(&self, point: &NDPoint<2>, count_keeper: &mut u64) {
         let range = NDBoundary::new(
             [point.values[0] - self.radius, point.values[1] - self.radius],
             [point.values[0] + self.radius, point.values[1] + self.radius],
@@ -240,7 +238,7 @@ impl<'a, T> RadiusQuadTree<'a, T> {
         }
 
         let mut local_count = 0;
-        for &(point, _) in &self.points {
+        for (point, _) in &self.points {
             if range.contains(&point) {
                 local_count += 1;
             }
@@ -269,22 +267,23 @@ impl<'a, T> RadiusQuadTree<'a, T> {
     }
 
     // This function is used a lot so any optimization here will have a big impact.
-    pub fn query_range(&self, range: &NDBoundary<2>, result: &mut Vec<(NDPoint<2>, &'a T)>) {
+    pub fn query_range(&'a self, range: &NDBoundary<2>, result: &mut Vec<(&'a NDPoint<2>, &'a T)>) {
         if !self.boundary.intersects(range) || self.count == 0 {
             return;
         }
 
-        // There might be some optimization possible if we divide further the trees,
-        // we could check if the range is fully contained in the boundary and if so
-        // we could skip the containment checks.
-        //
-        for &(point, data) in &self.points {
-            if range.contains(&point) {
-                result.push((point, data));
+        if self.division_point.is_none() {
+            // There might be some optimization possible if we divide further the trees,
+            // we could check if the range is fully contained in the boundary and if so
+            // we could skip the containment checks.
+            //
+            for (point, data) in self.points.iter() {
+                if range.contains(&point) {
+                    result.push((&point, data));
+                }
             }
-        }
-
-        if self.division_point.is_some() {
+        } else {
+            assert_eq!(self.points.len(), 0);
             self.northeast.as_ref().unwrap().query_range(range, result);
             self.northwest.as_ref().unwrap().query_range(range, result);
             self.southeast.as_ref().unwrap().query_range(range, result);

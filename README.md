@@ -35,7 +35,19 @@ possible oprimization: split frames without making a dense rep of the peaks. (im
                    4  page faults
                16377  voluntary context switches
               907012  involuntary context switches
-       4433147446666  instructions retired
+       4433,147,446,666  instructions retired
        1752673168780  cycles elapsed
           7639286144  peak memory footprint
+
+
++ Some cleanup in memory usage
+        1m28.77s real           8m49.13s user           15.34s sys
+          4269408256  maximum resident set size
+             2,609,256  page reclaims
+                   4  page faults
+               16364  voluntary context switches
+              841,316  involuntary context switches
+       3985,072,152,374  instructions retired
+       1487550309281  cycles elapsed
+          7,997,342,464  peak memory footprint
 ```
