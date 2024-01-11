@@ -2,6 +2,7 @@ use crate::mod_types::Float;
 use crate::ms;
 use crate::quad;
 use crate::quad::{denseframe_to_quadtree_points, RadiusQuadTree};
+use crate::space_generics::NDPoint;
 
 // Pseudocode from wikipedia.
 // Donate to wikipedia y'all. :3
@@ -61,10 +62,11 @@ impl HasIntensity<u32> for ms::TimsPeak {
     }
 }
 
+// TODO make generic over dimensions
 fn _dbscan<'a>(
     tree: &RadiusQuadTree<'a, usize>,
     prefiltered_peaks: &Vec<impl HasIntensity<u32>>,
-    quad_points: &Vec<quad::Point>,
+    quad_points: &Vec<NDPoint<2>>, // TODO make generic over dimensions
     min_n: usize,
     min_intensity: u64,
     intensity_sorted_indices: &Vec<(usize, u32)>,
@@ -130,9 +132,6 @@ fn _dbscan<'a>(
                     })
                     .collect::<Vec<_>>();
 
-                // TODO add option to make sure further integrations
-                // only decrease in intensity.
-
                 // Keep only the neighbors that are within the max extension distance
                 // It might be worth setting a different max extension distance for the mz and mobility dimensions.
                 neighbors = neighbors
@@ -140,7 +139,9 @@ fn _dbscan<'a>(
                     .filter(|(p, i)| {
                         let going_downhill =
                             prefiltered_peaks[**i].intensity() <= neighbor_intensity;
-                        let dist = (p.x - query_point.x).powi(2) + (p.y - query_point.y).powi(2);
+
+                        // Using minkowski distance with p = 1, manhattan distance. 
+                        let dist = (p.values[0] - query_point.values[0]).abs() + (p.values[1] - query_point.values[1]).abs();
                         let within_distance = dist <= MAX_EXTENSION_DISTANCE.powi(2);
                         going_downhill && within_distance
                     })

@@ -1,59 +1,5 @@
 use crate::mod_types::Float;
-// f32 or f64 depending on compilation
-
-#[derive(Debug, Clone, Copy)]
-pub struct NDBoundary<const DIMENSIONALITY: usize> {
-    pub starts: [Float; DIMENSIONALITY],
-    pub ends: [Float; DIMENSIONALITY],
-}
-
-impl<const D: usize> NDBoundary<D> {
-    fn contains(&self, point: &NDPoint<D>) -> bool {
-        for i in 0..D {
-            if point.values[i] < self.starts[i] || point.values[i] >= self.ends[i] {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    fn intersects(&self, other: &NDBoundary<D>) -> bool {
-        for i in 0..D {
-            if self.starts[i] >= other.ends[i] || self.ends[i] <= other.starts[i] {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    fn from_ndpoints(points: &[NDPoint<D>]) -> NDBoundary<D> {
-        let mut starts = [Float::MAX; D];
-        let mut ends = [Float::MIN; D];
-
-        for point in points.iter() {
-            for i in 0..D {
-                if point.values[i] < starts[i] {
-                    starts[i] = point.values[i];
-                }
-                if point.values[i] > ends[i] {
-                    ends[i] = point.values[i];
-                }
-            }
-        }
-
-        NDBoundary { starts, ends }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct NDPoint<const DIMENSIONALITY: usize> {
-    values: [Float; DIMENSIONALITY],
-}
-
-trait IntoNDPoint<const DIMENSIONALITY: usize> {
-    fn into_nd_point(&self) -> NDPoint<DIMENSIONALITY>;
-}
-
+use crate::space_generics::{NDBoundary, NDPoint};
 // Implements a kdtree with several minor differences.
 #[derive(Debug, Clone)]
 pub struct RadiusKDTree<'a, T, const DIMENSIONALITY: usize> {
@@ -139,7 +85,7 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
         let mut longest_axis_length: Option<Float> = None;
 
         for i in 1..D {
-            let axis_length = self.boundary.ends[i] - self.boundary.starts[i];
+            let axis_length = self.boundary.widths[i];
             if axis_length < self.radius {
                 continue;
             }
@@ -177,15 +123,15 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
         low_bounds[division_axis] = self.boundary.starts[division_axis];
         high_bounds[division_axis] = self.boundary.ends[division_axis];
 
-        let low_boundary = NDBoundary {
-            starts: low_bounds,
-            ends: high_bounds,
-        };
+        let low_boundary = NDBoundary::new( 
+            low_bounds,
+            high_bounds,
+         );
 
-        let high_boundary = NDBoundary {
-            starts: low_bounds,
-            ends: high_bounds,
-        };
+        let high_boundary = NDBoundary::new( 
+            low_bounds,
+            high_bounds,
+         );
 
         let mut low_split = RadiusKDTree::new_empty(low_boundary, self.capacity, self.radius);
         let mut high_split = RadiusKDTree::new_empty(high_boundary, self.capacity, self.radius);
@@ -211,22 +157,22 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
     pub fn query(&'a self, point: NDPoint<D>, result: &mut Vec<&'a T>) {
         let mut candidates = Vec::new();
         self.query_range(
-            NDBoundary {
-                starts: point
+            NDBoundary::new( 
+                point
                     .values
                     .iter()
                     .map(|x| x - self.radius)
                     .collect::<Vec<Float>>()
                     .try_into()
                     .unwrap(),
-                ends: point
+                point
                     .values
                     .iter()
                     .map(|x| x + self.radius)
                     .collect::<Vec<Float>>()
                     .try_into()
                     .unwrap(),
-            },
+             ),
             &mut candidates,
         );
 

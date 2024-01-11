@@ -1,5 +1,6 @@
 use crate::mod_types::Float;
 use crate::ms::{DenseFrame, TimsPeak};
+use crate::space_generics::{NDBoundary, NDPoint};
 use core::panic;
 
 #[derive(Debug, Clone, Copy, serde::Serialize, PartialEq)]
@@ -21,7 +22,6 @@ pub struct Boundary {
 }
 
 const EPS: Float = 1e-6;
-
 impl Boundary {
     pub fn new(x_center: Float, y_center: Float, width: Float, height: Float) -> Boundary {
         Boundary {
@@ -56,20 +56,20 @@ impl Boundary {
 
 #[derive(Debug, Clone)]
 pub struct RadiusQuadTree<'a, T> {
-    boundary: Boundary,
+    boundary: NDBoundary<2>,
     capacity: usize,
     radius: Float,
-    points: Vec<(Point, &'a T)>,
+    points: Vec<(NDPoint<2>, &'a T)>,
     northeast: Option<Box<RadiusQuadTree<'a, T>>>,
     northwest: Option<Box<RadiusQuadTree<'a, T>>>,
     southeast: Option<Box<RadiusQuadTree<'a, T>>>,
     southwest: Option<Box<RadiusQuadTree<'a, T>>>,
-    division_point: Option<Point>,
+    division_point: Option<NDPoint<2>>,
     count: usize,
 }
 
 impl<'a, T> RadiusQuadTree<'a, T> {
-    pub fn new(boundary: Boundary, capacity: usize, radius: Float) -> RadiusQuadTree<'a, T> {
+    pub fn new(boundary: NDBoundary<2>, capacity: usize, radius: Float) -> RadiusQuadTree<'a, T> {
         RadiusQuadTree {
             boundary,
             capacity,
@@ -84,21 +84,21 @@ impl<'a, T> RadiusQuadTree<'a, T> {
         }
     }
 
-    pub fn insert(&mut self, point: Point, data: &'a T) {
+    pub fn insert(&mut self, point: NDPoint<2>, data: &'a T) {
         if cfg!(debug_assertions) && !self.boundary.contains(&point) {
             println!(
                 "(Error??) Point outside of boundary {:?} {:?}",
                 point, self.boundary
             );
             // print xs and ys
-            println!("x: {:?} y: {:?}", point.x, point.y);
+            println!("x: {:?} y: {:?}", point.values[0], point.values[1]);
             println!(
                 "xmin: {:?} xmax: {:?}",
-                self.boundary.xmin, self.boundary.xmax
+                self.boundary.starts[0], self.boundary.ends[0]
             );
             println!(
                 "ymin: {:?} ymax: {:?}",
-                self.boundary.ymin, self.boundary.ymax
+                self.boundary.starts[1], self.boundary.ends[1]
             );
             panic!("Point outside of boundary");
         }
@@ -106,8 +106,8 @@ impl<'a, T> RadiusQuadTree<'a, T> {
         self.count += 1;
 
         if self.division_point.is_none() {
-            let distance_squared = (point.x - self.boundary.x_center).powi(2)
-                + (point.y - self.boundary.y_center).powi(2);
+            let distance_squared = (point.values[0] - self.boundary.centers[0]).powi(2)
+                + (point.values[1] - self.boundary.centers[1]).powi(2);
 
             // This can be pre-computed
             // let radius_squared = self.radius.powi(2);
@@ -127,17 +127,18 @@ impl<'a, T> RadiusQuadTree<'a, T> {
         };
 
         if self.division_point.is_some() {
-            let div_x = self.division_point.unwrap().x;
-            let div_y = self.division_point.unwrap().y;
+            let div_point = self.division_point.unwrap();
+            let div_x = div_point.values[0];
+            let div_y = div_point.values[1];
 
-            if point.x >= div_x {
-                if point.y >= div_y {
+            if point.values[0] >= div_x {
+                if point.values[1] >= div_y {
                     self.northeast.as_mut().unwrap().insert(point, data);
                 } else {
                     self.southeast.as_mut().unwrap().insert(point, data);
                 }
             } else {
-                if point.y >= div_y {
+                if point.values[1] >= div_y {
                     self.northwest.as_mut().unwrap().insert(point, data);
                 } else {
                     self.southwest.as_mut().unwrap().insert(point, data);
@@ -147,21 +148,31 @@ impl<'a, T> RadiusQuadTree<'a, T> {
     }
 
     pub fn subdivide(&mut self) {
-        // println!("Subdividing");
-        let x = self.boundary.x_center;
-        let y = self.boundary.y_center;
-        let w = self.boundary.width / 2.0;
-        let h = self.boundary.height / 2.0;
-        let w_offset = self.boundary.width / 4.0;
-        let h_offset = self.boundary.height / 4.0;
+        let division_point = NDPoint{values: self.boundary.centers};
 
-        let division_point = Point { x: x, y: y };
+        //     |-----------------[c0, e1]-------------  ends
+        //     |                    |                    |
+        //     |                    |                    |
+        //     |      NW            |        NE          |
+        //     |                    |                    |
+        //     |                    |                    |
+        //   [s0, c1] ----------- center -------------- [e0, c1]
+        //     |                    |                    |
+        //     |                    |                    |
+        //     |     SW             |       SE           |
+        //     |                    |                    |
+        //     |                    |                    |
+        //    start  ----------- [c0, s1] ---------------|
 
         // Define boundaries for each quadrant
-        let ne_boundary = Boundary::new(x + w_offset, y + h_offset, w, h);
-        let nw_boundary = Boundary::new(x - w_offset, y + h_offset, w, h);
-        let se_boundary = Boundary::new(x + w_offset, y - h_offset, w, h);
-        let sw_boundary = Boundary::new(x - w_offset, y - h_offset, w, h);
+        let ne_boundary = NDBoundary::new(self.boundary.centers, self.boundary.ends);
+        let nw_boundary = NDBoundary::new(
+            [self.boundary.starts[0], self.boundary.centers[1]],
+            [self.boundary.centers[0], self.boundary.ends[1]]);
+        let se_boundary = NDBoundary::new(
+            [self.boundary.centers[0], self.boundary.starts[1]],
+            [self.boundary.ends[0], self.boundary.centers[1]]);
+        let sw_boundary = NDBoundary::new(self.boundary.starts, self.boundary.centers);
 
         // println!("boundary {:?}", self.boundary);
         // println!("ne_boundary {:?}", ne_boundary);
@@ -203,17 +214,21 @@ impl<'a, T> RadiusQuadTree<'a, T> {
         self.points.clear();
     }
 
-    pub fn query(&self, point: Point, result: &mut Vec<(Point, &'a T)>) {
-        let range = Boundary::new(point.x, point.y, self.radius, self.radius);
+    pub fn query(&self, point: NDPoint<2>, result: &mut Vec<(NDPoint<2>, &'a T)>) {
+        let range = NDBoundary::new(
+            [point.values[0] - self.radius, point.values[1] - self.radius],
+            [point.values[0] + self.radius, point.values[1] + self.radius],);
         self.query_range(&range, result);
     }
 
-    pub fn count_query(&self, point: Point, count_keeper: &mut u64) {
-        let range = Boundary::new(point.x, point.y, self.radius, self.radius);
+    pub fn count_query(&self, point: NDPoint<2>, count_keeper: &mut u64) {
+        let range = NDBoundary::new(
+            [point.values[0] - self.radius, point.values[1] - self.radius],
+            [point.values[0] + self.radius, point.values[1] + self.radius],);
         self.count_query_range(&range, count_keeper);
     }
 
-    pub fn count_query_range(&self, range: &Boundary, count_keeper: &mut u64) {
+    pub fn count_query_range(&self, range: &NDBoundary<2>, count_keeper: &mut u64) {
         if !self.boundary.intersects(range) || self.count == 0 {
             return;
         }
@@ -248,7 +263,7 @@ impl<'a, T> RadiusQuadTree<'a, T> {
     }
 
     // This function is used a lot so any optimization here will have a big impact.
-    pub fn query_range(&self, range: &Boundary, result: &mut Vec<(Point, &'a T)>) {
+    pub fn query_range(&self, range: &NDBoundary<2>, result: &mut Vec<(NDPoint<2>, &'a T)>) {
         if !self.boundary.intersects(range) || self.count == 0 {
             return;
         }
@@ -269,57 +284,6 @@ impl<'a, T> RadiusQuadTree<'a, T> {
             self.southeast.as_ref().unwrap().query_range(range, result);
             self.southwest.as_ref().unwrap().query_range(range, result);
         }
-    }
-
-    pub fn to_json(&self) -> String {
-        let mut json = String::new();
-        json.push_str("{\n");
-        json.push_str(&format!(
-            "\"boundary\": {},",
-            serde_json::to_string(&self.boundary).unwrap()
-        ));
-        json.push_str(&format!("\"capacity\": {},", self.capacity));
-        json.push_str(&format!("\"radius\": {},", self.radius));
-
-        if self.points.len() > 0 {
-            json.push_str(&format!("\"points\": ["));
-            for (point, _) in &self.points {
-                json.push_str(&format!("{},", serde_json::to_string(&point).unwrap()));
-            }
-            // remove trailing comma
-            json.pop();
-            json.push_str("],");
-        }
-        json.push_str(&format!(
-            "\"northeast\": {},",
-            match &self.northeast {
-                Some(tree) => tree.to_json(),
-                None => "null".to_string(),
-            }
-        ));
-        json.push_str(&format!(
-            "\"northwest\": {},",
-            match &self.northwest {
-                Some(tree) => tree.to_json(),
-                None => "null".to_string(),
-            }
-        ));
-        json.push_str(&format!(
-            "\"southeast\": {},",
-            match &self.southeast {
-                Some(tree) => tree.to_json(),
-                None => "null".to_string(),
-            }
-        ));
-        json.push_str(&format!(
-            "\"southwest\": {}",
-            match &self.southwest {
-                Some(tree) => tree.to_json(),
-                None => "null".to_string(),
-            }
-        ));
-        json.push_str("}\n");
-        json
     }
 }
 
@@ -422,7 +386,7 @@ pub fn denseframe_to_quadtree_points(
     mz_scaling: f64,
     ims_scaling: f32,
     min_n: usize,
-) -> (Vec<Point>, Vec<TimsPeak>, Boundary) {
+) -> (Vec<NDPoint<2>>, Vec<TimsPeak>, NDBoundary<2>) {
     // Initial pre-filtering step
     denseframe.sort_by_mz();
 
@@ -445,25 +409,12 @@ pub fn denseframe_to_quadtree_points(
 
     let quad_points = prefiltered_peaks // denseframe.raw_peaks //
         .iter()
-        .map(|peak| Point {
-            x: (peak.mz / mz_scaling) as Float,
-            y: (peak.mobility / ims_scaling) as Float,
+        .map(|peak| NDPoint {
+            values: [(peak.mz / mz_scaling) as Float, (peak.mobility / ims_scaling) as Float],
         })
         .collect::<Vec<_>>();
 
-    let (min_point, max_point) = min_max_points(&quad_points);
-    let min_x = min_point.x;
-    let min_y = min_point.y;
-    let max_x = max_point.x;
-    let max_y = max_point.y;
-
-    let boundary = Boundary::new(
-        (max_x + min_x) / 2.0,
-        (max_y + min_y) / 2.0,
-        max_x - min_x,
-        max_y - min_y,
-    );
-
+    let boundary = NDBoundary::from_ndpoints(&quad_points);
     (quad_points, prefiltered_peaks, boundary)
     // (quad_points, denseframe.raw_peaks.clone(), boundary)
 
