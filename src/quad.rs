@@ -1,28 +1,30 @@
+
+use crate::mod_types::Float;
 use crate::ms::{DenseFrame, TimsPeak};
 use core::panic;
 
 #[derive(Debug, Clone, Copy, serde::Serialize, PartialEq)]
 pub struct Point {
-    pub x: f64,
-    pub y: f64,
+    pub x: Float,
+    pub y: Float,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize)]
 pub struct Boundary {
-    pub x_center: f64,
-    pub y_center: f64,
-    pub width: f64,
-    pub height: f64,
-    xmin: f64,
-    xmax: f64,
-    ymin: f64,
-    ymax: f64,
+    pub x_center: Float,
+    pub y_center: Float,
+    pub width: Float,
+    pub height: Float,
+    xmin: Float,
+    xmax: Float,
+    ymin: Float,
+    ymax: Float,
 }
 
-const EPS: f64 = 1e-6;
+const EPS: Float = 1e-6;
 
 impl Boundary {
-    pub fn new(x_center: f64, y_center: f64, width: f64, height: f64) -> Boundary {
+    pub fn new(x_center: Float, y_center: Float, width: Float, height: Float) -> Boundary {
         Boundary {
             x_center,
             y_center,
@@ -35,7 +37,7 @@ impl Boundary {
         }
     }
 
-    pub fn from_xxyy(xmin: f64, xmax: f64, ymin: f64, ymax: f64) -> Boundary {
+    pub fn from_xxyy(xmin: Float, xmax: Float, ymin: Float, ymax: Float) -> Boundary {
         let x_center = (xmin + xmax) / 2.0;
         let y_center = (ymin + ymax) / 2.0;
         let width = xmax - xmin;
@@ -53,11 +55,11 @@ impl Boundary {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RadiusQuadTree<'a, T> {
     boundary: Boundary,
     capacity: usize,
-    radius: f64,
+    radius: Float,
     points: Vec<(Point, &'a T)>,
     northeast: Option<Box<RadiusQuadTree<'a, T>>>,
     northwest: Option<Box<RadiusQuadTree<'a, T>>>,
@@ -68,7 +70,7 @@ pub struct RadiusQuadTree<'a, T> {
 }
 
 impl<'a, T> RadiusQuadTree<'a, T> {
-    pub fn new(boundary: Boundary, capacity: usize, radius: f64) -> RadiusQuadTree<'a, T> {
+    pub fn new(boundary: Boundary, capacity: usize, radius: Float) -> RadiusQuadTree<'a, T> {
         RadiusQuadTree {
             boundary,
             capacity,
@@ -327,7 +329,7 @@ impl Boundary {
         point.x >= self.xmin && point.x <= self.xmax && point.y >= self.ymin && point.y <= self.ymax
     }
 
-    pub fn intersection(&self, other: &Boundary) -> f64 {
+    pub fn intersection(&self, other: &Boundary) -> Float {
         // Returns the fraction of the area of self that is overlapped by other.
 
         // Top left corner
@@ -419,7 +421,7 @@ mod test_boundary {
 pub fn denseframe_to_quadtree_points(
     denseframe: &mut DenseFrame,
     mz_scaling: f64,
-    ims_scaling: f64,
+    ims_scaling: f32,
     min_n: usize,
 ) -> (Vec<Point>, Vec<TimsPeak>, Boundary) {
     // Initial pre-filtering step
@@ -445,8 +447,8 @@ pub fn denseframe_to_quadtree_points(
     let quad_points = prefiltered_peaks // denseframe.raw_peaks //
         .iter()
         .map(|peak| Point {
-            x: (peak.mz / mz_scaling),
-            y: (peak.mobility as f64 / ims_scaling),
+            x: (peak.mz / mz_scaling).into(),
+            y: (peak.mobility / ims_scaling).into(),
         })
         .collect::<Vec<_>>();
 

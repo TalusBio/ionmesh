@@ -115,9 +115,6 @@ fn setup_recorder() -> rerun::RecordingStream {
 
 fn denoise_denseframe_vec(
     mut frames: Vec<DenseFrame>,
-    rt_converter: timsrust::Frame2RtConverter,
-    ims_converter: timsrust::Scan2ImConverter,
-    mz_converter: timsrust::Tof2MzConverter,
     min_intensity: u64,
     min_n: usize,
 ) -> Vec<ms::DenseFrame> {
@@ -185,7 +182,7 @@ fn denoise_denseframe_vec(
                 .map(|peak| peak.intensity as f64)
                 .sum::<f64>();
             // let denoised_frame = dense.min_neighbor_denoise(0.015, 0.015, 2);
-            let denoised_frame = dbscan::dbscan(frame, 0.015, 0.03, min_n, min_intensity);
+            let denoised_frame = dbscan::dbscan(frame, 0.02, 0.03, min_n, min_intensity);
             let tot_intensity_end = denoised_frame
                 .raw_peaks
                 .iter()
@@ -262,9 +259,6 @@ pub fn read_all_ms1_denoising(path: String) -> Vec<ms::DenseFrame> {
 
     denoise_denseframe_vec(
         denseframes,
-        rt_converter,
-        ims_converter,
-        mz_converter,
         min_intensity,
         min_n,
     )
@@ -307,9 +301,6 @@ pub fn read_all_dia_denoising(path: String) -> Vec<ms::DenseFrame> {
         for quad_group in dia_group {
             let denoised_frames = denoise_denseframe_vec(
                 quad_group.into_iter().map(|x| x.frame).collect(),
-                rt_converter.clone(),
-                ims_converter.clone(),
-                mz_converter.clone(),
                 min_intensity,
                 min_n,
             );

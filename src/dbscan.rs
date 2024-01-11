@@ -113,6 +113,7 @@ fn _dbscan<'a>(
             let mut neighbors = Vec::new();
             tree.query(neighbor.0, &mut neighbors);
 
+            let neighbor_intensity: u32 = prefiltered_peaks[neighbor_index].intensity();
             let neighbor_intensity_total = neighbors
                 .iter()
                 .map(|(_, i)| prefiltered_peaks[**i].intensity() as u64)
@@ -128,13 +129,18 @@ fn _dbscan<'a>(
                     })
                     .collect::<Vec<_>>();
 
+                // TODO add option to make sure further integrations
+                // only decrease in intensity.
+
                 // Keep only the neighbors that are within the max extension distance
                 // It might be worth setting a different max extension distance for the mz and mobility dimensions.
                 neighbors = neighbors
                     .into_iter()
-                    .filter(|(p, _)| {
+                    .filter(|(p, i)| {
+                        let going_downhill = prefiltered_peaks[**i].intensity() <= neighbor_intensity ;
                         let dist = (p.x - query_point.x).powi(2) + (p.y - query_point.y).powi(2);
-                        dist <= MAX_EXTENSION_DISTANCE.powi(2)
+                        let within_distance = dist <= MAX_EXTENSION_DISTANCE.powi(2);
+                        going_downhill && within_distance
                     })
                     .collect::<Vec<_>>();
 

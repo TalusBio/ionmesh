@@ -14,6 +14,7 @@ mod ms;
 mod ms_denoise;
 mod quad;
 mod tdf;
+mod mod_types;
 
 extern crate pretty_env_logger;
 #[macro_use]
