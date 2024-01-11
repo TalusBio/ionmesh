@@ -1,7 +1,7 @@
+use crate::mod_types::Float;
 use crate::ms;
 use crate::quad;
 use crate::quad::{denseframe_to_quadtree_points, RadiusQuadTree};
-use crate::mod_types::Float;
 
 // Pseudocode from wikipedia.
 // Donate to wikipedia y'all. :3
@@ -138,7 +138,8 @@ fn _dbscan<'a>(
                 neighbors = neighbors
                     .into_iter()
                     .filter(|(p, i)| {
-                        let going_downhill = prefiltered_peaks[**i].intensity() <= neighbor_intensity ;
+                        let going_downhill =
+                            prefiltered_peaks[**i].intensity() <= neighbor_intensity;
                         let dist = (p.x - query_point.x).powi(2) + (p.y - query_point.y).powi(2);
                         let within_distance = dist <= MAX_EXTENSION_DISTANCE.powi(2);
                         going_downhill && within_distance

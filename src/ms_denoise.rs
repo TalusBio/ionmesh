@@ -1,10 +1,10 @@
 use crate::dbscan;
+use crate::mod_types::Float;
 use crate::ms::DenseFrame;
 use crate::ms::TimsPeak;
 use crate::quad;
 use crate::quad::{denseframe_to_quadtree_points, Boundary, RadiusQuadTree};
 use crate::{ms, tdf};
-use crate::mod_types::Float;
 
 use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 use log::{info, trace, warn};
@@ -258,11 +258,7 @@ pub fn read_all_ms1_denoising(path: String) -> Vec<ms::DenseFrame> {
     let min_intensity = 100u64;
     let min_n: usize = 3;
 
-    denoise_denseframe_vec(
-        denseframes,
-        min_intensity,
-        min_n,
-    )
+    denoise_denseframe_vec(denseframes, min_intensity, min_n)
 }
 
 // This could probably be a macro ...

@@ -4,12 +4,12 @@ use rusqlite::{Connection, Result};
 use std::path::Path;
 use timsrust::ConvertableIndex;
 
+use crate::mod_types::Float;
 use crate::quad;
 use crate::{
     ms::{DenseFrame, DenseFrameWindow},
     quad::Boundary,
 };
-use crate::mod_types::Float;
 
 // Diaframemsmsinfo = vec of frame_id -> windowgroup_id
 // diaframemsmswindows = vec[(windowgroup_id, scanstart, scanend, iso_mz, iso_with, nce)]

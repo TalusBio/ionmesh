@@ -10,11 +10,11 @@
 use apache_avro::{Codec, Error, Schema, Writer};
 mod dbscan;
 mod extraction;
+mod mod_types;
 mod ms;
 mod ms_denoise;
 mod quad;
 mod tdf;
-mod mod_types;
 
 extern crate pretty_env_logger;
 #[macro_use]
