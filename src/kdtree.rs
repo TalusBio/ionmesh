@@ -1,5 +1,5 @@
 use crate::mod_types::Float;
-use crate::space_generics::{NDBoundary, NDPoint};
+use crate::space_generics::{IndexedPoints, NDBoundary, NDPoint};
 // Implements a kdtree with several minor differences.
 #[derive(Debug, Clone)]
 pub struct RadiusKDTree<'a, T, const DIMENSIONALITY: usize> {
@@ -147,27 +147,23 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
         Ok(())
     }
 
-    pub fn query(&'a self, point: NDPoint<D>, result: &mut Vec<&'a T>) {
-        let mut candidates = Vec::new();
-        self.query_range(
-            NDBoundary::new(
-                point
-                    .values
-                    .iter()
-                    .map(|x| x - self.radius)
-                    .collect::<Vec<Float>>()
-                    .try_into()
-                    .unwrap(),
-                point
-                    .values
-                    .iter()
-                    .map(|x| x + self.radius)
-                    .collect::<Vec<Float>>()
-                    .try_into()
-                    .unwrap(),
-            ),
-            &mut candidates,
-        );
+    pub fn query(&'a self, point: &NDPoint<D>) -> Vec<&'a T> {
+        let candidates = self.query_range(&NDBoundary::new(
+            point
+                .values
+                .iter()
+                .map(|x| x - self.radius)
+                .collect::<Vec<Float>>()
+                .try_into()
+                .unwrap(),
+            point
+                .values
+                .iter()
+                .map(|x| x + self.radius)
+                .collect::<Vec<Float>>()
+                .try_into()
+                .unwrap(),
+        ));
 
         let out: Vec<&T> = candidates
             .into_iter()
@@ -183,16 +179,13 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
             .map(|x| x.1)
             .collect();
 
-        result.extend(out);
+        out
     }
 
-    pub fn query_range(
-        &'a self,
-        boundary: NDBoundary<D>,
-        result: &mut Vec<(&'a NDPoint<D>, &'a T)>,
-    ) {
+    pub fn query_range(&'a self, boundary: &NDBoundary<D>) -> Vec<(&NDPoint<D>, &'a T)> {
+        let mut result = Vec::new();
         if !self.boundary.intersects(&boundary) {
-            return;
+            return result;
         }
 
         if self.division_value.is_none() {
@@ -207,17 +200,24 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
             let division_value = self.division_value.unwrap();
             let division_axis = self.division_axis.unwrap();
             if boundary.starts[division_axis] < division_value {
-                self.low_split
-                    .as_ref()
-                    .unwrap()
-                    .query_range(boundary, result);
+                result.extend(self.low_split.as_ref().unwrap().query_range(boundary));
             }
             if boundary.ends[division_axis] >= division_value {
-                self.high_split
-                    .as_ref()
-                    .unwrap()
-                    .query_range(boundary, result);
+                result.extend(self.high_split.as_ref().unwrap().query_range(boundary));
             }
         }
+
+        result
+    }
+}
+
+impl<'a, T, const D: usize> IndexedPoints<'a, D, T> for RadiusKDTree<'a, T, D> {
+    fn query_ndpoint(&'a self, point: &NDPoint<D>) -> Vec<(&'a T)> {
+        self.query(point)
+    }
+
+    fn query_ndrange(&'a self, boundary: &NDBoundary<D>) -> Vec<(&'a T)> {
+        let out = self.query_range(boundary);
+        out.iter().map(|x| x.1).collect()
     }
 }

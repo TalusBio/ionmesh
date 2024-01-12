@@ -5,7 +5,7 @@ pub use timsrust::{
 };
 
 use crate::mod_types::Float;
-use crate::quad::{Boundary, Point};
+use crate::space_generics::{NDBoundary, NDPoint};
 
 #[derive(Debug, Clone, Copy)]
 pub struct TimsPeak {
@@ -45,7 +45,7 @@ pub struct DenseFrameWindow {
     pub mz_end: f64,
     pub group_id: usize,
     pub quad_group_id: usize,
-    bounds: Boundary,
+    bounds: NDBoundary<2>,
 }
 
 impl DenseFrameWindow {
@@ -58,11 +58,9 @@ impl DenseFrameWindow {
         group_id: usize,
         quad_group_id: usize,
     ) -> DenseFrameWindow {
-        let bounds = Boundary::from_xxyy(
-            ims_start as Float,
-            ims_end as Float,
-            mz_start as Float,
-            mz_end as Float,
+        let bounds = NDBoundary::new(
+            [ims_start as Float, mz_start as Float],
+            [ims_end as Float, mz_end as Float],
         );
         DenseFrameWindow {
             frame,
@@ -77,9 +75,8 @@ impl DenseFrameWindow {
     }
 
     pub fn contains(&self, ims: f32, mz: f64) -> bool {
-        let point_use = Point {
-            x: ims as Float,
-            y: mz as Float,
+        let point_use = NDPoint {
+            values: [ims as Float, mz as Float],
         };
         self.bounds.contains(&point_use)
     }

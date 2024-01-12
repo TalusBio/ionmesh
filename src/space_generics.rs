@@ -1,6 +1,8 @@
 use crate::mod_types::Float;
 // f32 or f64 depending on compilation
 
+const EPSILON: Float = Float::EPSILON;
+
 #[derive(Debug, Clone, Copy)]
 pub struct NDBoundary<const DIMENSIONALITY: usize> {
     pub starts: [Float; DIMENSIONALITY],
@@ -36,7 +38,8 @@ impl<const D: usize> NDBoundary<D> {
 
     pub fn contains(&self, point: &NDPoint<D>) -> bool {
         for i in 0..D {
-            if point.values[i] < self.starts[i] || point.values[i] >= self.ends[i] {
+            // if point.values[i] < self.starts[i] || point.values[i] >= self.ends[i] {
+            if point.values[i] < self.starts[i] || point.values[i] > self.ends[i] {
                 return false;
             }
         }
@@ -59,10 +62,10 @@ impl<const D: usize> NDBoundary<D> {
         for point in points.iter() {
             for i in 0..D {
                 if point.values[i] < starts[i] {
-                    starts[i] = point.values[i];
+                    starts[i] = point.values[i] - EPSILON;
                 }
                 if point.values[i] > ends[i] {
-                    ends[i] = point.values[i];
+                    ends[i] = point.values[i] + EPSILON;
                 }
             }
         }
@@ -80,4 +83,9 @@ pub struct NDPoint<const DIMENSIONALITY: usize> {
 
 trait IntoNDPoint<const DIMENSIONALITY: usize> {
     fn into_nd_point(&self) -> NDPoint<DIMENSIONALITY>;
+}
+
+pub trait IndexedPoints<'a, const N: usize, T> {
+    fn query_ndpoint(&'a self, point: &NDPoint<N>) -> Vec<&'a T>;
+    fn query_ndrange(&'a self, boundary: &NDBoundary<N>) -> Vec<&'a T>;
 }

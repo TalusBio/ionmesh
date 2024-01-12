@@ -1,58 +1,9 @@
 use crate::mod_types::Float;
 use crate::ms::{DenseFrame, TimsPeak};
-use crate::space_generics::{NDBoundary, NDPoint};
+use crate::space_generics::{IndexedPoints, NDBoundary, NDPoint};
 use core::panic;
 
-#[derive(Debug, Clone, Copy, serde::Serialize, PartialEq)]
-pub struct Point {
-    pub x: Float,
-    pub y: Float,
-}
-
-#[derive(Debug, Clone, Copy, serde::Serialize)]
-pub struct Boundary {
-    pub x_center: Float,
-    pub y_center: Float,
-    pub width: Float,
-    pub height: Float,
-    xmin: Float,
-    xmax: Float,
-    ymin: Float,
-    ymax: Float,
-}
-
 const EPS: Float = 1e-6;
-impl Boundary {
-    pub fn new(x_center: Float, y_center: Float, width: Float, height: Float) -> Boundary {
-        Boundary {
-            x_center,
-            y_center,
-            width,
-            height,
-            xmin: x_center - (width / 2.0) - EPS,
-            xmax: x_center + (width / 2.0) + EPS,
-            ymin: y_center - (height / 2.0) - EPS,
-            ymax: y_center + (height / 2.0) + EPS,
-        }
-    }
-
-    pub fn from_xxyy(xmin: Float, xmax: Float, ymin: Float, ymax: Float) -> Boundary {
-        let x_center = (xmin + xmax) / 2.0;
-        let y_center = (ymin + ymax) / 2.0;
-        let width = xmax - xmin;
-        let height = ymax - ymin;
-        Boundary {
-            x_center,
-            y_center,
-            width,
-            height,
-            xmin: xmin - EPS,
-            xmax: xmax + EPS,
-            ymin: ymin - EPS,
-            ymax: ymax + EPS,
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct RadiusQuadTree<'a, T> {
@@ -125,18 +76,18 @@ impl<'a, T> RadiusQuadTree<'a, T> {
                     self.insert(point, data);
                 }
             }
-        } else { 
+        } else {
             let div_x = self.division_point.as_ref().unwrap().values[0];
             let div_y = self.division_point.as_ref().unwrap().values[1];
 
-            if point.values[0] >= div_x {
-                if point.values[1] >= div_y {
+            if point.values[0] > div_x {
+                if point.values[1] > div_y {
                     self.northeast.as_mut().unwrap().insert(point, data);
                 } else {
                     self.southeast.as_mut().unwrap().insert(point, data);
                 }
             } else {
-                if point.values[1] >= div_y {
+                if point.values[1] > div_y {
                     self.northwest.as_mut().unwrap().insert(point, data);
                 } else {
                     self.southwest.as_mut().unwrap().insert(point, data);
@@ -213,7 +164,7 @@ impl<'a, T> RadiusQuadTree<'a, T> {
         self.points.clear();
     }
 
-    pub fn query(&'a self, point: &NDPoint<2>) -> Vec<(&'a NDPoint<2>, &'a T)> {
+    pub fn query(&'a self, point: &NDPoint<2>) -> Vec<(&'a T)> {
         let mut result = Vec::new();
         let range = NDBoundary::new(
             [point.values[0] - self.radius, point.values[1] - self.radius],
@@ -224,50 +175,8 @@ impl<'a, T> RadiusQuadTree<'a, T> {
         return result;
     }
 
-    pub fn count_query(&self, point: &NDPoint<2>, count_keeper: &mut u64) {
-        let range = NDBoundary::new(
-            [point.values[0] - self.radius, point.values[1] - self.radius],
-            [point.values[0] + self.radius, point.values[1] + self.radius],
-        );
-        self.count_query_range(&range, count_keeper);
-    }
-
-    pub fn count_query_range(&self, range: &NDBoundary<2>, count_keeper: &mut u64) {
-        if !self.boundary.intersects(range) || self.count == 0 {
-            return;
-        }
-
-        let mut local_count = 0;
-        for (point, _) in &self.points {
-            if range.contains(&point) {
-                local_count += 1;
-            }
-        }
-
-        *count_keeper += local_count;
-
-        if self.division_point.is_some() {
-            self.northeast
-                .as_ref()
-                .unwrap()
-                .count_query_range(range, count_keeper);
-            self.northwest
-                .as_ref()
-                .unwrap()
-                .count_query_range(range, count_keeper);
-            self.southeast
-                .as_ref()
-                .unwrap()
-                .count_query_range(range, count_keeper);
-            self.southwest
-                .as_ref()
-                .unwrap()
-                .count_query_range(range, count_keeper);
-        }
-    }
-
     // This function is used a lot so any optimization here will have a big impact.
-    pub fn query_range(&'a self, range: &NDBoundary<2>, result: &mut Vec<(&'a NDPoint<2>, &'a T)>) {
+    pub fn query_range(&'a self, range: &NDBoundary<2>, result: &mut Vec<(&'a T)>) {
         if !self.boundary.intersects(range) || self.count == 0 {
             return;
         }
@@ -279,7 +188,11 @@ impl<'a, T> RadiusQuadTree<'a, T> {
             //
             for (point, data) in self.points.iter() {
                 if range.contains(&point) {
-                    result.push((&point, data));
+                    let dist = (point.values[0] - range.centers[0]).abs()
+                        + (point.values[1] - range.centers[1]).abs();
+                    if dist <= self.radius {
+                        result.push(data);
+                    }
                 }
             }
         } else {
@@ -289,100 +202,6 @@ impl<'a, T> RadiusQuadTree<'a, T> {
             self.southeast.as_ref().unwrap().query_range(range, result);
             self.southwest.as_ref().unwrap().query_range(range, result);
         }
-    }
-}
-
-impl Boundary {
-    pub fn contains(&self, point: &Point) -> bool {
-        point.x >= self.xmin && point.x <= self.xmax && point.y >= self.ymin && point.y <= self.ymax
-    }
-
-    pub fn intersection(&self, other: &Boundary) -> Float {
-        // Returns the fraction of the area of self that is overlapped by other.
-
-        // Top left corner
-        let max_xmin = self.xmin.max(other.xmin);
-        let max_ymin = self.ymin.max(other.ymin);
-
-        // Bottom right corner
-        let min_xmin = self.xmax.min(other.xmax);
-        let min_ymin = self.ymax.min(other.ymax);
-
-        let overlap = (min_xmin - max_xmin).max(0.0) * (min_ymin - max_ymin).max(0.0);
-
-        let intersection = overlap / (self.width * self.height);
-        intersection
-    }
-
-    pub fn intersects(&self, other: &Boundary) -> bool {
-        // Returns true if the two boundaries intersect.
-        self.xmin <= other.xmax
-            && self.xmax >= other.xmin
-            && self.ymin <= other.ymax
-            && self.ymax >= other.ymin
-    }
-}
-
-#[cfg(test)]
-mod test_boundary {
-    use super::*;
-
-    #[test]
-    fn test_contains() {
-        let boundary = Boundary::new(0.0, 0.0, 50.0, 50.0);
-        let point = Point { x: 25.0, y: 25.0 };
-        assert!(boundary.contains(&point));
-    }
-
-    #[test]
-    fn test_not_contains() {
-        let boundary = Boundary::new(0.0, 0.0, 50.0, 50.0);
-        let point = Point { x: 75.0, y: 75.0 };
-        assert!(!boundary.contains(&point));
-    }
-
-    #[test]
-    fn test_intersects() {
-        let boundary = Boundary::new(0.0, 0.0, 50.0, 50.0);
-        let other = Boundary::new(25.0, 25.0, 50.0, 50.0);
-        assert!(boundary.intersects(&other));
-    }
-
-    #[test]
-    fn test_not_intersects() {
-        let boundary = Boundary::new(0.0, 0.0, 50.0, 50.0);
-        let other = Boundary::new(75.0, 75.0, 50.0, 50.0);
-        assert!(!boundary.intersects(&other));
-    }
-
-    #[test]
-    fn test_intersection() {
-        let boundary = Boundary::new(0.0, 0.0, 50.0, 50.0);
-        let other = Boundary::new(25.0, 25.0, 50.0, 50.0);
-        let expect = 0.25;
-        let max_diff = 1e-6;
-        assert!(boundary.intersection(&other) - expect < max_diff);
-    }
-
-    #[test]
-    fn test_no_intersection() {
-        let boundary = Boundary::new(0.0, 0.0, 50.0, 50.0);
-        let other = Boundary::new(75.0, 75.0, 50.0, 50.0);
-        assert_eq!(boundary.intersection(&other), 0.0);
-    }
-
-    #[test]
-    fn test_intersection_inside() {
-        let boundary = Boundary::new(0.0, 0.0, 20.0, 10.0);
-        let other = Boundary::new(0.0, 0.0, 10.0, 10.0);
-
-        let expect = 0.5;
-        let max_diff = 1e-6;
-
-        assert!(boundary.intersection(&other) - expect < max_diff);
-
-        let expect = 1.00;
-        assert!(other.intersection(&boundary) - expect < max_diff);
     }
 }
 
@@ -517,46 +336,14 @@ mod test_count_neigh {
     }
 }
 
-fn min_max_points(points: &[Point]) -> (Point, Point) {
-    let mut min_x = points[0].x;
-    let mut max_x = points[0].x;
-    let mut min_y = points[0].y;
-    let mut max_y = points[0].y;
-
-    for p in points.iter() {
-        if p.x < min_x {
-            min_x = p.x;
-        } else if p.x > max_x {
-            max_x = p.x;
-        }
-
-        if p.y < min_y {
-            min_y = p.y;
-        } else if p.y > max_y {
-            max_y = p.y;
-        }
+impl<'a, T> IndexedPoints<'a, 2, T> for RadiusQuadTree<'a, T> {
+    fn query_ndpoint(&'a self, point: &NDPoint<2>) -> Vec<(&'a T)> {
+        self.query(point)
     }
 
-    (Point { x: min_x, y: min_y }, Point { x: max_x, y: max_y })
-}
-
-#[cfg(test)]
-mod test_min_max {
-    use super::*;
-
-    #[test]
-    fn test_min_max() {
-        let points = vec![
-            Point { x: 0.0, y: 0.0 },
-            Point { x: 1.0, y: 1.0 },
-            Point { x: 2.0, y: 2.0 },
-            Point { x: 3.0, y: 3.0 },
-            Point { x: 4.0, y: 4.0 },
-        ];
-
-        let (min_point, max_point) = min_max_points(&points);
-
-        assert_eq!(min_point, Point { x: 0.0, y: 0.0 });
-        assert_eq!(max_point, Point { x: 4.0, y: 4.0 });
+    fn query_ndrange(&'a self, boundary: &NDBoundary<2>) -> Vec<(&'a T)> {
+        let mut result = Vec::new();
+        self.query_range(boundary, &mut result);
+        result
     }
 }

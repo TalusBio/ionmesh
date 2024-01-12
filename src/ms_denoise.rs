@@ -1,71 +1,13 @@
 use crate::dbscan;
 use crate::mod_types::Float;
 use crate::ms::DenseFrame;
-use crate::ms::TimsPeak;
-use crate::quad;
-use crate::quad::{denseframe_to_quadtree_points, Boundary, RadiusQuadTree};
+use crate::quad::{denseframe_to_quadtree_points, RadiusQuadTree};
+use crate::space_generics::NDPoint;
 use crate::{ms, tdf};
 
 use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 use log::{info, trace, warn};
 use rayon::prelude::*;
-
-trait DenoisableFrame {
-    // Drops peaks that dont have at least one neighbor within a given mz/mobility tolerance
-    fn min_neighbor_denoise(&mut self, mz_scaling: f64, ims_scaling: f32, min_n: usize) -> Self;
-}
-
-impl DenoisableFrame for ms::DenseFrame {
-    /// Drops peaks that dont have at least one neighbor within a given mz/mobility tolerance
-    fn min_neighbor_denoise(
-        &mut self,
-        mz_scaling: f64,
-        ims_scaling: f32,
-        min_n: usize,
-    ) -> ms::DenseFrame {
-        // AKA could filter out the points with no mz neighbors sorting
-        // and the use the tree to filter points with no mz+mobility neighbors.
-
-        // NOTE: the multiple quad isolation windows in DIA are not being handled just yet.
-        let out_frame_type = self.frame_type.clone();
-        let out_rt = self.rt.clone();
-        let out_index = self.index.clone();
-
-        let (quad_points, prefiltered_peaks, boundary) =
-            denseframe_to_quadtree_points(self, mz_scaling, ims_scaling, min_n);
-
-        let mut prefiltered_peaks = prefiltered_peaks.to_owned();
-
-        let mut tree: RadiusQuadTree<'_, Option<usize>> = RadiusQuadTree::new(boundary, 20, 1.);
-
-        let num_peaks = prefiltered_peaks.len();
-        for point in quad_points.iter() {
-            tree.insert(point.clone(), &None);
-        }
-
-        let mut denoised_peaks = Vec::with_capacity(num_peaks);
-
-        let min_n = min_n as u64;
-        for (point, peaks) in quad_points.iter().zip(prefiltered_peaks.iter_mut()) {
-            let mut result_counts = 0;
-
-            // TODO: implement an 'any neighbor' method.
-            tree.count_query(point, &mut result_counts);
-
-            if result_counts >= min_n {
-                denoised_peaks.push(*peaks);
-            }
-        }
-
-        ms::DenseFrame {
-            raw_peaks: denoised_peaks,
-            index: out_index,
-            rt: out_rt,
-            frame_type: out_frame_type,
-            sorted: None,
-        }
-    }
-}
 
 fn log_denseframe_points(
     frame: &ms::DenseFrame,
@@ -75,9 +17,8 @@ fn log_denseframe_points(
     let quad_points = frame
         .raw_peaks
         .iter()
-        .map(|peak| quad::Point {
-            x: (peak.mz / 10.) as Float,
-            y: (100. * peak.mobility as Float),
+        .map(|peak| NDPoint {
+            values: [(peak.mz / 10.) as Float, (100. * peak.mobility as Float)],
         })
         .collect::<Vec<_>>();
 
@@ -99,7 +40,7 @@ fn log_denseframe_points(
         &rerun::Points2D::new(
             quad_points
                 .iter()
-                .map(|point| (point.x as f32, point.y as f32)),
+                .map(|point| (point.values[0] as f32, point.values[1] as f32)),
         )
         .with_radii(radii),
     )?;

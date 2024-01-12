@@ -1,15 +1,11 @@
 use log::{error, info, trace};
-use rerun::external::arrow2::io::print;
 use rusqlite::{Connection, Result};
 use std::path::Path;
 use timsrust::ConvertableIndex;
 
 use crate::mod_types::Float;
-use crate::quad;
-use crate::{
-    ms::{DenseFrame, DenseFrameWindow},
-    quad::Boundary,
-};
+use crate::ms::{DenseFrame, DenseFrameWindow};
+use crate::space_generics::{NDBoundary, NDPoint};
 
 // Diaframemsmsinfo = vec of frame_id -> windowgroup_id
 // diaframemsmswindows = vec[(windowgroup_id, scanstart, scanend, iso_mz, iso_with, nce)]
@@ -25,7 +21,7 @@ pub struct ScanRange {
     ims_end: f32,
     iso_low: f32,
     iso_high: f32,
-    ims_boundary: quad::Boundary,
+    ims_boundary: NDBoundary<2>,
 }
 
 impl ScanRange {
@@ -49,11 +45,9 @@ impl ScanRange {
 
         let ims_center = (ims_start + ims_end) / 2.0;
         let ims_width = ims_end - ims_start;
-        let ims_bounds = Boundary::new(
-            ims_center as Float,
-            iso_mz.clone() as Float,
-            ims_width as Float,
-            iso_width.clone() as Float,
+        let ims_bounds = NDBoundary::new(
+            [ims_start as Float, iso_low as Float],
+            [ims_end as Float, iso_high as Float],
         );
 
         Self {
@@ -71,9 +65,8 @@ impl ScanRange {
     }
 
     pub fn contains(&self, ims: f32, mz: f32) -> bool {
-        let point = quad::Point {
-            x: ims as Float,
-            y: mz as Float,
+        let point = NDPoint {
+            values: [ims as Float, mz as Float],
         };
         self.ims_boundary.contains(&point)
     }

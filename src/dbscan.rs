@@ -1,8 +1,7 @@
 use crate::mod_types::Float;
 use crate::ms;
-use crate::quad;
 use crate::quad::{denseframe_to_quadtree_points, RadiusQuadTree};
-use crate::space_generics::NDPoint;
+use crate::space_generics::{IndexedPoints, NDPoint};
 
 // Pseudocode from wikipedia.
 // Donate to wikipedia y'all. :3
@@ -63,10 +62,10 @@ impl HasIntensity<u32> for ms::TimsPeak {
 }
 
 // TODO make generic over dimensions
-fn _dbscan<'a>(
-    tree: &RadiusQuadTree<'a, usize>,
+fn _dbscan<'a, const N: usize>(
+    tree: &'a impl IndexedPoints<'a, N, usize>,
     prefiltered_peaks: &Vec<impl HasIntensity<u32>>,
-    quad_points: &Vec<NDPoint<2>>, // TODO make generic over dimensions
+    quad_points: &Vec<NDPoint<N>>, // TODO make generic over dimensions
     min_n: usize,
     min_intensity: u64,
     intensity_sorted_indices: &Vec<(usize, u32)>,
@@ -81,7 +80,7 @@ fn _dbscan<'a>(
         }
 
         let query_point = quad_points[point_index].clone();
-        let neighbors = tree.query(&query_point);
+        let neighbors = tree.query_ndpoint(&query_point);
 
         if neighbors.len() < min_n {
             cluster_labels[point_index] = ClusterLabel::Noise;
@@ -90,8 +89,8 @@ fn _dbscan<'a>(
 
         // Do I need to care about overflows here?
         let mut neighbor_intensity_total: u64 = 0;
-        
-        for (_, i) in neighbors.iter() {
+
+        for i in neighbors.iter() {
             neighbor_intensity_total += prefiltered_peaks[**i].intensity() as u64;
         }
 
@@ -102,13 +101,13 @@ fn _dbscan<'a>(
 
         cluster_id += 1;
         cluster_labels[point_index] = ClusterLabel::Cluster(cluster_id);
-        let mut seed_set: Vec<(&NDPoint<2>, &usize)> = Vec::new();
+        let mut seed_set: Vec<(&usize)> = Vec::new();
         seed_set.extend(neighbors);
 
         const MAX_EXTENSION_DISTANCE: Float = 5.;
 
         while let Some(neighbor) = seed_set.pop() {
-            let neighbor_index = neighbor.1.clone();
+            let neighbor_index = neighbor.clone();
             if cluster_labels[neighbor_index] == ClusterLabel::Noise {
                 cluster_labels[neighbor_index] = ClusterLabel::Cluster(cluster_id);
             }
@@ -119,19 +118,19 @@ fn _dbscan<'a>(
 
             cluster_labels[neighbor_index] = ClusterLabel::Cluster(cluster_id);
 
-            let neighbors = tree.query(neighbor.0);
+            let neighbors = tree.query_ndpoint(&quad_points[*neighbor]);
 
             let neighbor_intensity: u32 = prefiltered_peaks[neighbor_index].intensity();
             let neighbor_intensity_total = neighbors
                 .iter()
-                .map(|(_, i)| prefiltered_peaks[**i].intensity() as u64)
+                .map(|i| prefiltered_peaks[**i].intensity() as u64)
                 .sum::<u64>();
 
             if neighbors.len() >= min_n && neighbor_intensity_total >= min_intensity {
                 // Keep only the neighbors that are not already in a cluster
                 let local_neighbors = neighbors
                     .into_iter()
-                    .filter(|(_, i)| match cluster_labels[**i] {
+                    .filter(|i| match cluster_labels[**i] {
                         ClusterLabel::Cluster(_) => false,
                         _ => true,
                     })
@@ -141,10 +140,11 @@ fn _dbscan<'a>(
                 // It might be worth setting a different max extension distance for the mz and mobility dimensions.
                 let local_neighbors2 = local_neighbors
                     .into_iter()
-                    .filter(|(p, i)| {
+                    .filter(|i| {
                         let going_downhill =
                             prefiltered_peaks[**i].intensity() <= neighbor_intensity;
 
+                        let p = &quad_points[**i];
                         // Using minkowski distance with p = 1, manhattan distance.
                         let dist = (p.values[0] - query_point.values[0]).abs()
                             + (p.values[1] - query_point.values[1]).abs();
@@ -183,6 +183,7 @@ pub fn dbscan(
         denseframe_to_quadtree_points(denseframe, mz_scaling, ims_scaling, min_n.saturating_sub(1));
 
     let mut tree = RadiusQuadTree::new(boundary, 20, 1.);
+    // let mut tree = RadiusQuadTree::new(boundary, 20, 1.);
 
     let quad_indices = (0..quad_points.len()).collect::<Vec<_>>();
 
