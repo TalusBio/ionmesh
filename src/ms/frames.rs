@@ -7,6 +7,7 @@ pub use timsrust::{
 use crate::mod_types::Float;
 use crate::space_generics::NDPoint;
 use crate::visualization::RerunPlottable;
+use crate::tdf::{DIAFrameInfo,ScanRange};
 
 #[derive(Debug, Clone, Copy)]
 pub struct TimsPeak {
@@ -84,6 +85,39 @@ pub struct DenseFrameWindow {
     pub quad_group_id: usize,
 }
 
+impl DenseFrameWindow {
+    pub fn from_frame_window(
+        frame_window: FrameWindow,
+        ims_converter: &Scan2ImConverter,
+        mz_converter: &Tof2MzConverter,
+        dia_info: &DIAFrameInfo,
+    ) -> DenseFrameWindow {
+        let group_id = frame_window.group_id.clone();
+        let quad_group_id = frame_window.quad_group_id.clone();
+        let scan_start = frame_window.scan_start.clone();
+
+        // NOTE: I am swapping here the 'scan start' to be the `ims_end` because
+        // the first scans have lower 1/k0 values.
+        let ims_end = ims_converter.convert(scan_start.clone() as u32) as f32;
+        let ims_start = ims_converter.convert((frame_window.scan_offsets.len() + scan_start.clone()) as u32) as f32;
+        let scan_range: &ScanRange = dia_info.get_quad_windows(group_id, quad_group_id).expect("Quad group id should be valid");
+
+        let frame = DenseFrame::from_frame_window(frame_window, ims_converter, mz_converter);
+
+        debug_assert!(ims_start <= ims_end);
+
+        DenseFrameWindow {
+            frame,
+            ims_start,
+            ims_end,
+            mz_start: scan_range.iso_low as f64,
+            mz_end: scan_range.iso_high as f64,
+            group_id: group_id,
+            quad_group_id: quad_group_id,
+        }
+    }
+}
+
 impl DenseFrame {
     pub fn new(
         frame: &Frame,
@@ -124,7 +158,7 @@ impl DenseFrame {
         }
     }
 
-    fn from_frame_window(
+    pub fn from_frame_window(
         frame_window: FrameWindow,
         ims_converter: &Scan2ImConverter,
         mz_converter: &Tof2MzConverter,
@@ -201,9 +235,13 @@ impl RerunPlottable for DenseFrame {
         &self,
         rec: &mut rerun::RecordingStream,
         entry_path: String,
-        log_time_in_seconds: f32,
+        log_time_in_seconds: Option<f32>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        rec.set_time_seconds("rt_seconds", log_time_in_seconds);
+        let rt = match log_time_in_seconds {
+            None => {self.rt as f32},
+            Some(log_time_in_seconds) => {log_time_in_seconds},
+        };
+        rec.set_time_seconds("rt_seconds", rt as f32);
         let quad_points = self
             .raw_peaks
             .iter()
@@ -238,3 +276,4 @@ impl RerunPlottable for DenseFrame {
         Ok(())
     }
 }
+

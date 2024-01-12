@@ -15,10 +15,10 @@ pub struct ScanRange {
     pub iso_mz: f32,
     pub iso_width: f32,
     pub nce: f32,
-    ims_start: f32,
-    ims_end: f32,
-    iso_low: f32,
-    iso_high: f32,
+    pub ims_start: f32,
+    pub ims_end: f32,
+    pub iso_low: f32,
+    pub iso_high: f32,
 }
 
 impl ScanRange {
@@ -65,6 +65,10 @@ pub struct DIAFrameInfo {
     pub frame_groups: Vec<Option<usize>>,
 }
 
+
+// TODO rename or split this ... since it is becoming more
+// of a splitter than a frame info reader.
+// Maybe a builder -> splitter pattern?
 impl DIAFrameInfo {
     pub fn get_group(&self, frame_id: usize) -> Option<&DIAWindowGroup> {
         let group_id = self.frame_groups[frame_id];
@@ -267,6 +271,12 @@ impl DIAFrameInfo {
         }
 
         out
+    }
+
+    pub fn get_quad_windows(&self, scan_group_id: usize, quad_group_id: usize) -> Option<&ScanRange> {
+        let group = self.groups[scan_group_id].as_ref()?;
+        let quad_group = group.scan_ranges.get(quad_group_id)?;
+        Some(quad_group)
     }
 }
 

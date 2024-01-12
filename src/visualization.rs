@@ -5,7 +5,7 @@ pub trait RerunPlottable {
         &self,
         rec: &mut rerun::RecordingStream,
         entry_path: String,
-        log_time_in_seconds: f32,
+        log_time_in_seconds: Option<f32>,
     ) -> Result<(), Box<dyn std::error::Error>>;
 }
 
