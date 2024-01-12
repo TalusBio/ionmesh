@@ -16,6 +16,7 @@ mod ms_denoise;
 mod quad;
 mod space_generics;
 mod tdf;
+mod visualization;
 
 extern crate pretty_env_logger;
 #[macro_use]
@@ -120,10 +121,15 @@ mod tests {
 fn main() -> Result<(), Error> {
     pretty_env_logger::init();
 
+    let mut rec: Option<rerun::RecordingStream> = None;
+    if cfg!(feature = "viz") {
+        rec = Some(visualization::setup_recorder());
+    }
+
     let path_use = String::from("/Users/sebastianpaez/git/2023_dev_diadem_report/data/231121_RH30_NMIAA_E3_DIA_S2-B3_1_5353.d");
     let dia_info = tdf::read_dia_frame_info(path_use.clone());
     // ms_denoise::read_all_ms1_denoising(path_use.clone());
-    let mut dia_frames = ms_denoise::read_all_dia_denoising(path_use.clone());
+    let mut dia_frames = ms_denoise::read_all_dia_denoising(path_use.clone(), &mut rec);
 
     Ok(())
 }

@@ -1,5 +1,5 @@
 use crate::mod_types::Float;
-use crate::ms;
+use crate::ms::frames;
 use crate::quad::{denseframe_to_quadtree_points, RadiusQuadTree};
 use crate::space_generics::{IndexedPoints, NDPoint};
 
@@ -55,7 +55,7 @@ where
     fn intensity(&self) -> T;
 }
 
-impl HasIntensity<u32> for ms::TimsPeak {
+impl HasIntensity<u32> for frames::TimsPeak {
     fn intensity(&self) -> u32 {
         self.intensity
     }
@@ -162,12 +162,12 @@ fn _dbscan<'a, const N: usize>(
 }
 
 pub fn dbscan(
-    denseframe: &mut ms::DenseFrame,
+    denseframe: &mut frames::DenseFrame,
     mz_scaling: f64,
     ims_scaling: f32,
     min_n: usize,
     min_intensity: u64,
-) -> ms::DenseFrame {
+) -> frames::DenseFrame {
     // I could pre-sort here and use the window iterator,
     // to pre-filter for points with no neighbors in the mz dimension.
 
@@ -230,7 +230,7 @@ pub fn dbscan(
             let cluster_intensity = cluster_intensity; // Note not averaged
             let cluster_mz = *cluster_mz / *cluster_intensity as f64;
             let cluster_mobility = *cluster_mobility / *cluster_intensity as f64;
-            ms::TimsPeak {
+            frames::TimsPeak {
                 intensity: u32::try_from(*cluster_intensity).ok().unwrap(),
                 mz: cluster_mz,
                 mobility: cluster_mobility as f32,
@@ -240,7 +240,7 @@ pub fn dbscan(
 
     // TODO add an option to keep noise points
 
-    ms::DenseFrame {
+    frames::DenseFrame {
         raw_peaks: denoised_peaks,
         index: out_index,
         rt: out_rt,

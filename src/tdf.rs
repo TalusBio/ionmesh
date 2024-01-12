@@ -1,11 +1,9 @@
 use log::{error, info, trace};
 use rusqlite::{Connection, Result};
 use std::path::Path;
-use timsrust::ConvertableIndex;
+use timsrust::{ConvertableIndex, Frame};
 
-use crate::mod_types::Float;
-use crate::ms::{DenseFrame, DenseFrameWindow};
-use crate::space_generics::{NDBoundary, NDPoint};
+use crate::ms::frames::{DenseFrame, DenseFrameWindow, FrameWindow};
 
 // Diaframemsmsinfo = vec of frame_id -> windowgroup_id
 // diaframemsmswindows = vec[(windowgroup_id, scanstart, scanend, iso_mz, iso_with, nce)]
@@ -21,7 +19,6 @@ pub struct ScanRange {
     ims_end: f32,
     iso_low: f32,
     iso_high: f32,
-    ims_boundary: NDBoundary<2>,
 }
 
 impl ScanRange {
@@ -43,13 +40,6 @@ impl ScanRange {
         let iso_low = iso_mz - iso_width / 2.0;
         let iso_high = iso_mz + iso_width / 2.0;
 
-        let ims_center = (ims_start + ims_end) / 2.0;
-        let ims_width = ims_end - ims_start;
-        let ims_bounds = NDBoundary::new(
-            [ims_start as Float, iso_low as Float],
-            [ims_end as Float, iso_high as Float],
-        );
-
         Self {
             scan_start,
             scan_end,
@@ -60,15 +50,7 @@ impl ScanRange {
             ims_end: ims_end as f32,
             iso_low,
             iso_high,
-            ims_boundary: ims_bounds,
         }
-    }
-
-    pub fn contains(&self, ims: f32, mz: f32) -> bool {
-        let point = NDPoint {
-            values: [ims as Float, mz as Float],
-        };
-        self.ims_boundary.contains(&point)
     }
 }
 
@@ -91,6 +73,47 @@ impl DIAFrameInfo {
             None => return None,
             Some(group_id) => self.groups[group_id].as_ref(),
         }
+    }
+
+    pub fn split_frame(&self, frame: Frame) -> Result<Vec<FrameWindow>, &'static str> {
+        let group = self.get_group(frame.index);
+        if group.is_none() {
+            return Err("Frame not in DIA group");
+        }
+        let group = group.unwrap();
+
+        let mut out_frames = Vec::new();
+        for (i, scan_range) in group.scan_ranges.iter().enumerate() {
+            scan_range.scan_start;
+            scan_range.scan_end;
+
+            let scan_offsets_use = &frame.scan_offsets[scan_range.scan_start..scan_range.scan_end];
+            let scan_start = scan_offsets_use[0];
+            let mz_indptr_start = scan_offsets_use[0] as usize;
+            let mz_indptr_end = *scan_offsets_use.last().unwrap() as usize;
+
+            let tof_indices_keep = frame.tof_indices[mz_indptr_start..mz_indptr_end].to_vec();
+            let intensities_keep = frame.intensities[mz_indptr_start..mz_indptr_end].to_vec();
+
+            let frame_window = FrameWindow {
+                scan_offsets: scan_offsets_use
+                    .iter()
+                    .map(|x| x - scan_start)
+                    .collect::<Vec<_>>(),
+                tof_indices: tof_indices_keep,
+                intensities: intensities_keep,
+                index: frame.index,
+                rt: frame.rt,
+                frame_type: frame.frame_type,
+                scan_start: scan_start as usize,
+                group_id: group.id,
+                quad_group_id: i,
+            };
+
+            out_frames.push(frame_window);
+        }
+
+        Ok(out_frames)
     }
 
     pub fn split_dense_frame(&self, mut denseframe: DenseFrame) -> Result<Vec<DenseFrameWindow>> {
@@ -141,24 +164,24 @@ impl DIAFrameInfo {
                 sorted: denseframe.sorted.clone(),
             };
 
-            let frame_window = DenseFrameWindow::new(
+            let frame_window = DenseFrameWindow {
                 frame,
-                scan_range.ims_start,
-                scan_range.ims_end,
-                scan_range.iso_low.into(),
-                scan_range.iso_high.into(),
-                group.id,
-                i,
-            );
+                ims_start: scan_range.ims_start,
+                ims_end: scan_range.ims_end,
+                mz_start: scan_range.iso_low.into(),
+                mz_end: scan_range.iso_high.into(),
+                group_id: group.id,
+                quad_group_id: i,
+            };
             frames.push(frame_window);
         }
 
         Ok(frames)
     }
 
+    /// Returns a vector of length equal to the number of groups.
+    /// Each element is a vector of frames that belong to that group.
     fn bundle_by_group(&self, frames: Vec<DenseFrame>) -> Vec<Vec<DenseFrame>> {
-        /// Returns a vector of length equal to the number of groups.
-        /// Each element is a vector of frames that belong to that group.
         let mut frame_groups = Vec::new();
         for frame in frames {
             let group = self.get_group(frame.index);

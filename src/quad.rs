@@ -1,9 +1,7 @@
 use crate::mod_types::Float;
-use crate::ms::{DenseFrame, TimsPeak};
+use crate::ms::frames::{DenseFrame, TimsPeak};
 use crate::space_generics::{IndexedPoints, NDBoundary, NDPoint};
 use core::panic;
-
-const EPS: Float = 1e-6;
 
 #[derive(Debug, Clone)]
 pub struct RadiusQuadTree<'a, T> {
@@ -164,7 +162,7 @@ impl<'a, T> RadiusQuadTree<'a, T> {
         self.points.clear();
     }
 
-    pub fn query(&'a self, point: &NDPoint<2>) -> Vec<(&'a T)> {
+    pub fn query(&'a self, point: &NDPoint<2>) -> Vec<&'a T> {
         let mut result = Vec::new();
         let range = NDBoundary::new(
             [point.values[0] - self.radius, point.values[1] - self.radius],
@@ -176,7 +174,7 @@ impl<'a, T> RadiusQuadTree<'a, T> {
     }
 
     // This function is used a lot so any optimization here will have a big impact.
-    pub fn query_range(&'a self, range: &NDBoundary<2>, result: &mut Vec<(&'a T)>) {
+    pub fn query_range(&'a self, range: &NDBoundary<2>, result: &mut Vec<&'a T>) {
         if !self.boundary.intersects(range) || self.count == 0 {
             return;
         }
@@ -337,11 +335,11 @@ mod test_count_neigh {
 }
 
 impl<'a, T> IndexedPoints<'a, 2, T> for RadiusQuadTree<'a, T> {
-    fn query_ndpoint(&'a self, point: &NDPoint<2>) -> Vec<(&'a T)> {
+    fn query_ndpoint(&'a self, point: &NDPoint<2>) -> Vec<&'a T> {
         self.query(point)
     }
 
-    fn query_ndrange(&'a self, boundary: &NDBoundary<2>) -> Vec<(&'a T)> {
+    fn query_ndrange(&'a self, boundary: &NDBoundary<2>) -> Vec<&'a T> {
         let mut result = Vec::new();
         self.query_range(boundary, &mut result);
         result

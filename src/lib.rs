@@ -6,3 +6,4 @@ pub mod ms_denoise;
 pub mod quad;
 pub mod space_generics;
 pub mod tdf;
+pub mod visualization;
