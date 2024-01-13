@@ -149,15 +149,22 @@ where
     {
         info!("Denoising {} frames", frames.len());
         // randomly viz 1/200 frames
+        // Selecting a slice of 1/200 frames
+
         if let Some(stream) = record_stream.as_mut() {
             warn!("Viz is enabled, randomly subsetting 1/200 frames");
-            frames.retain(|_| {
-                if rand::random::<f64>() < (1. / 200.) {
-                    true
-                } else {
-                    false
-                }
-            });
+            let len_keep = frames.len() / 200;
+            let start = rand::random::<usize>() % (frames.len() - len_keep);
+            // let keep = [false, true, true, false, true];
+            let mut keep = vec![false; start]
+                .into_iter()
+                .chain(vec![true; len_keep].into_iter())
+                .collect::<Vec<_>>();
+
+            keep.append(&mut vec![false; frames.len() - start - len_keep]);
+            let mut iter_keep = keep.iter();
+
+            frames.retain(|_| *iter_keep.next().unwrap());
 
             for (i, frame) in frames.iter().enumerate() {
                 info!("Logging frame {}", i);
