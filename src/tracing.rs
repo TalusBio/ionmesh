@@ -3,6 +3,7 @@ use crate::mod_types::Float;
 use crate::ms::frames::{DenseFrame, DenseFrameWindow, TimsPeak};
 use crate::space_generics::{HasIntensity, NDPoint, NDPointConverter, TraceLike};
 use crate::visualization::RerunPlottable;
+use crate::utils::RollingSDCalculator;
 
 use log::{error, info};
 use rayon::iter::IntoParallelIterator;
@@ -178,28 +179,28 @@ impl RerunPlottable<Option<usize>> for Vec<BaseTrace> {
 
 #[derive(Debug, Clone, Default)]
 struct TraceAggregator {
-    mz: f64,
+    mz: RollingSDCalculator<f64,u64>,
     intensity: u64,
-    rt: f64,
-    ims: f64,
+    rt: RollingSDCalculator<f64,u64>,
+    ims: RollingSDCalculator<f64,u64>,
     num_peaks: usize,
 }
 
 impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
     fn add(&mut self, peak: &TimeTimsPeak) {
         let f64_intensity = peak.intensity as f64;
-        self.mz += peak.mz * f64_intensity;
+        self.mz.add(peak.mz, peak.intensity);
         debug_assert!(peak.intensity < u64::MAX - self.intensity);
         self.intensity += peak.intensity;
-        self.rt += (peak.rt as f64) * f64_intensity;
-        self.ims += (peak.ims as f64) * f64_intensity;
+        self.rt.add(peak.rt as f64, peak.intensity);
+        self.ims.add(peak.ims as f64, peak.intensity);
         self.num_peaks += 1;
     }
 
     fn aggregate(&self) -> BaseTrace {
-        let mz = self.mz / self.intensity as f64;
-        let rt = self.rt / self.intensity as f64;
-        let ims = self.ims / self.intensity as f64;
+        let mz = self.mz.get_mean() as f64;
+        let rt = self.rt.get_mean() as f64;
+        let ims = self.ims.get_mean() as f64;
 
         BaseTrace {
             mz: mz,
@@ -270,4 +271,58 @@ fn _combine_single_window_traces(
 
     info!("Combined traces: {}", foo.len());
     foo
+}
+
+
+// NOW ... combine traces into pseudospectra
+
+type Peak = (f64, u64);
+
+struct PseudoSpectrum{
+    peaks: Vec<Peak>,
+    rt: f64,
+    ims: f64,
+}
+
+#[derive(Debug)]
+struct PseudoSpectrumAggregator {
+    peaks: Vec<Peak>,
+    intensity: u64,
+    rt: RollingSDCalculator<f64,u64>,
+    ims: RollingSDCalculator<f64,u64>,
+}
+
+impl Default for PseudoSpectrumAggregator {
+    fn default() -> Self {
+        let mut nv = Vec::new();
+        PseudoSpectrumAggregator {
+            peaks: nv,
+            intensity: 0,
+            rt: RollingSDCalculator::default(),
+            ims: RollingSDCalculator::default(),
+        }
+    }
+}
+
+
+
+impl<'a> ClusterAggregator<TimeTimsPeak, PseudoSpectrum> for PseudoSpectrumAggregator {
+    fn add(&mut self, peak: &TimeTimsPeak) {
+        debug_assert!(peak.intensity < u64::MAX - self.intensity);
+
+        self.rt.add(peak.rt as f64, peak.intensity);
+        self.ims.add(peak.ims as f64, peak.intensity);
+        self.peaks.push((peak.mz, peak.intensity));
+    }
+
+    fn aggregate(&self) -> PseudoSpectrum {
+        let rt = self.rt.get_mean() as f64;
+        let ims = self.ims.get_mean() as f64;
+
+        PseudoSpectrum {
+            peaks: self.peaks.clone(),
+            rt: rt,
+            ims: ims,
+        }
+    }
 }
