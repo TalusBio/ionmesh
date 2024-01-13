@@ -1,3 +1,5 @@
+use core::panic;
+
 use rerun;
 
 pub trait RerunPlottable<T> {
@@ -13,6 +15,14 @@ pub trait RerunPlottable<T> {
 // #[cfg(feature='viz')]
 pub fn setup_recorder() -> rerun::RecordingStream {
     let rec = rerun::RecordingStreamBuilder::new("rerun_jspp_denoiser").connect();
-
-    return rec.unwrap();
+    match rec {
+        Ok(rec) => {
+            rec.set_time_seconds("rt_seconds", 0.0f64);
+            rec
+        }
+        Err(e) => {
+            // If the viz mode is on ... there has to be a viz...
+            panic!("Error setting up recorder: {:?}", e);
+        }
+    }
 }

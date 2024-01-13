@@ -331,7 +331,7 @@ impl RerunPlottable<Option<usize>> for DenseFrame {
             .collect::<Vec<_>>();
 
         rec.log(
-            entry_path,
+            entry_path.as_str(),
             &rerun::Points2D::new(
                 quad_points
                     .iter()

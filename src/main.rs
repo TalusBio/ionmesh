@@ -131,7 +131,12 @@ fn main() -> Result<(), Error> {
 
     let path_use = String::from("/Users/sebastianpaez/git/2023_dev_diadem_report/data/231121_RH30_NMIAA_E3_DIA_S2-B3_1_5353.d");
     // ms_denoise::read_all_ms1_denoising(path_use.clone(), &mut rec);
-    let mut dia_frames = ms_denoise::read_all_dia_denoising(path_use.clone(), &mut rec);
+    let dia_frames = ms_denoise::read_all_dia_denoising(path_use.clone(), &mut rec);
 
+    let mz_scaling = 0.015;
+    let rt_scaling = 2.;
+    let ims_scaling = 0.015;
+
+    tracing::combine_traces(dia_frames, mz_scaling, rt_scaling, ims_scaling, &mut rec);
     Ok(())
 }

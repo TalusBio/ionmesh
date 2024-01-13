@@ -99,13 +99,11 @@ where
     fn intensity(&self) -> T;
 }
 
-pub trait TraceLike<T, R: std::convert::Into<f64>> {
+pub trait TraceLike<R: std::convert::Into<f64>> {
     fn get_mz(&self) -> f64;
-    fn get_intensity(&self) -> f64;
+    fn get_intensity(&self) -> u64;
     fn get_rt(&self) -> R;
     fn get_ims(&self) -> R;
-
-    fn from_peaks(peaks: Vec<T>) -> Self;
 }
 
 pub trait NDPointConverter<T, const D: usize> {

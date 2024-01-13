@@ -244,6 +244,14 @@ fn _dbscan<'a, const N: usize>(
 
 use crate::space_generics::NDPointConverter;
 
+/// A trait for aggregating points into a single point.
+/// This is used for the final step of dbscan.
+///
+/// Types <T,R,S> are:
+/// T: The type of the points to be aggregated.
+/// R: The type of the aggregated point.
+/// S: The type of the aggregator.
+///
 pub trait ClusterAggregator<T, R, S: Default = Self> {
     fn add(&mut self, elem: &T);
     fn aggregate(&self) -> R;
@@ -260,6 +268,7 @@ struct TimsPeakAggregator {
 impl ClusterAggregator<TimsPeak, TimsPeak> for TimsPeakAggregator {
     fn add(&mut self, elem: &TimsPeak) {
         let f64_intensity = elem.intensity as f64;
+        debug_assert!((elem.intensity as u64) < (u64::MAX - self.cluster_intensity));
         self.cluster_intensity += elem.intensity as u64;
         self.cluster_mz += (elem.mz as f64) * f64_intensity;
         self.cluster_mobility += (elem.mobility as f64) * f64_intensity;
@@ -278,11 +287,12 @@ impl ClusterAggregator<TimsPeak, TimsPeak> for TimsPeakAggregator {
 }
 
 // fn DBSCAN<C: NDPointConverter<T, D>, R, G: Default + ClusterAggregator<T,R,G>, T: HasIntensity<u32>, const D: usize>(
-fn DBSCAN<
-    C: NDPointConverter<T, 2>,
+pub fn dbscan_generic<
+    C: NDPointConverter<T, N>,
     R,
     G: Default + ClusterAggregator<T, R, G>,
     T: HasIntensity<u32>,
+    const N: usize,
 >(
     converter: C,
     prefiltered_peaks: Vec<T>,
@@ -393,7 +403,7 @@ pub fn dbscan_denseframes(
         mz_scaling,
         ims_scaling,
     };
-    let peak_vec = DBSCAN(converter, prefiltered_peaks, min_n, min_intensity, &|| {
+    let peak_vec = dbscan_generic(converter, prefiltered_peaks, min_n, min_intensity, &|| {
         TimsPeakAggregator::default()
     });
 
