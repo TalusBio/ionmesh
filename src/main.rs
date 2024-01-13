@@ -10,12 +10,15 @@
 use apache_avro::{Codec, Error, Schema, Writer};
 mod dbscan;
 mod extraction;
+mod kdtree;
 mod mod_types;
 mod ms;
 mod ms_denoise;
 mod quad;
 mod space_generics;
 mod tdf;
+mod tracing;
+mod utils;
 mod visualization;
 
 extern crate pretty_env_logger;
@@ -127,8 +130,7 @@ fn main() -> Result<(), Error> {
     }
 
     let path_use = String::from("/Users/sebastianpaez/git/2023_dev_diadem_report/data/231121_RH30_NMIAA_E3_DIA_S2-B3_1_5353.d");
-    let dia_info = tdf::read_dia_frame_info(path_use.clone());
-    // ms_denoise::read_all_ms1_denoising(path_use.clone());
+    // ms_denoise::read_all_ms1_denoising(path_use.clone(), &mut rec);
     let mut dia_frames = ms_denoise::read_all_dia_denoising(path_use.clone(), &mut rec);
 
     Ok(())

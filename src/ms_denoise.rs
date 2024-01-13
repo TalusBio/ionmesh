@@ -8,7 +8,7 @@ use crate::tdf;
 use crate::tdf::DIAFrameInfo;
 use crate::visualization::RerunPlottable;
 
-use indicatif::{ParallelProgressIterator, ProgressStyle};
+use indicatif::ParallelProgressIterator;
 use log::{info, trace, warn};
 use rayon::prelude::*;
 use timsrust::Frame;
@@ -73,17 +73,17 @@ fn _sanity_check_framestats(
     assert!(peak_ratio <= 1.);
 }
 
-fn _denoise_denseframe(frame: &mut DenseFrame, min_n: usize, min_intensity: u64) -> DenseFrame {
+fn _denoise_denseframe(frame: DenseFrame, min_n: usize, min_intensity: u64) -> DenseFrame {
     // I am 99% sure the compiler will remove this section when optimizing ... but I still need to test it.
-    let frame_stats_start = FrameStats::new(frame);
-
+    let frame_stats_start = FrameStats::new(&frame);
+    let index = frame.index.clone();
     // this is the line that matters
     // TODO move the scalings to parameters
-    let denoised_frame = dbscan::dbscan(frame, 0.02, 0.03, min_n, min_intensity);
+    let denoised_frame = dbscan::dbscan_denseframes(frame, 0.02, 0.03, min_n, min_intensity);
 
     let frame_stats_end = FrameStats::new(&denoised_frame);
     if cfg!(debug_assertions) {
-        _sanity_check_framestats(frame_stats_start, frame_stats_end, frame.index);
+        _sanity_check_framestats(frame_stats_start, frame_stats_end, index);
     }
 
     denoised_frame
@@ -104,14 +104,13 @@ fn _denoise_dia_frame(
     let out = frame_windows
         .into_iter()
         .map(|frame_window| {
-            let mut denseframe_window = DenseFrameWindow::from_frame_window(
+            let denseframe_window = DenseFrameWindow::from_frame_window(
                 frame_window,
                 ims_converter,
                 mz_converter,
                 dia_frame_info,
             );
-            let denoised_frame =
-                _denoise_denseframe(&mut denseframe_window.frame, min_n, min_intensity);
+            let denoised_frame = _denoise_denseframe(denseframe_window.frame, min_n, min_intensity);
 
             DenseFrameWindow {
                 frame: denoised_frame,
@@ -207,8 +206,8 @@ struct FrameDenoiser {
 
 impl<'a> Denoiser<'a, Frame, DenseFrame, Converters, Option<usize>> for FrameDenoiser {
     fn denoise(&self, frame: Frame) -> DenseFrame {
-        let mut denseframe = DenseFrame::new(&frame, &self.ims_converter, &self.mz_converter);
-        _denoise_denseframe(&mut denseframe, self.min_n, self.min_intensity)
+        let denseframe = DenseFrame::new(&frame, &self.ims_converter, &self.mz_converter);
+        _denoise_denseframe(denseframe, self.min_n, self.min_intensity)
     }
 }
 
@@ -233,70 +232,6 @@ impl<'a> Denoiser<'a, Frame, Vec<DenseFrameWindow>, Converters, Option<usize>>
             &self.mz_converter,
         )
     }
-}
-
-// TODO re-implement to have a
-// denoiser that implements denoise(T)
-// and have frames be a vec of T: impl plot
-fn denoise_denseframe_vec(
-    mut frames: Vec<DenseFrame>,
-    min_intensity: u64,
-    min_n: usize,
-    record_stream: &mut Option<rerun::RecordingStream>,
-) -> Vec<DenseFrame> {
-    info!("Denoising {} frames", frames.len());
-    // randomly viz 1/200 frames
-    if let Some(stream) = record_stream.as_mut() {
-        warn!("Viz is enabled, randomly subsetting 1/200 frames");
-        let frames_keep: Vec<DenseFrame> = frames
-            .into_iter()
-            .filter_map(|x| {
-                if rand::random::<f64>() < (1. / 200.) {
-                    Some(x)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-
-        frames = frames_keep;
-
-        for frame in frames.iter() {
-            info!("Logging frame {}", frame.index);
-            frame
-                .plot(
-                    stream,
-                    String::from("points/Original"),
-                    Some(frame.rt as f32),
-                    None,
-                )
-                .unwrap();
-        }
-    }
-
-    let style = ProgressStyle::default_bar();
-
-    let denoised_frames: Vec<DenseFrame> = frames
-        .par_iter_mut()
-        .progress_with_style(style)
-        .map(|x| _denoise_denseframe(x, min_n, min_intensity))
-        .collect::<Vec<_>>();
-
-    if let Some(stream) = record_stream.as_mut() {
-        for frame in denoised_frames.iter() {
-            trace!("Logging frame {}", frame.index);
-            frame
-                .plot(
-                    stream,
-                    String::from("points/denoised"),
-                    Some(frame.rt as f32),
-                    None,
-                )
-                .unwrap();
-        }
-    }
-
-    denoised_frames
 }
 
 pub fn read_all_ms1_denoising(

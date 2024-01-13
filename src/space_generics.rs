@@ -81,11 +81,41 @@ pub struct NDPoint<const DIMENSIONALITY: usize> {
     pub values: [Float; DIMENSIONALITY],
 }
 
-trait IntoNDPoint<const DIMENSIONALITY: usize> {
-    fn into_nd_point(&self) -> NDPoint<DIMENSIONALITY>;
-}
-
 pub trait IndexedPoints<'a, const N: usize, T> {
     fn query_ndpoint(&'a self, point: &NDPoint<N>) -> Vec<&'a T>;
     fn query_ndrange(&'a self, boundary: &NDBoundary<N>) -> Vec<&'a T>;
+}
+
+pub trait HasIntensity<T>
+where
+    T: Copy
+        + PartialOrd
+        + std::ops::Add<Output = T>
+        + std::ops::Sub<Output = T>
+        + std::ops::Mul<Output = T>
+        + std::ops::Div<Output = T>
+        + Default,
+{
+    fn intensity(&self) -> T;
+}
+
+pub trait TraceLike<T, R: std::convert::Into<f64>> {
+    fn get_mz(&self) -> f64;
+    fn get_intensity(&self) -> f64;
+    fn get_rt(&self) -> R;
+    fn get_ims(&self) -> R;
+
+    fn from_peaks(peaks: Vec<T>) -> Self;
+}
+
+pub trait NDPointConverter<T, const D: usize> {
+    fn convert(&self, elem: &T) -> NDPoint<D>;
+    fn convert_vec(&self, elems: &[T]) -> (Vec<NDPoint<D>>, NDBoundary<D>) {
+        let points = elems
+            .iter()
+            .map(|elem| self.convert(elem))
+            .collect::<Vec<_>>();
+        let boundary = NDBoundary::from_ndpoints(&points);
+        (points, boundary)
+    }
 }

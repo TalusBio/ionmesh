@@ -1,5 +1,8 @@
 use crate::mod_types::Float;
 use crate::space_generics::{IndexedPoints, NDBoundary, NDPoint};
+use log::warn;
+
+const EPSILON: Float = Float::EPSILON;
 // Implements a kdtree with several minor differences.
 #[derive(Debug, Clone)]
 pub struct RadiusKDTree<'a, T, const DIMENSIONALITY: usize> {
@@ -16,7 +19,10 @@ pub struct RadiusKDTree<'a, T, const DIMENSIONALITY: usize> {
     // and [division_value, high_bounds).
     division_value: Option<Float>,
     count: usize,
+    level: usize,
 }
+
+// WARN right now this is over-flowing ...
 
 impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
     pub fn new_empty(
@@ -34,14 +40,15 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
             division_axis: None,
             division_value: None,
             count: 0,
+            level: 0,
         }
     }
 
     pub fn insert_ndpoint(&mut self, point: NDPoint<D>, value: &'a T) {
         if cfg!(debug_assertions) && !self.boundary.contains(&point) {
             panic!(
-                "Point {:?} is not contained in the boundary of this tree",
-                point
+                "Point {:?} is not contained in the boundary of this tree ({:?})",
+                point, self.boundary
             );
         }
 
@@ -78,12 +85,12 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
     }
 
     fn split(&mut self) -> Result<(), &'static str> {
-        let mut low_bounds = self.boundary.starts;
-        let mut high_bounds = self.boundary.ends;
+        let mut low_bounds = self.boundary.starts.clone();
+        let mut high_bounds = self.boundary.ends.clone();
         let mut longest_axis: Option<usize> = None;
         let mut longest_axis_length: Option<Float> = None;
 
-        for i in 1..D {
+        for i in 0..D {
             let axis_length = self.boundary.widths[i];
             if axis_length < self.radius {
                 continue;
@@ -92,12 +99,11 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
             if longest_axis_length.is_none() || axis_length > longest_axis_length.unwrap() {
                 // Check that the actual values in the points have a range
                 // > 0, otherwise skip dimension.
-                const EPS: Float = 1e-4;
                 let axis_val_first = self.points.first().unwrap().0.values[i];
                 let mut keep = false;
                 for point in self.points.iter() {
                     let diff = (point.0.values[i] - axis_val_first).abs();
-                    if diff > EPS {
+                    if diff > EPSILON {
                         keep = true;
                         break;
                     }
@@ -116,32 +122,56 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
         }
 
         let division_axis = longest_axis.unwrap();
-        let division_value =
-            (self.boundary.ends[division_axis] + self.boundary.starts[division_axis]) / 2.0;
+        let division_value = self.boundary.centers[division_axis];
 
-        low_bounds[division_axis] = self.boundary.starts[division_axis];
-        high_bounds[division_axis] = self.boundary.ends[division_axis];
+        let low_boundary_starts = self.boundary.starts.clone();
+        let mut low_boundary_ends = self.boundary.ends.clone();
+        low_boundary_ends[division_axis] = division_value;
 
-        let low_boundary = NDBoundary::new(low_bounds, high_bounds);
+        let mut high_boundary_starts = self.boundary.starts.clone();
+        let high_boundary_ends = self.boundary.ends.clone();
+        high_boundary_starts[division_axis] = division_value;
 
-        let high_boundary = NDBoundary::new(low_bounds, high_bounds);
+        let low_boundary = NDBoundary::new(low_boundary_starts, low_boundary_ends);
+        let high_boundary = NDBoundary::new(high_boundary_starts, high_boundary_ends);
 
         let mut low_split = RadiusKDTree::new_empty(low_boundary, self.capacity, self.radius);
         let mut high_split = RadiusKDTree::new_empty(high_boundary, self.capacity, self.radius);
 
-        while let Some(elem) = self.points.pop() {
-            let (point, value) = elem;
-            if point.values[division_axis] < division_value {
-                low_split.insert_ndpoint(point, value);
-            } else {
-                high_split.insert_ndpoint(point, value);
-            }
-        }
+        let new_level = self.level + 1;
+        low_split.level = new_level;
+        high_split.level = new_level;
 
         self.low_split = Some(Box::new(low_split));
         self.high_split = Some(Box::new(high_split));
         self.division_axis = Some(division_axis);
-        self.division_value = Some(division_value);
+        self.division_value = Some(division_value.clone());
+
+        while let Some(elem) = self.points.pop() {
+            if elem.0.values[division_axis] < division_value {
+                self.low_split
+                    .as_mut()
+                    .unwrap()
+                    .insert_ndpoint(elem.0, elem.1);
+            } else {
+                self.high_split
+                    .as_mut()
+                    .unwrap()
+                    .insert_ndpoint(elem.0, elem.1);
+            }
+        }
+
+        if new_level > 100 {
+            // Should this be a warn?
+            warn!("Splitting at level {} on axis {}", new_level, division_axis);
+            warn!("Division value is {}", division_value);
+            warn!("Curr bounds are {:?}", self.boundary);
+            warn!(
+                "Number of points on each child is {} and {}",
+                self.low_split.as_ref().unwrap().count,
+                self.high_split.as_ref().unwrap().count
+            );
+        }
 
         debug_assert_eq!(self.points.len(), 0);
         Ok(())
@@ -212,11 +242,11 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
 }
 
 impl<'a, T, const D: usize> IndexedPoints<'a, D, T> for RadiusKDTree<'a, T, D> {
-    fn query_ndpoint(&'a self, point: &NDPoint<D>) -> Vec<(&'a T)> {
+    fn query_ndpoint(&'a self, point: &NDPoint<D>) -> Vec<&'a T> {
         self.query(point)
     }
 
-    fn query_ndrange(&'a self, boundary: &NDBoundary<D>) -> Vec<(&'a T)> {
+    fn query_ndrange(&'a self, boundary: &NDBoundary<D>) -> Vec<&'a T> {
         let out = self.query_range(boundary);
         out.iter().map(|x| x.1).collect()
     }

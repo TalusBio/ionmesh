@@ -53,12 +53,24 @@ possible oprimization: split frames without making a dense rep of the peaks. (im
 
 # Major mem cleanup using lazy splitting of frames
         1m27.98s real           9m52.28s user           8.98s sys
-          2865381376  maximum resident set size
+          2,865,381,376  maximum resident set size
               606,702  page reclaims
                    4  page faults
-               14272  voluntary context switches
-              718236  involuntary context switches
-       3908013776485  instructions retired
-       1528190209363  cycles elapsed
+               14,272  voluntary context switches
+              718,236  involuntary context switches
+       3,908,013,776,485  instructions retired
+       1,528,190,209,363  cycles elapsed
           3,972,768,640  peak memory footprint
+
+# Refactoring and change in tree parameters
+        1m7.75s real            7m9.05s user            4.14s sys
+          2,074,181,632  maximum resident set size
+              596,675  page reclaims
+                   6  page faults
+               15,918  voluntary context switches
+              586,899  involuntary context switches
+       4,402,843,850,816  instructions retired
+       1,162,150,354,869  cycles elapsed
+          3,997,115,328  peak memory footprint
 ```
+

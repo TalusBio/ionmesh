@@ -1,7 +1,8 @@
 use crate::mod_types::Float;
 use crate::ms::frames::{DenseFrame, TimsPeak};
-use crate::space_generics::{IndexedPoints, NDBoundary, NDPoint};
+use crate::space_generics::{IndexedPoints, NDBoundary, NDPoint, NDPointConverter};
 use core::panic;
+use log::trace;
 
 #[derive(Debug, Clone)]
 pub struct RadiusQuadTree<'a, T> {
@@ -15,10 +16,15 @@ pub struct RadiusQuadTree<'a, T> {
     southwest: Option<Box<RadiusQuadTree<'a, T>>>,
     division_point: Option<NDPoint<2>>,
     count: usize,
+    depth: usize,
 }
 
 impl<'a, T> RadiusQuadTree<'a, T> {
-    pub fn new(boundary: NDBoundary<2>, capacity: usize, radius: Float) -> RadiusQuadTree<'a, T> {
+    pub fn new_empty(
+        boundary: NDBoundary<2>,
+        capacity: usize,
+        radius: Float,
+    ) -> RadiusQuadTree<'a, T> {
         RadiusQuadTree {
             boundary,
             capacity,
@@ -30,7 +36,12 @@ impl<'a, T> RadiusQuadTree<'a, T> {
             southwest: None,
             division_point: Option::None,
             count: 0,
+            depth: 0,
         }
+    }
+
+    pub fn insert_ndpoint(&mut self, point: NDPoint<2>, data: &'a T) {
+        self.insert(point, data);
     }
 
     pub fn insert(&mut self, point: NDPoint<2>, data: &'a T) {
@@ -131,29 +142,40 @@ impl<'a, T> RadiusQuadTree<'a, T> {
         // println!("se_boundary {:?}", se_boundary);
         // println!("sw_boundary {:?}", sw_boundary);
 
+        let new_level = self.depth + 1;
+
         // Create sub-trees for each quadrant
-        self.northeast = Some(Box::new(RadiusQuadTree::new(
+        self.northeast = Some(Box::new(RadiusQuadTree::new_empty(
             ne_boundary,
             self.capacity,
             self.radius,
         )));
-        self.northwest = Some(Box::new(RadiusQuadTree::new(
+        self.northeast.as_mut().unwrap().depth = new_level;
+        self.northwest = Some(Box::new(RadiusQuadTree::new_empty(
             nw_boundary,
             self.capacity,
             self.radius,
         )));
-        self.southeast = Some(Box::new(RadiusQuadTree::new(
+        self.northwest.as_mut().unwrap().depth = new_level;
+        self.southeast = Some(Box::new(RadiusQuadTree::new_empty(
             se_boundary,
             self.capacity,
             self.radius,
         )));
-        self.southwest = Some(Box::new(RadiusQuadTree::new(
+        self.southeast.as_mut().unwrap().depth = new_level;
+        self.southwest = Some(Box::new(RadiusQuadTree::new_empty(
             sw_boundary,
             self.capacity,
             self.radius,
         )));
+        self.southwest.as_mut().unwrap().depth = new_level;
 
         self.division_point = Some(division_point);
+        trace!(
+            "Subdividing at level {} at point {:?}",
+            new_level,
+            &self.division_point
+        );
 
         // Move points into sub-trees
         while let Some(point) = self.points.pop() {
@@ -203,136 +225,8 @@ impl<'a, T> RadiusQuadTree<'a, T> {
     }
 }
 
-pub fn denseframe_to_quadtree_points(
-    denseframe: &mut DenseFrame,
-    mz_scaling: f64,
-    ims_scaling: f32,
-    min_n: usize,
-) -> (Vec<NDPoint<2>>, Vec<TimsPeak>, NDBoundary<2>) {
-    // Initial pre-filtering step
-    denseframe.sort_by_mz();
-
-    let num_neigh = count_neigh_monotonocally_increasing(
-        &denseframe.raw_peaks,
-        &|peak| peak.mz,
-        mz_scaling,
-        &|i_right, i_left| (i_right - i_left) >= min_n,
-    );
-
-    // Filter the peaks and replace the raw peaks with the filtered peaks.
-    let prefiltered_peaks = denseframe
-        .raw_peaks
-        .clone()
-        .into_iter()
-        .zip(num_neigh.into_iter())
-        .filter(|(_, b)| *b)
-        .map(|(peak, _)| peak.clone()) // Clone the TimsPeak
-        .collect::<Vec<_>>();
-
-    let quad_points = prefiltered_peaks // denseframe.raw_peaks //
-        .iter()
-        .map(|peak| NDPoint {
-            values: [
-                (peak.mz / mz_scaling) as Float,
-                (peak.mobility / ims_scaling) as Float,
-            ],
-        })
-        .collect::<Vec<_>>();
-
-    let boundary = NDBoundary::from_ndpoints(&quad_points);
-    (quad_points, prefiltered_peaks, boundary)
-    // (quad_points, denseframe.raw_peaks.clone(), boundary)
-
-    // NOTE: I would like to do this, but I dont know how to fix the lifetime issues...
-    // let mut tree: RadiusQuadTree<'_, TimsPeak> = quad::RadiusQuadTree::new(boundary, 20, 1.);
-    // for (point, timspeak) in quad_points.iter().zip(prefiltered_peaks.iter()) {
-    //     tree.insert(point.clone(), timspeak);
-    // }
-
-    // (quad_points, prefiltered_peaks, tree)
-}
-
 // TODO: rename count_neigh_monotonocally_increasing
 // because it can do more than just count neighbors....
-
-#[inline(always)]
-fn count_neigh_monotonocally_increasing<T, R, W>(
-    elems: &[T],
-    key: &dyn Fn(&T) -> R,
-    max_dist: R,
-    out_func: &dyn Fn(&usize, &usize) -> W,
-) -> Vec<W>
-where
-    R: PartialOrd + Copy + std::ops::Sub<Output = R> + std::ops::Add<Output = R> + Default,
-    T: Copy,
-    W: Default + Copy,
-{
-    let mut prefiltered_peaks_bool: Vec<W> = vec![W::default(); elems.len()];
-
-    let mut i_left = 0;
-    let mut i_right = 0;
-    let mut mz_left = key(&elems[0]);
-    let mut mz_right = key(&elems[0]);
-
-    // Does the cmpiler re-use the memory here?
-    // let mut curr_mz = R::default();
-    // let mut left_mz_diff = R::default();
-    // let mut right_mz_diff = R::default();
-
-    // 1. Slide the left index until the mz difference while sliding is more than the mz tolerance.
-    // 2. Slide the right index until the mz difference while sliding is greater than the mz tolerance.
-    // 3. If the number of points between the left and right index is greater than the minimum number of points, add them to the prefiltered peaks.
-
-    let elems_len = elems.len();
-    let elems_len_minus_one = elems_len - 1;
-    for (curr_i, elem) in elems.iter().enumerate() {
-        let curr_mz = key(elem);
-        let mut left_mz_diff = curr_mz - mz_left;
-        let mut right_mz_diff = mz_right - curr_mz;
-
-        while left_mz_diff > max_dist {
-            i_left += 1;
-            mz_left = key(&elems[i_left]);
-            left_mz_diff = curr_mz - mz_left;
-        }
-
-        // Slide the right index until the mz difference while sliding is greater than the mz tolerance.
-        while (right_mz_diff < max_dist) && (i_right < elems_len) {
-            i_right += 1;
-            mz_right = key(&elems[i_right.min(elems_len_minus_one)]);
-            right_mz_diff = mz_right - curr_mz;
-        }
-
-        // If the number of points between the left and right index is greater than the minimum number of points, add them to the prefiltered peaks.
-        // println!("{} {}", i_left, i_right);
-        if i_left < i_right {
-            prefiltered_peaks_bool[curr_i] = out_func(&i_right, &(i_left));
-        }
-
-        if cfg!(test) {
-            assert!(i_left <= i_right);
-        }
-    }
-
-    prefiltered_peaks_bool
-}
-
-#[cfg(test)]
-mod test_count_neigh {
-    use super::*;
-
-    #[test]
-    fn test_count_neigh() {
-        let elems = vec![0.0, 1.0, 2.0, 3.0, 4.0];
-
-        let prefiltered_peaks_bool =
-            count_neigh_monotonocally_increasing(&elems, &|x| *x, 1.1, &|i_right, i_left| {
-                (i_right - i_left) >= 3
-            });
-
-        assert_eq!(prefiltered_peaks_bool, vec![false, true, true, true, false]);
-    }
-}
 
 impl<'a, T> IndexedPoints<'a, 2, T> for RadiusQuadTree<'a, T> {
     fn query_ndpoint(&'a self, point: &NDPoint<2>) -> Vec<&'a T> {

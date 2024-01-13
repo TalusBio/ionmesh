@@ -1,7 +1,20 @@
+use crate::ms::frames::TimsPeak;
+use crate::utils::within_distance_apply;
+
+/// Density-based spatial clustering of applications with noise (DBSCAN)
+///
+/// This module implements a variant of dbscan with a couple of modifications
+/// with respect to the vanilla implementation.
+///
+/// 1. Intensity usage.
+///
 use crate::mod_types::Float;
 use crate::ms::frames;
-use crate::quad::{denseframe_to_quadtree_points, RadiusQuadTree};
-use crate::space_generics::{IndexedPoints, NDPoint};
+use crate::space_generics::{HasIntensity, IndexedPoints, NDPoint};
+use log::{error, trace};
+
+use crate::kdtree::RadiusKDTree;
+use crate::quad::RadiusQuadTree;
 
 // Pseudocode from wikipedia.
 // Donate to wikipedia y'all. :3
@@ -40,19 +53,6 @@ enum ClusterLabel<T> {
     Unassigned,
     Noise,
     Cluster(T),
-}
-
-trait HasIntensity<T>
-where
-    T: Copy
-        + PartialOrd
-        + std::ops::Add<Output = T>
-        + std::ops::Sub<Output = T>
-        + std::ops::Mul<Output = T>
-        + std::ops::Div<Output = T>
-        + Default,
-{
-    fn intensity(&self) -> T;
 }
 
 impl HasIntensity<u32> for frames::TimsPeak {
@@ -101,7 +101,7 @@ fn _dbscan<'a, const N: usize>(
 
         cluster_id += 1;
         cluster_labels[point_index] = ClusterLabel::Cluster(cluster_id);
-        let mut seed_set: Vec<(&usize)> = Vec::new();
+        let mut seed_set: Vec<&usize> = Vec::new();
         seed_set.extend(neighbors);
 
         const MAX_EXTENSION_DISTANCE: Float = 5.;
@@ -161,39 +161,150 @@ fn _dbscan<'a, const N: usize>(
     (cluster_id, cluster_labels)
 }
 
-pub fn dbscan(
-    denseframe: &mut frames::DenseFrame,
-    mz_scaling: f64,
-    ims_scaling: f32,
+// pub fn dbscan(
+//     denseframe: frames::DenseFrame,
+//     mz_scaling: f64,
+//     ims_scaling: f32,
+//     min_n: usize,
+//     min_intensity: u64,
+// ) -> frames::DenseFrame {
+//     let out_frame_type: timsrust::FrameType = denseframe.frame_type.clone();
+//     let out_rt: f64 = denseframe.rt.clone();
+//     let out_index: usize = denseframe.index.clone();
+//
+//     let (quad_points, prefiltered_peaks, boundary) =
+//         denseframe_to_quadtree_points(denseframe, mz_scaling, ims_scaling, min_n.saturating_sub(1));
+//
+//     let mut tree = RadiusQuadTree::new(boundary, 20, 1.);
+//     // let mut tree = RadiusQuadTree::new(boundary, 20, 1.);
+//
+//     let quad_indices = (0..quad_points.len()).collect::<Vec<_>>();
+//
+//     for (quad_point, i) in quad_points.iter().zip(quad_indices.iter()) {
+//         tree.insert(quad_point.clone(), i);
+//     }
+//     let mut intensity_sorted_indices = prefiltered_peaks
+//         .iter()
+//         .enumerate()
+//         .map(|(i, peak)| (i.clone(), peak.intensity.clone()))
+//         .collect::<Vec<_>>();
+//
+//     intensity_sorted_indices.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+//
+//     let (cluster_id, cluster_labels) = _dbscan(
+//         &tree,
+//         &prefiltered_peaks,
+//         &quad_points,
+//         min_n,
+//         min_intensity,
+//         &intensity_sorted_indices,
+//     );
+//     // Each element is a tuple representing the summed cluster intensity, mz, and mobility.
+//     // And will be used to calculate the weighted average of mz and mobility AND the total intensity.
+//     let mut cluster_vecs = vec![(0u64, 0f64, 0f64); cluster_id as usize];
+//     for (point_index, cluster_label) in cluster_labels.iter().enumerate() {
+//         match cluster_label {
+//             ClusterLabel::Cluster(cluster_id) => {
+//                 let cluster_idx = *cluster_id as usize - 1;
+//                 let timspeak = prefiltered_peaks[point_index];
+//                 let f64_intensity = timspeak.intensity as f64;
+//                 let cluster_vec = &mut cluster_vecs[cluster_idx];
+//                 cluster_vec.0 += timspeak.intensity as u64;
+//                 cluster_vec.1 += (timspeak.mz as f64) * f64_intensity;
+//                 cluster_vec.2 += (timspeak.mobility as f64) * f64_intensity;
+//             }
+//             _ => {}
+//         }
+//     }
+//
+//     let denoised_peaks = cluster_vecs
+//         .iter_mut()
+//         .map(|(cluster_intensity, cluster_mz, cluster_mobility)| {
+//             let cluster_intensity = cluster_intensity; // Note not averaged
+//             let cluster_mz = *cluster_mz / *cluster_intensity as f64;
+//             let cluster_mobility = *cluster_mobility / *cluster_intensity as f64;
+//             frames::TimsPeak {
+//                 intensity: u32::try_from(*cluster_intensity).ok().unwrap(),
+//                 mz: cluster_mz,
+//                 mobility: cluster_mobility as f32,
+//             }
+//         })
+//         .collect::<Vec<_>>();
+//
+//     // TODO add an option to keep noise points
+//
+//     frames::DenseFrame {
+//         raw_peaks: denoised_peaks,
+//         index: out_index,
+//         rt: out_rt,
+//         frame_type: out_frame_type,
+//         sorted: None,
+//     }
+// }
+
+use crate::space_generics::NDPointConverter;
+
+pub trait ClusterAggregator<T, R, S: Default = Self> {
+    fn add(&mut self, elem: &T);
+    fn aggregate(&self) -> R;
+}
+
+#[derive(Default, Debug)]
+struct TimsPeakAggregator {
+    cluster_intensity: u64,
+    cluster_mz: f64,
+    cluster_mobility: f64,
+    num_peaks: u64,
+}
+
+impl ClusterAggregator<TimsPeak, TimsPeak> for TimsPeakAggregator {
+    fn add(&mut self, elem: &TimsPeak) {
+        let f64_intensity = elem.intensity as f64;
+        self.cluster_intensity += elem.intensity as u64;
+        self.cluster_mz += (elem.mz as f64) * f64_intensity;
+        self.cluster_mobility += (elem.mobility as f64) * f64_intensity;
+        self.num_peaks += 1;
+    }
+
+    fn aggregate(&self) -> TimsPeak {
+        let cluster_mz = self.cluster_mz / self.cluster_intensity as f64;
+        let cluster_mobility = self.cluster_mobility / self.cluster_intensity as f64;
+        frames::TimsPeak {
+            intensity: self.cluster_intensity as u32,
+            mz: cluster_mz,
+            mobility: cluster_mobility as f32,
+        }
+    }
+}
+
+// fn DBSCAN<C: NDPointConverter<T, D>, R, G: Default + ClusterAggregator<T,R,G>, T: HasIntensity<u32>, const D: usize>(
+fn DBSCAN<
+    C: NDPointConverter<T, 2>,
+    R,
+    G: Default + ClusterAggregator<T, R, G>,
+    T: HasIntensity<u32>,
+>(
+    converter: C,
+    prefiltered_peaks: Vec<T>,
     min_n: usize,
     min_intensity: u64,
-) -> frames::DenseFrame {
-    // I could pre-sort here and use the window iterator,
-    // to pre-filter for points with no neighbors in the mz dimension.
+    def_aggregator: &dyn Fn() -> G,
+) -> Vec<R> {
+    trace!("DBSCAN");
+    let (ndpoints, boundary) = converter.convert_vec(&prefiltered_peaks);
+    // let mut tree = RadiusKDTree::new_empty(boundary, 1000, 1.);
+    // let mut tree = RadiusQuadTree::new_empty(boundary, 1000, 1.);
 
-    // AKA could filter out the points with no mz neighbors sorting
-    // and the use the tree to filter points with no mz+mobility neighbors.
+    let mut tree = RadiusKDTree::new_empty(boundary, 500, 1.);
+    let quad_indices = (0..ndpoints.len()).collect::<Vec<_>>();
 
-    // NOTE: the multiple quad isolation windows in DIA are not being handled just yet.
-    let out_frame_type: timsrust::FrameType = denseframe.frame_type.clone();
-    let out_rt: f64 = denseframe.rt.clone();
-    let out_index: usize = denseframe.index.clone();
-
-    let (quad_points, prefiltered_peaks, boundary) =
-        denseframe_to_quadtree_points(denseframe, mz_scaling, ims_scaling, min_n.saturating_sub(1));
-
-    let mut tree = RadiusQuadTree::new(boundary, 20, 1.);
-    // let mut tree = RadiusQuadTree::new(boundary, 20, 1.);
-
-    let quad_indices = (0..quad_points.len()).collect::<Vec<_>>();
-
-    for (quad_point, i) in quad_points.iter().zip(quad_indices.iter()) {
-        tree.insert(quad_point.clone(), i);
+    for (quad_point, i) in ndpoints.iter().zip(quad_indices.iter()) {
+        tree.insert_ndpoint(quad_point.clone(), i);
     }
     let mut intensity_sorted_indices = prefiltered_peaks
         .iter()
         .enumerate()
-        .map(|(i, peak)| (i.clone(), peak.intensity.clone()))
+        .map(|(i, peak)| (i.clone(), peak.intensity().clone()))
         .collect::<Vec<_>>();
 
     intensity_sorted_indices.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
@@ -201,47 +312,93 @@ pub fn dbscan(
     let (cluster_id, cluster_labels) = _dbscan(
         &tree,
         &prefiltered_peaks,
-        &quad_points,
+        &ndpoints,
         min_n,
         min_intensity,
         &intensity_sorted_indices,
     );
-    // Each element is a tuple representing the summed cluster intensity, mz, and mobility.
-    // And will be used to calculate the weighted average of mz and mobility AND the total intensity.
-    let mut cluster_vecs = vec![(0u64, 0f64, 0f64); cluster_id as usize];
+
+    let mut cluster_vecs: Vec<G> = Vec::with_capacity(cluster_id as usize);
+    for _ in (0..cluster_id).into_iter() {
+        cluster_vecs.push(def_aggregator());
+    }
+
     for (point_index, cluster_label) in cluster_labels.iter().enumerate() {
         match cluster_label {
             ClusterLabel::Cluster(cluster_id) => {
                 let cluster_idx = *cluster_id as usize - 1;
-                let timspeak = prefiltered_peaks[point_index];
-                let f64_intensity = timspeak.intensity as f64;
-                let cluster_vec = &mut cluster_vecs[cluster_idx];
-                cluster_vec.0 += timspeak.intensity as u64;
-                cluster_vec.1 += (timspeak.mz as f64) * f64_intensity;
-                cluster_vec.2 += (timspeak.mobility as f64) * f64_intensity;
+                cluster_vecs[cluster_idx].add(&prefiltered_peaks[point_index]);
             }
             _ => {}
         }
     }
 
-    let denoised_peaks = cluster_vecs
+    cluster_vecs
         .iter_mut()
-        .map(|(cluster_intensity, cluster_mz, cluster_mobility)| {
-            let cluster_intensity = cluster_intensity; // Note not averaged
-            let cluster_mz = *cluster_mz / *cluster_intensity as f64;
-            let cluster_mobility = *cluster_mobility / *cluster_intensity as f64;
-            frames::TimsPeak {
-                intensity: u32::try_from(*cluster_intensity).ok().unwrap(),
-                mz: cluster_mz,
-                mobility: cluster_mobility as f32,
-            }
-        })
-        .collect::<Vec<_>>();
+        .map(|cluster| cluster.aggregate())
+        .collect::<Vec<_>>()
+}
 
-    // TODO add an option to keep noise points
+struct DenseFrameConverter {
+    mz_scaling: f64,
+    ims_scaling: f32,
+}
+
+impl NDPointConverter<TimsPeak, 2> for DenseFrameConverter {
+    fn convert(&self, elem: &TimsPeak) -> NDPoint<2> {
+        NDPoint {
+            values: [
+                (elem.mz / self.mz_scaling) as Float,
+                (elem.mobility / self.ims_scaling) as Float,
+            ],
+        }
+    }
+}
+
+pub fn dbscan_denseframes(
+    mut denseframe: frames::DenseFrame,
+    mz_scaling: f64,
+    ims_scaling: f32,
+    min_n: usize,
+    min_intensity: u64,
+) -> frames::DenseFrame {
+    let out_frame_type: timsrust::FrameType = denseframe.frame_type.clone();
+    let out_rt: f64 = denseframe.rt.clone();
+    let out_index: usize = denseframe.index.clone();
+
+    let prefiltered_peaks = {
+        denseframe.sort_by_mz();
+
+        let keep_vector = within_distance_apply(
+            &denseframe.raw_peaks,
+            &|peak| peak.mz,
+            mz_scaling,
+            &|i_right, i_left| (i_right - i_left) >= min_n,
+        );
+
+        // Filter the peaks and replace the raw peaks with the filtered peaks.
+        let prefiltered_peaks = denseframe
+            .raw_peaks
+            .clone()
+            .into_iter()
+            .zip(keep_vector.into_iter())
+            .filter(|(_, b)| *b)
+            .map(|(peak, _)| peak) // Clone the TimsPeak
+            .collect::<Vec<_>>();
+
+        prefiltered_peaks
+    };
+
+    let converter = DenseFrameConverter {
+        mz_scaling,
+        ims_scaling,
+    };
+    let peak_vec = DBSCAN(converter, prefiltered_peaks, min_n, min_intensity, &|| {
+        TimsPeakAggregator::default()
+    });
 
     frames::DenseFrame {
-        raw_peaks: denoised_peaks,
+        raw_peaks: peak_vec,
         index: out_index,
         rt: out_rt,
         frame_type: out_frame_type,
