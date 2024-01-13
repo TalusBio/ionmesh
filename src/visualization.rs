@@ -1,11 +1,12 @@
 use rerun;
 
-pub trait RerunPlottable {
+pub trait RerunPlottable<T> {
     fn plot(
         &self,
         rec: &mut rerun::RecordingStream,
         entry_path: String,
         log_time_in_seconds: Option<f32>,
+        required_extras: T,
     ) -> Result<(), Box<dyn std::error::Error>>;
 }
 

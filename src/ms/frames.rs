@@ -6,8 +6,10 @@ pub use timsrust::{
 
 use crate::mod_types::Float;
 use crate::space_generics::NDPoint;
+use crate::tdf::{DIAFrameInfo, ScanRange};
 use crate::visualization::RerunPlottable;
-use crate::tdf::{DIAFrameInfo,ScanRange};
+
+use log::info;
 
 #[derive(Debug, Clone, Copy)]
 pub struct TimsPeak {
@@ -21,6 +23,12 @@ pub struct RawTimsPeak {
     pub intensity: u32,
     pub tof_index: u32,
     pub scan_index: usize,
+}
+
+fn _check_peak_sanity(peak: &TimsPeak) {
+    debug_assert!(peak.intensity > 0);
+    debug_assert!(peak.mz > 0.);
+    debug_assert!(peak.mobility > 0.);
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -75,6 +83,7 @@ pub struct DenseFrame {
     pub sorted: Option<SortingOrder>,
 }
 
+#[derive(Debug, Clone)]
 pub struct DenseFrameWindow {
     pub frame: DenseFrame,
     pub ims_start: f32,
@@ -99,8 +108,12 @@ impl DenseFrameWindow {
         // NOTE: I am swapping here the 'scan start' to be the `ims_end` because
         // the first scans have lower 1/k0 values.
         let ims_end = ims_converter.convert(scan_start.clone() as u32) as f32;
-        let ims_start = ims_converter.convert((frame_window.scan_offsets.len() + scan_start.clone()) as u32) as f32;
-        let scan_range: &ScanRange = dia_info.get_quad_windows(group_id, quad_group_id).expect("Quad group id should be valid");
+        let ims_start = ims_converter
+            .convert((frame_window.scan_offsets.len() + scan_start.clone()) as u32)
+            as f32;
+        let scan_range: &ScanRange = dia_info
+            .get_quad_windows(group_id, quad_group_id)
+            .expect("Quad group id should be valid");
 
         let frame = DenseFrame::from_frame_window(frame_window, ims_converter, mz_converter);
 
@@ -145,6 +158,12 @@ impl DenseFrame {
             })
             .collect::<Vec<_>>();
 
+        if cfg!(debug_assertions) {
+            for peak in peaks.iter() {
+                _check_peak_sanity(peak);
+            }
+        }
+
         let index = frame.index;
         let rt = frame.rt;
         let frame_type = frame.frame_type;
@@ -170,6 +189,13 @@ impl DenseFrame {
             let scan_index_use = (scan_index + frame_window.scan_start) as u32;
 
             let ims = ims_converter.convert(scan_index_use) as f32;
+            if ims < 0.0 {
+                info!("Negative IMS value: {}", ims);
+                info!("scan_index_use: {}", scan_index_use);
+                info!("scan_index: {}", scan_index);
+                info!("frame_window.scan_start: {}", frame_window.scan_start);
+            }
+            debug_assert!(ims >= 0.0);
             expanded_scan_indices.extend(vec![ims; num_tofs as usize]);
             last_scan_offset = index_offset.clone();
         }
@@ -185,6 +211,12 @@ impl DenseFrame {
                 mobility: *scan_index,
             })
             .collect::<Vec<_>>();
+
+        if cfg!(debug_assertions) {
+            for peak in peaks.iter() {
+                _check_peak_sanity(peak);
+            }
+        }
 
         let index = frame_window.index;
         let rt = frame_window.rt;
@@ -230,18 +262,50 @@ impl DenseFrame {
     }
 }
 
-impl RerunPlottable for DenseFrame {
+pub type Converters = (timsrust::Scan2ImConverter, timsrust::Tof2MzConverter);
+
+impl RerunPlottable<Option<usize>> for DenseFrame {
     fn plot(
         &self,
         rec: &mut rerun::RecordingStream,
         entry_path: String,
         log_time_in_seconds: Option<f32>,
+        required_extras: Option<usize>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let rt = match log_time_in_seconds {
-            None => {self.rt as f32},
-            Some(log_time_in_seconds) => {log_time_in_seconds},
+            None => self.rt as f64,
+            Some(log_time_in_seconds) => log_time_in_seconds as f64,
         };
-        rec.set_time_seconds("rt_seconds", rt as f32);
+        rec.set_time_seconds("rt_seconds", rt);
+
+        info!("Plotting frame {}::{}s into {}", self.index, rt, entry_path);
+        let min_mz = self
+            .raw_peaks
+            .iter()
+            .map(|peak| peak.mz as f64)
+            .fold(f64::INFINITY, |a, b| a.min(b));
+        let max_mz = self
+            .raw_peaks
+            .iter()
+            .map(|peak| peak.mz as f64)
+            .fold(f64::NEG_INFINITY, |a, b| a.max(b));
+        let min_mobility = self
+            .raw_peaks
+            .iter()
+            .map(|peak| peak.mobility as f64)
+            .fold(f64::INFINITY, |a, b| a.min(b));
+        let max_mobility = self
+            .raw_peaks
+            .iter()
+            .map(|peak| peak.mobility as f64)
+            .fold(f64::NEG_INFINITY, |a, b| a.max(b));
+        let num_points = self.raw_peaks.len();
+
+        info!(
+            "mz range: {:?}:{:?}, ims range {:?}:{:?}",
+            min_mz, max_mz, min_mobility, max_mobility
+        );
+        info!("num points: {}", num_points);
         let quad_points = self
             .raw_peaks
             .iter()
@@ -250,12 +314,15 @@ impl RerunPlottable for DenseFrame {
             })
             .collect::<Vec<_>>();
 
-        let max_intensity = self
-            .raw_peaks
-            .iter()
-            .map(|peak| peak.intensity)
-            .max()
-            .unwrap_or(0) as f32;
+        let max_intensity = self.raw_peaks.iter().map(|peak| peak.intensity).max();
+
+        let max_intensity: f32 = match max_intensity {
+            None => {
+                info!("No max intensity found for frame {}", self.index);
+                0.
+            }
+            Some(max_intensity) => max_intensity as f32,
+        };
 
         let radii = self
             .raw_peaks
@@ -277,3 +344,53 @@ impl RerunPlottable for DenseFrame {
     }
 }
 
+impl RerunPlottable<Converters> for Frame {
+    fn plot(
+        &self,
+        rec: &mut rerun::RecordingStream,
+        entry_path: String,
+        log_time_in_seconds: Option<f32>,
+        required_extras: Converters,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let dense_frame = DenseFrame::new(self, &required_extras.0, &required_extras.1);
+        dense_frame.plot(rec, entry_path, log_time_in_seconds, None)
+    }
+}
+
+impl RerunPlottable<Option<usize>> for DenseFrameWindow {
+    fn plot(
+        &self,
+        rec: &mut rerun::RecordingStream,
+        entry_path: String,
+        log_time_in_seconds: Option<f32>,
+        required_extras: Option<usize>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let df = &self.frame;
+        df.plot(rec, entry_path, log_time_in_seconds, required_extras)
+    }
+}
+
+impl RerunPlottable<Option<usize>> for Vec<DenseFrameWindow> {
+    fn plot(
+        &self,
+        rec: &mut rerun::RecordingStream,
+        entry_path: String,
+        log_time_in_seconds: Option<f32>,
+        required_extras: Option<usize>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut peaks = Vec::new();
+        for dfw in self.iter() {
+            peaks.extend(dfw.frame.raw_peaks.clone());
+        }
+
+        let densepeak_plot = DenseFrame {
+            raw_peaks: peaks,
+            index: self[0].frame.index,
+            rt: self[0].frame.rt,
+            frame_type: FrameType::Unknown,
+            sorted: None,
+        };
+
+        densepeak_plot.plot(rec, entry_path, log_time_in_seconds, required_extras)
+    }
+}

@@ -65,7 +65,6 @@ pub struct DIAFrameInfo {
     pub frame_groups: Vec<Option<usize>>,
 }
 
-
 // TODO rename or split this ... since it is becoming more
 // of a splitter than a frame info reader.
 // Maybe a builder -> splitter pattern?
@@ -91,7 +90,8 @@ impl DIAFrameInfo {
             scan_range.scan_start;
             scan_range.scan_end;
 
-            let scan_offsets_use = &frame.scan_offsets[scan_range.scan_start..scan_range.scan_end];
+            let scan_offsets_use =
+                &frame.scan_offsets[scan_range.scan_start..(scan_range.scan_end - 1)];
             let scan_start = scan_offsets_use[0];
             let mz_indptr_start = scan_offsets_use[0] as usize;
             let mz_indptr_end = *scan_offsets_use.last().unwrap() as usize;
@@ -109,7 +109,7 @@ impl DIAFrameInfo {
                 index: frame.index,
                 rt: frame.rt,
                 frame_type: frame.frame_type,
-                scan_start: scan_start as usize,
+                scan_start: scan_range.scan_start as usize,
                 group_id: group.id,
                 quad_group_id: i,
             };
@@ -273,7 +273,11 @@ impl DIAFrameInfo {
         out
     }
 
-    pub fn get_quad_windows(&self, scan_group_id: usize, quad_group_id: usize) -> Option<&ScanRange> {
+    pub fn get_quad_windows(
+        &self,
+        scan_group_id: usize,
+        quad_group_id: usize,
+    ) -> Option<&ScanRange> {
         let group = self.groups[scan_group_id].as_ref()?;
         let quad_group = group.scan_ranges.get(quad_group_id)?;
         Some(quad_group)

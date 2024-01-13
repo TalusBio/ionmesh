@@ -1,6 +1,7 @@
 use core::panic;
 
 use crate::dbscan;
+use crate::ms::frames::Converters;
 use crate::ms::frames::DenseFrame;
 use crate::ms::frames::DenseFrameWindow;
 use crate::tdf;
@@ -127,19 +128,22 @@ fn _denoise_dia_frame(
     out
 }
 
-trait Denoiser<'a, T, W>
+trait Denoiser<'a, T, W, X, Z>
 where
-    T: Clone + RerunPlottable + std::marker::Send,
-    W: Clone + RerunPlottable + std::marker::Send,
+    T: RerunPlottable<X> + std::marker::Send,
+    W: Clone + RerunPlottable<Z> + std::marker::Send,
+    X: Clone,
+    Z: Clone,
     Vec<T>: IntoParallelIterator<Item = T>,
 {
-    fn denoise(&self, frame: &'a T) -> W;
+    fn denoise(&self, frame: T) -> W;
     // TODO maybe add a par_denoise_slice method
     // with the implementation ...
     fn par_denoise_slice(
         &self,
-        frames: &'a mut Vec<T>,
+        mut frames: Vec<T>,
         record_stream: &mut Option<rerun::RecordingStream>,
+        plotting_extras: (X, Z),
     ) -> Vec<W>
     where
         Self: Sync,
@@ -148,29 +152,31 @@ where
         // randomly viz 1/200 frames
         if let Some(stream) = record_stream.as_mut() {
             warn!("Viz is enabled, randomly subsetting 1/200 frames");
-            frames
-                .retain(|_| {
-                    if rand::random::<f64>() < (1. / 200.) {
-                        true
-                    } else {
-                        false
-                    }
-                });
-
+            frames.retain(|_| {
+                if rand::random::<f64>() < (1. / 200.) {
+                    true
+                } else {
+                    false
+                }
+            });
 
             for (i, frame) in frames.iter().enumerate() {
                 info!("Logging frame {}", i);
                 frame
-                    .plot(stream, String::from("points/Original"), None)
+                    .plot(
+                        stream,
+                        String::from("points/Original"),
+                        None,
+                        plotting_extras.0.clone(),
+                    )
                     .unwrap();
             }
         }
 
-        // let frames = frames.into_par_iter().collect::<Vec<_>>();
-        let style = ProgressStyle::default_bar();
+        let progbar = indicatif::ProgressBar::new(frames.len() as u64);
         let denoised_frames: Vec<W> = frames
-            .par_iter_mut()
-            .progress_with_style(style)
+            .into_par_iter()
+            .progress_with(progbar)
             .map(|x| self.denoise(x))
             .collect::<Vec<_>>();
 
@@ -178,7 +184,12 @@ where
             for (i, frame) in denoised_frames.iter().enumerate() {
                 trace!("Logging frame {}", i);
                 frame
-                    .plot(stream, String::from("points/denoised"), None)
+                    .plot(
+                        stream,
+                        String::from("points/denoised"),
+                        None,
+                        plotting_extras.1.clone(),
+                    )
                     .unwrap();
             }
         }
@@ -187,18 +198,21 @@ where
     }
 }
 
-struct DenseFrameDenoiser {
+struct FrameDenoiser {
     min_n: usize,
     min_intensity: u64,
+    ims_converter: timsrust::Scan2ImConverter,
+    mz_converter: timsrust::Tof2MzConverter,
 }
 
-// impl Denoiser<DenseFrame, DenseFrame> for DenseFrameDenoiser {
-//     fn denoise(&self, frame: DenseFrame) -> DenseFrame {
-//         _denoise_denseframe(&mut frame.clone(), self.min_n, self.min_intensity)
-//     }
-// }
+impl<'a> Denoiser<'a, Frame, DenseFrame, Converters, Option<usize>> for FrameDenoiser {
+    fn denoise(&self, frame: Frame) -> DenseFrame {
+        let mut denseframe = DenseFrame::new(&frame, &self.ims_converter, &self.mz_converter);
+        _denoise_denseframe(&mut denseframe, self.min_n, self.min_intensity)
+    }
+}
 
-struct DenseFrameWindowDenoiser {
+struct DIAFrameDenoiser {
     min_n: usize,
     min_intensity: u64,
     dia_frame_info: DIAFrameInfo,
@@ -206,11 +220,20 @@ struct DenseFrameWindowDenoiser {
     mz_converter: timsrust::Tof2MzConverter,
 }
 
-// impl Denoiser<DenseFrameWindow, Vec<DenseFrameWindow>> for DenseFrameWindowDenoiser {
-//     fn denoise(&self, frame: DenseFrameWindow) -> Vec<DenseFrameWindow> {
-//         _denoise_dia_frame(frame, self.min_n, self.min_intensity, &self.dia_frame_info, &self.ims_converter, &self.mz_converter)
-//     }
-// }
+impl<'a> Denoiser<'a, Frame, Vec<DenseFrameWindow>, Converters, Option<usize>>
+    for DIAFrameDenoiser
+{
+    fn denoise(&self, frame: Frame) -> Vec<DenseFrameWindow> {
+        _denoise_dia_frame(
+            frame,
+            self.min_n,
+            self.min_intensity,
+            &self.dia_frame_info,
+            &self.ims_converter,
+            &self.mz_converter,
+        )
+    }
+}
 
 // TODO re-implement to have a
 // denoiser that implements denoise(T)
@@ -241,7 +264,12 @@ fn denoise_denseframe_vec(
         for frame in frames.iter() {
             info!("Logging frame {}", frame.index);
             frame
-                .plot(stream, String::from("points/Original"), Some(frame.rt as f32))
+                .plot(
+                    stream,
+                    String::from("points/Original"),
+                    Some(frame.rt as f32),
+                    None,
+                )
                 .unwrap();
         }
     }
@@ -258,7 +286,12 @@ fn denoise_denseframe_vec(
         for frame in denoised_frames.iter() {
             trace!("Logging frame {}", frame.index);
             frame
-                .plot(stream, String::from("points/denoised"), Some(frame.rt as f32))
+                .plot(
+                    stream,
+                    String::from("points/denoised"),
+                    Some(frame.rt as f32),
+                    None,
+                )
                 .unwrap();
         }
     }
@@ -285,18 +318,17 @@ pub fn read_all_ms1_denoising(
         })
         .collect();
 
-    let denseframes = frames
-        .into_par_iter()
-        .map(|frame| {
-            let dense = DenseFrame::new(&frame, &ims_converter, &mz_converter);
-            dense
-        })
-        .collect();
-
     let min_intensity = 100u64;
     let min_n: usize = 3;
+    let ms1_denoiser = FrameDenoiser {
+        min_n,
+        min_intensity,
+        ims_converter,
+        mz_converter,
+    };
 
-    denoise_denseframe_vec(denseframes, min_intensity, min_n, record_stream)
+    let converters = (ims_converter, mz_converter);
+    ms1_denoiser.par_denoise_slice(frames, record_stream, (converters, None))
 }
 
 // This could probably be a macro ...
@@ -324,22 +356,15 @@ pub fn read_all_dia_denoising(
     let min_intensity = 50u64;
     let min_n: usize = 2;
 
-    let style = ProgressStyle::default_bar();
-    let split_frames = frames
-        .into_par_iter()
-        .progress_with_style(style)
-        .map(|frame| {
-            _denoise_dia_frame(
-                frame,
-                min_n,
-                min_intensity,
-                &dia_info,
-                &ims_converter,
-                &mz_converter,
-            )
-        })
-        .collect::<Vec<_>>();
-
+    let denoiser = DIAFrameDenoiser {
+        min_n,
+        min_intensity,
+        dia_frame_info: dia_info,
+        ims_converter,
+        mz_converter,
+    };
+    let converters = (ims_converter, mz_converter);
+    let split_frames = denoiser.par_denoise_slice(frames, record_stream, (converters, None));
     let out: Vec<DenseFrameWindow> = split_frames.into_iter().flatten().collect();
     out
 }
