@@ -294,7 +294,7 @@ struct PseudoSpectrumAggregator {
 
 impl Default for PseudoSpectrumAggregator {
     fn default() -> Self {
-        let mut nv = Vec::new();
+        let nv = Vec::new();
         PseudoSpectrumAggregator {
             peaks: nv,
             intensity: 0,
