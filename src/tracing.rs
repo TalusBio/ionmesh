@@ -2,26 +2,31 @@ use crate::dbscan::{dbscan_generic, ClusterAggregator};
 use crate::mod_types::Float;
 use crate::ms::frames::{DenseFrame, DenseFrameWindow, TimsPeak};
 use crate::space_generics::{HasIntensity, NDPoint, NDPointConverter, TraceLike};
-use crate::visualization::RerunPlottable;
+use crate::utils;
 use crate::utils::RollingSDCalculator;
+use crate::visualization::RerunPlottable;
 
-use log::{error, info};
+use log::{error, info, warn};
 use rayon::iter::IntoParallelIterator;
+use rayon::prelude::*;
 
+type QuadLowHigh = (f64, f64);
 #[derive(Debug, Clone)]
 pub struct BaseTrace {
     pub mz: f64,
     pub intensity: u64,
     pub rt: f32,
     pub mobility: f32,
+    pub quad_low_high: QuadLowHigh,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct TimeTimsPeak {
     pub mz: f64,
     pub intensity: u64,
     pub rt: f32,
     pub ims: f32,
+    pub quad_low_high: QuadLowHigh,
 }
 
 impl HasIntensity<u32> for TimeTimsPeak {
@@ -50,6 +55,9 @@ impl TraceLike<f32> for BaseTrace {
     fn get_ims(&self) -> f32 {
         self.mobility
     }
+    fn get_quad_low_high(&self) -> QuadLowHigh {
+        (self.mz, self.mz)
+    }
 }
 
 pub fn combine_traces(
@@ -60,7 +68,9 @@ pub fn combine_traces(
     record_stream: &mut Option<rerun::RecordingStream>,
 ) -> Vec<BaseTrace> {
     // Grouping by quad windows + group id
-    info!("Combining traces");
+
+    let timer = utils::ContextTimer::new("Tracing peaks in time", true, utils::LogLevel::INFO);
+
     let mut grouped_windows: Vec<Vec<Option<Vec<DenseFrameWindow>>>> = Vec::new();
     for dfw in denseframe_windows {
         let dia_group = dfw.group_id;
@@ -98,15 +108,18 @@ pub fn combine_traces(
 
     // Combine the traces
     let out: Vec<BaseTrace> = grouped_windows
-        .into_iter()
+        .into_par_iter()
         .map(|x| _combine_single_window_traces(x, mz_scaling, rt_scaling, ims_scaling))
         .flatten()
         .collect();
 
+    info!("Total Combined traces: {}", out.len());
+    timer.stop();
+
     if let Some(stream) = record_stream.as_mut() {
         let _ = out.plot(stream, String::from("points/combined"), None, None);
     }
-    info!("Total Combined traces: {}", out.len());
+
     out
 }
 
@@ -177,13 +190,14 @@ impl RerunPlottable<Option<usize>> for Vec<BaseTrace> {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct TraceAggregator {
-    mz: RollingSDCalculator<f64,u64>,
+    mz: RollingSDCalculator<f64, u64>,
     intensity: u64,
-    rt: RollingSDCalculator<f64,u64>,
-    ims: RollingSDCalculator<f64,u64>,
+    rt: RollingSDCalculator<f64, u64>,
+    ims: RollingSDCalculator<f64, u64>,
     num_peaks: usize,
+    quad_low_high: QuadLowHigh,
 }
 
 impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
@@ -207,7 +221,28 @@ impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
             intensity: self.intensity.clone(),
             rt: rt as f32,
             mobility: ims as f32,
+            quad_low_high: self.quad_low_high.clone(),
         }
+    }
+
+    fn combine(self, other: Self) -> Self {
+        let mut mz = self.mz.clone();
+        let mut rt = self.rt.clone();
+        let mut ims = self.ims.clone();
+
+        mz.merge(&other.mz);
+        rt.merge(&other.rt);
+        ims.merge(&other.ims);
+
+        let out = TraceAggregator {
+            mz: mz,
+            intensity: self.intensity + other.intensity,
+            rt: rt,
+            ims: ims,
+            num_peaks: self.num_peaks + other.num_peaks,
+            quad_low_high: self.quad_low_high,
+        };
+        out
     }
 }
 
@@ -242,6 +277,7 @@ fn _flatten_denseframe_vec(denseframe_windows: Vec<DenseFrameWindow>) -> Vec<Tim
                     intensity: peak.intensity as u64,
                     rt: dfw.frame.rt as f32,
                     ims: peak.mobility as f32,
+                    quad_low_high: (dfw.mz_start, dfw.mz_end),
                 });
             }
             out
@@ -264,21 +300,32 @@ fn _combine_single_window_traces(
         rt_scaling,
         ims_scaling,
     };
+    let window_quad_low_high = (
+        prefiltered_peaks[0].quad_low_high.0,
+        prefiltered_peaks[0].quad_low_high.1,
+    );
+    warn!("Assuming all quad windows are the same!!! (fine for diaPASEF)");
     let foo: Vec<BaseTrace> =
         dbscan_generic(converter, prefiltered_peaks, min_n, min_intensity, &|| {
-            TraceAggregator::default()
+            TraceAggregator {
+                mz: RollingSDCalculator::default(),
+                intensity: 0,
+                rt: RollingSDCalculator::default(),
+                ims: RollingSDCalculator::default(),
+                num_peaks: 0,
+                quad_low_high: window_quad_low_high.clone(),
+            }
         });
 
     info!("Combined traces: {}", foo.len());
     foo
 }
 
-
 // NOW ... combine traces into pseudospectra
 
 type Peak = (f64, u64);
 
-struct PseudoSpectrum{
+struct PseudoSpectrum {
     peaks: Vec<Peak>,
     rt: f64,
     ims: f64,
@@ -288,8 +335,8 @@ struct PseudoSpectrum{
 struct PseudoSpectrumAggregator {
     peaks: Vec<Peak>,
     intensity: u64,
-    rt: RollingSDCalculator<f64,u64>,
-    ims: RollingSDCalculator<f64,u64>,
+    rt: RollingSDCalculator<f64, u64>,
+    ims: RollingSDCalculator<f64, u64>,
 }
 
 impl Default for PseudoSpectrumAggregator {
@@ -303,8 +350,6 @@ impl Default for PseudoSpectrumAggregator {
         }
     }
 }
-
-
 
 impl<'a> ClusterAggregator<TimeTimsPeak, PseudoSpectrum> for PseudoSpectrumAggregator {
     fn add(&mut self, peak: &TimeTimsPeak) {
@@ -325,4 +370,41 @@ impl<'a> ClusterAggregator<TimeTimsPeak, PseudoSpectrum> for PseudoSpectrumAggre
             ims: ims,
         }
     }
+
+    fn combine(self, other: Self) -> Self {
+        let mut peaks = self.peaks.clone();
+        peaks.extend(other.peaks.clone());
+        let mut rt = self.rt.clone();
+        let mut ims = self.ims.clone();
+
+        rt.merge(&other.rt);
+        ims.merge(&other.ims);
+
+        let out = PseudoSpectrumAggregator {
+            peaks: peaks,
+            intensity: self.intensity + other.intensity,
+            rt: rt,
+            ims: ims,
+        };
+        out
+    }
 }
+
+// impl NDPointConverter<BaseTrace, 3> for BaseTraceConverter {
+//     fn convert(&self, elem: &BaseTrace) -> NDPoint<3> {
+//         NDPoint {
+//             values: [
+//                 Nope//(elem.mz / self.mz_scaling) as Float,
+//                 (elem.rt as f64 / self.rt_scaling) as Float,
+//                 (elem.mobility as f64 / self.ims_scaling) as Float,
+//             ],
+//         }
+//     }
+// }
+//
+//
+//
+// pub fn combine_pseudocspectra(traces: Vec<BaseTrace>, rt_scaling: f64, ims_scaling: f64, record_stream: &mut Option<rerun::RecordingStream>) {
+//
+//
+// }

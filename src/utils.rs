@@ -1,4 +1,63 @@
+use log::{debug, info, trace};
 use num::cast::AsPrimitive;
+use std::time::{Duration, Instant};
+
+pub struct ContextTimer {
+    start: Instant,
+    name: String,
+    level: LogLevel,
+}
+
+pub enum LogLevel {
+    INFO,
+    DEBUG,
+    TRACE,
+}
+
+impl ContextTimer {
+    pub fn new(name: &str, report_start: bool, level: LogLevel) -> ContextTimer {
+        let out = ContextTimer {
+            start: Instant::now(),
+            name: name.to_string(),
+            level,
+        };
+        if report_start {
+            out.start_msg();
+        }
+        out
+    }
+
+    fn start_msg(&self) {
+        match self.level {
+            LogLevel::INFO => info!("Started: '{}'", self.name),
+            LogLevel::DEBUG => debug!("Started: '{}'", self.name),
+            LogLevel::TRACE => trace!("Started: '{}'", self.name),
+        }
+    }
+
+    pub fn stop(&self) -> Duration {
+        let duration = self.start.elapsed();
+        match self.level {
+            // Time to get comfortable writting macros??
+            LogLevel::INFO => info!(
+                "Time elapsed in '{}' is: {:.02}s",
+                self.name,
+                duration.as_millis() as f64 / 1000.
+            ),
+            LogLevel::DEBUG => debug!(
+                "Time elapsed in '{}' is: {:.02}s",
+                self.name,
+                duration.as_millis() as f64 / 1000.
+            ),
+            LogLevel::TRACE => trace!(
+                "Time elapsed in '{}' is: {:.02}s",
+                self.name,
+                duration.as_millis() as f64 / 1000.
+            ),
+        }
+        duration
+    }
+}
 
 pub fn within_distance_apply<T, R, W>(
     elems: &[T],
@@ -114,15 +173,14 @@ mod test_count_neigh {
 //     # Reliability weights
 //     sample_reliability_variance = S / (w_sum - w_sum2 / w_sum)
 
-
 /// Calculate the variance of a set of data points without storing them.
-/// 
+///
 /// Generic Types:
-/// 
+///
 /// 1. *T* - The type of the data points. *NOTE* this does not have to
 /// be the same type as the desired output type, but rather the representation
 /// of the data points while being aggregated.
-/// 
+///
 /// 2. *W* - The type of the weights.
 #[derive(Debug, Default, Clone)]
 pub struct RollingSDCalculator<T, W> {
@@ -137,8 +195,8 @@ pub struct RollingSDCalculator<T, W> {
 
 impl<T, W> RollingSDCalculator<T, W>
 where
-// NOTE: W > T needs to be 'losless' (u32 -> f63)
-// but T > W does not need to be.
+    // NOTE: W > T needs to be 'losless' (u32 -> f63)
+    // but T > W does not need to be.
     T: std::ops::Sub<Output = T>
         + std::ops::Mul<Output = T>
         + std::ops::Div<Output = T>
@@ -180,7 +238,7 @@ where
         // Mod here to use the avg weight
         // instead of 1 for the correction
         // self.s_ / (self.w_sum - T::one())
-        let avg_weight  = self.w_sum.as_() / self.count.as_();
+        let avg_weight = self.w_sum.as_() / self.count.as_();
         self.s_ / (self.w_sum.as_() - avg_weight)
     }
 
@@ -190,6 +248,19 @@ where
 
     pub fn get_mean(&self) -> T {
         self.mean
+    }
+
+    pub fn merge(&mut self, other: &Self) {
+        // Check for overflows
+        debug_assert!(self.w_sum < self.w_sum + other.w_sum);
+        debug_assert!(self.w_sum2 < self.w_sum2 + other.w_sum2);
+        self.w_sum += other.w_sum;
+        self.w_sum2 += other.w_sum2;
+        let mean_old = self.mean;
+        self.mean = mean_old + ((other.w_sum.as_() / self.w_sum.as_()) * (other.mean - mean_old));
+        self.s_ +=
+            other.s_ + other.w_sum.as_() * (other.mean - mean_old) * (other.mean - self.mean);
+        self.count += other.count;
     }
 }
 
@@ -213,7 +284,7 @@ mod test_rolling_sd {
     }
 
     #[test]
-    fn test_rolling_constants_addition(){
+    fn test_rolling_constants_addition() {
         let mut sd_calc = RollingSDCalculator::<f64, u64>::default();
 
         sd_calc.add(2.0, 1);
@@ -226,5 +297,31 @@ mod test_rolling_sd {
         assert_eq!(sd_calc.get_variance(), 0.0);
         assert_eq!(sd_calc.get_variance_bessel(), 0.0);
         assert_eq!(sd_calc.get_variance_reliability(), 0.0);
+    }
+
+    fn test_merge() {
+        let mut sd_calc = RollingSDCalculator::<f64, u64>::default();
+
+        sd_calc.add(1.0, 1);
+        sd_calc.add(2.0, 1);
+        sd_calc.add(3.0, 1);
+        sd_calc.add(4.0, 1);
+        sd_calc.add(5.0, 1);
+
+        let mut sd_calc2 = RollingSDCalculator::<f64, u64>::default();
+
+        sd_calc2.add(1.0, 1);
+        sd_calc2.add(2.0, 1);
+        sd_calc2.add(3.0, 1);
+        sd_calc2.add(4.0, 1);
+        sd_calc2.add(5.0, 1);
+
+        sd_calc.merge(&sd_calc2);
+
+        assert_eq!(sd_calc.count, 10);
+
+        assert_eq!(sd_calc.get_variance(), 2.5);
+        assert_eq!(sd_calc.get_variance_bessel(), 2.0);
+        assert_eq!(sd_calc.get_variance_reliability(), 2.0);
     }
 }

@@ -27,6 +27,7 @@ num = "0.4.1"
 [features]
 viz = []
 f64 = []
+par_dataprep = []
 
 # [profile.release]
 # debug = true

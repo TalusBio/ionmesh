@@ -1,4 +1,5 @@
 use crate::ms::frames::TimsPeak;
+use crate::utils;
 use crate::utils::within_distance_apply;
 
 /// Density-based spatial clustering of applications with noise (DBSCAN)
@@ -12,6 +13,8 @@ use crate::mod_types::Float;
 use crate::ms::frames;
 use crate::space_generics::{HasIntensity, IndexedPoints, NDPoint};
 use log::{error, trace};
+
+use rayon::prelude::*;
 
 use crate::kdtree::RadiusKDTree;
 use crate::quad::RadiusQuadTree;
@@ -61,7 +64,7 @@ impl HasIntensity<u32> for frames::TimsPeak {
     }
 }
 
-// TODO make generic over dimensions
+// THIS IS A BOTTLENECK FUNCTION
 fn _dbscan<'a, const N: usize>(
     tree: &'a impl IndexedPoints<'a, N, usize>,
     prefiltered_peaks: &Vec<impl HasIntensity<u32>>,
@@ -252,9 +255,10 @@ use crate::space_generics::NDPointConverter;
 /// R: The type of the aggregated point.
 /// S: The type of the aggregator.
 ///
-pub trait ClusterAggregator<T, R, S: Default = Self> {
+pub trait ClusterAggregator<T, R> {
     fn add(&mut self, elem: &T);
     fn aggregate(&self) -> R;
+    fn combine(self, other: Self) -> Self;
 }
 
 #[derive(Default, Debug)]
@@ -284,41 +288,78 @@ impl ClusterAggregator<TimsPeak, TimsPeak> for TimsPeakAggregator {
             mobility: cluster_mobility as f32,
         }
     }
+
+    fn combine(self, other: Self) -> Self {
+        let out = Self {
+            cluster_intensity: self.cluster_intensity + other.cluster_intensity,
+            cluster_mz: self.cluster_mz + other.cluster_mz,
+            cluster_mobility: self.cluster_mobility + other.cluster_mobility,
+            num_peaks: self.num_peaks + other.num_peaks,
+        };
+        out
+    }
+}
+
+fn _inner<T: Copy, G: ClusterAggregator<T, R>, R>(
+    chunk: &[(usize, T)],
+    max_cluster_id: usize,
+    def_aggregator: &dyn Fn() -> G,
+) -> Vec<Option<G>> {
+    let mut cluster_vecs: Vec<Option<G>> = (0..max_cluster_id).map(|_| None).collect();
+
+    for (cluster_idx, point) in chunk {
+        if cluster_vecs[*cluster_idx].is_none() {
+            cluster_vecs[*cluster_idx] = Some(def_aggregator());
+        }
+        cluster_vecs[*cluster_idx].as_mut().unwrap().add(&point);
+    }
+
+    cluster_vecs
 }
 
 // fn DBSCAN<C: NDPointConverter<T, D>, R, G: Default + ClusterAggregator<T,R,G>, T: HasIntensity<u32>, const D: usize>(
 pub fn dbscan_generic<
     C: NDPointConverter<T, N>,
-    R,
-    G: Default + ClusterAggregator<T, R, G>,
-    T: HasIntensity<u32>,
+    R: Send,
+    G: Sync + Send + ClusterAggregator<T, R>,
+    T: HasIntensity<u32> + Send + Clone + Copy,
+    F: Fn() -> G + Send + Sync,
     const N: usize,
 >(
     converter: C,
     prefiltered_peaks: Vec<T>,
     min_n: usize,
     min_intensity: u64,
-    def_aggregator: &dyn Fn() -> G,
+    def_aggregator: F,
 ) -> Vec<R> {
-    trace!("DBSCAN");
+    let timer =
+        utils::ContextTimer::new("dbscan_generic::conversion", true, utils::LogLevel::TRACE);
     let (ndpoints, boundary) = converter.convert_vec(&prefiltered_peaks);
+    timer.stop();
     // let mut tree = RadiusKDTree::new_empty(boundary, 1000, 1.);
     // let mut tree = RadiusQuadTree::new_empty(boundary, 1000, 1.);
 
+    let timer = utils::ContextTimer::new("dbscan_generic::tree", true, utils::LogLevel::TRACE);
     let mut tree = RadiusKDTree::new_empty(boundary, 500, 1.);
     let quad_indices = (0..ndpoints.len()).collect::<Vec<_>>();
 
     for (quad_point, i) in ndpoints.iter().zip(quad_indices.iter()) {
         tree.insert_ndpoint(quad_point.clone(), i);
     }
+    timer.stop();
+
+    let timer = utils::ContextTimer::new("dbscan_generic::pre-sort", true, utils::LogLevel::TRACE);
     let mut intensity_sorted_indices = prefiltered_peaks
         .iter()
         .enumerate()
-        .map(|(i, peak)| (i.clone(), peak.intensity().clone()))
+        .map(|(i, peak)| (i.clone(), peak.intensity()))
         .collect::<Vec<_>>();
+    // Q: Does ^^^^ need a clone? i and peak intensity ... - S
 
-    intensity_sorted_indices.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    intensity_sorted_indices.par_sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    timer.stop();
 
+    let timer = utils::ContextTimer::new("dbscan_generic::dbscan", true, utils::LogLevel::TRACE);
     let (cluster_id, cluster_labels) = _dbscan(
         &tree,
         &prefiltered_peaks,
@@ -327,26 +368,97 @@ pub fn dbscan_generic<
         min_intensity,
         &intensity_sorted_indices,
     );
+    timer.stop();
 
-    let mut cluster_vecs: Vec<G> = Vec::with_capacity(cluster_id as usize);
-    for _ in (0..cluster_id).into_iter() {
-        cluster_vecs.push(def_aggregator());
-    }
+    let cluster_vecs: Vec<G> = if cfg!(feature = "par_dataprep") {
+        let timer = utils::ContextTimer::new(
+            "dbscan_generic::par_aggregation",
+            true,
+            utils::LogLevel::TRACE,
+        );
+        let out: Vec<(usize, T)> = cluster_labels
+            .iter()
+            .enumerate()
+            .map(|(point_index, x)| match x {
+                ClusterLabel::Cluster(cluster_id) => {
+                    let cluster_idx = *cluster_id as usize - 1;
+                    let tmp: Option<(usize, T)> =
+                        Some((cluster_idx, prefiltered_peaks[point_index].clone()));
+                    tmp
+                }
+                _ => None,
+            })
+            .filter(|x| x.is_some())
+            .map(|x| x.unwrap())
+            .collect();
 
-    for (point_index, cluster_label) in cluster_labels.iter().enumerate() {
-        match cluster_label {
-            ClusterLabel::Cluster(cluster_id) => {
-                let cluster_idx = *cluster_id as usize - 1;
-                cluster_vecs[cluster_idx].add(&prefiltered_peaks[point_index]);
-            }
-            _ => {}
+        let run_closure =
+            |chunk: Vec<(usize, T)>| _inner(&chunk, cluster_id.clone() as usize, &def_aggregator);
+        let chunk_size = (out.len() / rayon::current_num_threads()) / 2;
+        let chunk_size = chunk_size.max(1);
+        let out2 = out
+            .into_par_iter()
+            .chunks(chunk_size)
+            .map(run_closure)
+            .reduce(
+                || Vec::new(),
+                |l, r| {
+                    if l.len() == 0 {
+                        r
+                    } else {
+                        l.into_iter()
+                            .zip(r.into_iter())
+                            .map(|(l, r)| match (l, r) {
+                                (Some(l), Some(r)) => {
+                                    let o = l.combine(r);
+                                    Some(o)
+                                }
+                                (Some(l), None) => Some(l),
+                                (None, Some(r)) => Some(r),
+                                (None, None) => None,
+                            })
+                            .collect::<Vec<_>>()
+                    }
+                },
+            );
+
+        let cluster_vecs = out2
+            .into_iter()
+            .filter(|x| x.is_some())
+            .map(|x| x.unwrap())
+            .collect::<Vec<_>>();
+        timer.stop();
+        cluster_vecs
+    } else {
+        let mut cluster_vecs: Vec<G> = Vec::with_capacity(cluster_id as usize);
+        for _ in (0..cluster_id).into_iter() {
+            cluster_vecs.push(def_aggregator());
         }
-    }
+        for (point_index, cluster_label) in cluster_labels.iter().enumerate() {
+            match cluster_label {
+                ClusterLabel::Cluster(cluster_id) => {
+                    let cluster_idx = *cluster_id as usize - 1;
+                    cluster_vecs[cluster_idx].add(&(prefiltered_peaks[point_index]));
+                }
+                _ => {}
+            }
+        }
+        cluster_vecs
+    };
 
-    cluster_vecs
-        .iter_mut()
+    //     .par_iter_mut() // <<<<- This works but its slower.
+    //     .map(|cluster| cluster.aggregate())
+    //     .collect::<Vec<_>>()
+
+    let timer =
+        utils::ContextTimer::new("dbscan_generic::aggregation", true, utils::LogLevel::TRACE);
+    let out = cluster_vecs
+        .iter()
         .map(|cluster| cluster.aggregate())
-        .collect::<Vec<_>>()
+        .collect::<Vec<_>>();
+    timer.stop();
+
+    out
 }
 
 struct DenseFrameConverter {

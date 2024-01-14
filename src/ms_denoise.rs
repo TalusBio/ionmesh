@@ -6,6 +6,7 @@ use crate::ms::frames::DenseFrame;
 use crate::ms::frames::DenseFrameWindow;
 use crate::tdf;
 use crate::tdf::DIAFrameInfo;
+use crate::utils;
 use crate::visualization::RerunPlottable;
 
 use indicatif::ParallelProgressIterator;
@@ -246,8 +247,11 @@ pub fn read_all_ms1_denoising(
     record_stream: &mut Option<rerun::RecordingStream>,
 ) -> Vec<DenseFrame> {
     let reader = timsrust::FileReader::new(path).unwrap();
-    info!("Reading all MS1 frames");
+
+    let timer = utils::ContextTimer::new("Reading all MS1 frames", true, utils::LogLevel::INFO);
+
     let mut frames = reader.read_all_ms1_frames();
+    timer.stop();
 
     let ims_converter = reader.get_scan_converter().unwrap();
     let mz_converter = reader.get_tof_converter().unwrap();
@@ -270,7 +274,10 @@ pub fn read_all_ms1_denoising(
     };
 
     let converters = (ims_converter, mz_converter);
-    ms1_denoiser.par_denoise_slice(frames, record_stream, (converters, None))
+    let timer = utils::ContextTimer::new("Denoising all MS1 frames", true, utils::LogLevel::INFO);
+    let out = ms1_denoiser.par_denoise_slice(frames, record_stream, (converters, None));
+    timer.stop();
+    out
 }
 
 // This could probably be a macro ...
@@ -278,22 +285,28 @@ pub fn read_all_dia_denoising(
     path: String,
     record_stream: &mut Option<rerun::RecordingStream>,
 ) -> Vec<DenseFrameWindow> {
-    info!("Reading all DIA frames");
+    let timer = utils::ContextTimer::new("Reading all DIA frames", true, utils::LogLevel::INFO);
     let reader = timsrust::FileReader::new(path.clone()).unwrap();
-    let dia_info = tdf::read_dia_frame_info(path.clone()).unwrap();
 
+    let dia_info = tdf::read_dia_frame_info(path.clone()).unwrap();
     let mut frames = reader.read_all_ms2_frames();
 
     let ims_converter = reader.get_scan_converter().unwrap();
     let mz_converter = reader.get_tof_converter().unwrap();
+    timer.stop();
 
-    frames = frames
-        .into_iter()
-        .filter(|frame| match frame.frame_type {
-            timsrust::FrameType::MS2(timsrust::AcquisitionType::DIAPASEF) => true,
-            _ => false,
-        })
-        .collect();
+    // frames = frames
+    //     .into_iter()
+    //     .filter(|frame| match frame.frame_type {
+    //         timsrust::FrameType::MS2(timsrust::AcquisitionType::DIAPASEF) => true,
+    //         _ => false,
+    //     })
+    //     .collect();
+
+    frames.retain(|frame| match frame.frame_type {
+        timsrust::FrameType::MS2(timsrust::AcquisitionType::DIAPASEF) => true,
+        _ => false,
+    });
 
     let min_intensity = 50u64;
     let min_n: usize = 2;
@@ -306,7 +319,10 @@ pub fn read_all_dia_denoising(
         mz_converter,
     };
     let converters = (ims_converter, mz_converter);
+
+    let timer = utils::ContextTimer::new("Denoising all MS2 frames", true, utils::LogLevel::INFO);
     let split_frames = denoiser.par_denoise_slice(frames, record_stream, (converters, None));
     let out: Vec<DenseFrameWindow> = split_frames.into_iter().flatten().collect();
+    timer.stop();
     out
 }

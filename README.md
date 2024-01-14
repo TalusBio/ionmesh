@@ -72,5 +72,31 @@ possible oprimization: split frames without making a dense rep of the peaks. (im
        4,402,843,850,816  instructions retired
        1,162,150,354,869  cycles elapsed
           3,997,115,328  peak memory footprint
+
+
+# Added tracing in time
+ INFO  timsextractor::utils      > Time elapsed in 'Denoising all MS2 frames' is: 57s
+ INFO  timsextractor::utils      > Time elapsed in 'Tracing peaks in time' is: 115s
+        2m54.76s real           8m36.68s user           5.18s sys
+          2444378112  maximum resident set size
+             1,038,443  page reclaims
+                   9  page faults
+               16006  voluntary context switches
+              503,127  involuntary context switches
+       5379661663772  instructions retired
+       1532030532305  cycles elapsed
+          3,958,694,720  peak memory footprint
+
+
+# Added Paralel processing of tracing --features par_dataprep
+        1m51.15s real           10m18.07s user          18.94s sys
+          3764240384  maximum resident set size
+             2,412,027  page reclaims
+                   5  page faults
+               15949  voluntary context switches
+             1,510,616  involuntary context switches
+       5411367473183  instructions retired
+       1754696245831  cycles elapsed
+          5,508,632,704  peak memory footprint
 ```
 

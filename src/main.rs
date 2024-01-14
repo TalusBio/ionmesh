@@ -137,6 +137,6 @@ fn main() -> Result<(), Error> {
     let rt_scaling = 2.;
     let ims_scaling = 0.015;
 
-    tracing::combine_traces(dia_frames, mz_scaling, rt_scaling, ims_scaling, &mut rec);
+    let traces = tracing::combine_traces(dia_frames, mz_scaling, rt_scaling, ims_scaling, &mut rec);
     Ok(())
 }

@@ -104,6 +104,7 @@ pub trait TraceLike<R: std::convert::Into<f64>> {
     fn get_intensity(&self) -> u64;
     fn get_rt(&self) -> R;
     fn get_ims(&self) -> R;
+    fn get_quad_low_high(&self) -> (f64, f64);
 }
 
 pub trait NDPointConverter<T, const D: usize> {
