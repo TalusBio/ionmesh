@@ -138,5 +138,25 @@ fn main() -> Result<(), Error> {
     let ims_scaling = 0.015;
 
     let traces = tracing::combine_traces(dia_frames, mz_scaling, rt_scaling, ims_scaling, &mut rec);
+
+    let quad_scaling = 5.;
+    let pseudoscans =
+        tracing::combine_pseudospectra(traces, rt_scaling, ims_scaling, quad_scaling, &mut rec);
+
+    // Report min/max/average/std and skew for ims and rt
+    let ims_stats = utils::get_stats(&pseudoscans.iter().map(|x| x.ims).collect::<Vec<_>>());
+    let ims_sd_stats = utils::get_stats(&pseudoscans.iter().map(|x| x.ims_std).collect::<Vec<_>>());
+    let rt_stats = utils::get_stats(&pseudoscans.iter().map(|x| x.rt).collect::<Vec<_>>());
+    let rt_sd_stats = utils::get_stats(&pseudoscans.iter().map(|x| x.rt_std).collect::<Vec<_>>());
+    let npeaks = utils::get_stats(&pseudoscans.iter().map(|x| x.peaks.len() as f64).collect::<Vec<_>>());
+
+    println!("ims_stats: {:?}", ims_stats);
+    println!("rt_stats: {:?}", rt_stats);
+
+    println!("ims_sd_stats: {:?}", ims_sd_stats);
+    println!("rt_sd_stats: {:?}", rt_sd_stats);
+
+    println!("npeaks: {:?}", npeaks);
+
     Ok(())
 }

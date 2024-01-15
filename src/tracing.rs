@@ -11,7 +11,7 @@ use rayon::iter::IntoParallelIterator;
 use rayon::prelude::*;
 
 type QuadLowHigh = (f64, f64);
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct BaseTrace {
     pub mz: f64,
     pub intensity: u64,
@@ -39,6 +39,12 @@ impl HasIntensity<u32> for TimeTimsPeak {
                 u32::MAX
             }
         }
+    }
+}
+
+impl HasIntensity<u64> for BaseTrace {
+    fn intensity(&self) -> u64 {
+        self.intensity
     }
 }
 
@@ -325,14 +331,19 @@ fn _combine_single_window_traces(
 
 type Peak = (f64, u64);
 
-struct PseudoSpectrum {
-    peaks: Vec<Peak>,
-    rt: f64,
-    ims: f64,
+#[derive(Debug, Clone)]
+pub struct PseudoSpectrum {
+    pub peaks: Vec<Peak>,
+    pub rt: f64,
+    pub rt_std: f64,
+    pub rt_skew: f64,
+    pub ims: f64,
+    pub ims_std: f64,
+    pub ims_skew: f64,
 }
 
 #[derive(Debug)]
-struct PseudoSpectrumAggregator {
+pub struct PseudoSpectrumAggregator {
     peaks: Vec<Peak>,
     intensity: u64,
     rt: RollingSDCalculator<f64, u64>,
@@ -351,23 +362,31 @@ impl Default for PseudoSpectrumAggregator {
     }
 }
 
-impl<'a> ClusterAggregator<TimeTimsPeak, PseudoSpectrum> for PseudoSpectrumAggregator {
-    fn add(&mut self, peak: &TimeTimsPeak) {
+impl<'a> ClusterAggregator<BaseTrace, PseudoSpectrum> for PseudoSpectrumAggregator {
+    fn add(&mut self, peak: &BaseTrace) {
         debug_assert!(peak.intensity < u64::MAX - self.intensity);
 
         self.rt.add(peak.rt as f64, peak.intensity);
-        self.ims.add(peak.ims as f64, peak.intensity);
+        self.ims.add(peak.mobility as f64, peak.intensity);
         self.peaks.push((peak.mz, peak.intensity));
     }
 
     fn aggregate(&self) -> PseudoSpectrum {
         let rt = self.rt.get_mean() as f64;
         let ims = self.ims.get_mean() as f64;
+        let rt_skew = self.rt.get_skew() as f64;
+        let ims_skew = self.ims.get_skew() as f64;
+        let rt_std = self.rt.get_sd() as f64;
+        let ims_std = self.ims.get_sd() as f64;
 
         PseudoSpectrum {
             peaks: self.peaks.clone(),
             rt: rt,
             ims: ims,
+            rt_std: rt_std,
+            ims_std: ims_std,
+            rt_skew: rt_skew,
+            ims_skew: ims_skew,
         }
     }
 
@@ -390,17 +409,57 @@ impl<'a> ClusterAggregator<TimeTimsPeak, PseudoSpectrum> for PseudoSpectrumAggre
     }
 }
 
-// impl NDPointConverter<BaseTrace, 3> for BaseTraceConverter {
-//     fn convert(&self, elem: &BaseTrace) -> NDPoint<3> {
-//         NDPoint {
-//             values: [
-//                 Nope//(elem.mz / self.mz_scaling) as Float,
-//                 (elem.rt as f64 / self.rt_scaling) as Float,
-//                 (elem.mobility as f64 / self.ims_scaling) as Float,
-//             ],
-//         }
-//     }
-// }
+struct BaseTraceConverter {
+    rt_scaling: f64,
+    ims_scaling: f64,
+    quad_scaling: f64,
+}
+
+impl NDPointConverter<BaseTrace, 4> for BaseTraceConverter {
+    fn convert(&self, elem: &BaseTrace) -> NDPoint<4> {
+        NDPoint {
+            values: [
+                (elem.rt as f64 / self.rt_scaling) as Float,
+                (elem.mobility as f64 / self.ims_scaling) as Float,
+                (elem.quad_low_high.0 / self.quad_scaling) as Float,
+                (elem.quad_low_high.1 / self.quad_scaling) as Float,
+            ],
+        }
+    }
+}
+
+pub fn combine_pseudospectra(
+    traces: Vec<BaseTrace>,
+    rt_scaling: f64,
+    ims_scaling: f64,
+    quad_scaling: f64,
+    record_stream: &mut Option<rerun::RecordingStream>,
+) -> Vec<PseudoSpectrum> {
+    let timer = utils::ContextTimer::new("Combining pseudospectra", true, utils::LogLevel::INFO);
+
+    let min_n = 5;
+    let min_intensity = 200;
+    let converter = BaseTraceConverter {
+        rt_scaling,
+        ims_scaling,
+        quad_scaling,
+    };
+
+    let foo: Vec<PseudoSpectrum> = dbscan_generic(converter, traces, min_n, min_intensity, &|| {
+        PseudoSpectrumAggregator::default()
+    });
+
+    info!("Combined pseudospectra: {}", foo.len());
+    timer.stop();
+
+    if let Some(stream) = record_stream.as_mut() {
+        warn!("Plotting pseudospectra is not implemented yet");
+        // let _ = foo.plot(stream, String::from("points/pseudospectra"), None, None);
+    }
+
+    foo
+}
+
 //
 //
 //

@@ -143,7 +143,7 @@ mod test_count_neigh {
 
 // Final implementation is based on the formulas here:
 // https://doi.org/10.1007/s00180-015-0637-z
-// and the c implementation here: 
+// and the c implementation here:
 // https://www.johndcook.com/blog/skewness_kurtosis/
 
 /// Calculate the variance of a set of data points without storing them.
@@ -200,7 +200,7 @@ where
         self.merge(&Self {
             n: 1,
             w_sum: w,
-            sqare_w_sum: w*w,
+            sqare_w_sum: w * w,
             m1: x,
             m2: 0.as_(),
             m3: 0.as_(),
@@ -210,6 +210,10 @@ where
 
     pub fn get_variance(&self) -> T {
         self.m2 / self.w_sum.as_()
+    }
+
+    pub fn get_sd(&self) -> T {
+        self.get_variance().into().sqrt().as_()
     }
 
     pub fn get_variance_bessel(&self) -> T {
@@ -233,8 +237,7 @@ where
     }
 
     pub fn get_kurtosis(&self) -> T {
-        self.w_sum.as_()*self.m4 / (self.m2*self.m2)
-
+        self.w_sum.as_() * self.m4 / (self.m2 * self.m2)
     }
 
     pub fn merge(&mut self, other: &Self) {
@@ -251,19 +254,30 @@ where
         let b_weight = b.w_sum.as_();
 
         let delta = b.m1 - a.m1;
-        let delta2 = delta*delta;
-        let delta3 = delta*delta2;
-        let delta4 = delta2*delta2;
-        
-        let combined_m1 = (a_weight*a.m1 + b_weight*b.m1) / combined_weight_as;
+        let delta2 = delta * delta;
+        let delta3 = delta * delta2;
+        let delta4 = delta2 * delta2;
+
+        let combined_m1 = (a_weight * a.m1 + b_weight * b.m1) / combined_weight_as;
         let combined_m2 = a.m2 + b.m2 + delta2 * a_weight * b_weight / combined_weight_as;
-        
-        let mut combined_m3 = a.m3 + b.m3 + delta3 * a_weight * b_weight * (a_weight - b_weight)/(combined_weight_as*combined_weight_as);
-        combined_m3 += 3.0.as_()*delta * (a_weight*b.m2 - b_weight*a.m2) / combined_weight_as;
-        
-        let mut combined_m4 = a.m4 + b.m4 + delta4*a_weight*b_weight * (a_weight*a_weight - a_weight*b_weight + b_weight*b_weight) / (combined_weight_as*combined_weight_as*combined_weight_as);
-        combined_m4 += 6.0.as_()*delta2 * (a_weight*a_weight*b.m2 + b_weight*b_weight*a.m2)/(combined_weight_as*combined_weight_as) + 
-                      4.0.as_()*delta*(a_weight*b.m3 - b_weight*a.m3) / combined_weight_as;
+
+        let mut combined_m3 = a.m3
+            + b.m3
+            + delta3 * a_weight * b_weight * (a_weight - b_weight)
+                / (combined_weight_as * combined_weight_as);
+        combined_m3 += 3.0.as_() * delta * (a_weight * b.m2 - b_weight * a.m2) / combined_weight_as;
+
+        let mut combined_m4 = a.m4
+            + b.m4
+            + delta4
+                * a_weight
+                * b_weight
+                * (a_weight * a_weight - a_weight * b_weight + b_weight * b_weight)
+                / (combined_weight_as * combined_weight_as * combined_weight_as);
+        combined_m4 +=
+            6.0.as_() * delta2 * (a_weight * a_weight * b.m2 + b_weight * b_weight * a.m2)
+                / (combined_weight_as * combined_weight_as)
+                + 4.0.as_() * delta * (a_weight * b.m3 - b_weight * a.m3) / combined_weight_as;
 
         self.n = combined_n;
         self.w_sum = combined_weight;
@@ -275,20 +289,42 @@ where
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Stats {
+    pub mean: f64,
+    pub sd: f64,
+    pub skew: f64,
+    pub kurtosis: f64,
+    pub n: u64,
+}
+
+pub fn get_stats(data: &[f64]) -> Stats {
+    let mut sd_calc = RollingSDCalculator::<f64, u64>::default();
+    for x in data.iter() {
+        sd_calc.add(*x, 1);
+    }
+    Stats {
+        mean: sd_calc.get_mean(),
+        sd: sd_calc.get_sd(),
+        skew: sd_calc.get_skew(),
+        kurtosis: sd_calc.get_kurtosis(),
+        n: sd_calc.n,
+    }
+}
+
 #[cfg(test)]
 mod test_rolling_sd {
     use super::*;
 
-    
     // All of these should have:
     // - population variance of 10.0
     // - Mean of 9.0
     //
     //  skews kurtosis
     //   0.000 1.780
-    const ASCOMBES_QX: [f64;11] = [10., 8., 13., 9., 11., 14., 6., 4., 12., 7., 5.];
+    const ASCOMBES_QX: [f64; 11] = [10., 8., 13., 9., 11., 14., 6., 4., 12., 7., 5.];
     //   2.846 9.100
-    const ASCOMBES_QY: [f64;11] = [8., 8., 8., 8., 8., 8., 8., 19., 8., 8., 8.];
+    const ASCOMBES_QY: [f64; 11] = [8., 8., 8., 8., 8., 8., 8., 19., 8., 8., 8.];
 
     // All of these should have:
     // - population variance of 3.75 +- 0.01
@@ -296,13 +332,21 @@ mod test_rolling_sd {
     //
     //  skews kurtosis
     //  -0.055 2.179
-    const ASCOMBES_Q1: [f64;11] = [8.04, 6.95, 7.58, 8.81, 8.33, 9.96, 7.24, 4.26, 10.84, 4.82, 5.68];
+    const ASCOMBES_Q1: [f64; 11] = [
+        8.04, 6.95, 7.58, 8.81, 8.33, 9.96, 7.24, 4.26, 10.84, 4.82, 5.68,
+    ];
     //  -1.129 3.007
-    const ASCOMBES_Q2: [f64;11] = [9.14, 8.14, 8.74, 8.77, 9.26, 8.10, 6.13, 3.10, 9.13, 7.26, 4.74];
+    const ASCOMBES_Q2: [f64; 11] = [
+        9.14, 8.14, 8.74, 8.77, 9.26, 8.10, 6.13, 3.10, 9.13, 7.26, 4.74,
+    ];
     //   1.592 5.130
-    const ASCOMBES_Q3: [f64;11] = [7.46, 6.77, 12.74, 7.11, 7.81, 8.84, 6.08, 5.39, 8.15, 6.42, 5.73];
+    const ASCOMBES_Q3: [f64; 11] = [
+        7.46, 6.77, 12.74, 7.11, 7.81, 8.84, 6.08, 5.39, 8.15, 6.42, 5.73,
+    ];
     //   1.293 4.390
-    const ASCOMBES_Q5: [f64;11] = [6.58, 5.76, 7.71, 8.84, 8.47, 7.04, 5.25, 12.50, 5.56, 7.91, 6.89];
+    const ASCOMBES_Q5: [f64; 11] = [
+        6.58, 5.76, 7.71, 8.84, 8.47, 7.04, 5.25, 12.50, 5.56, 7.91, 6.89,
+    ];
 
     fn assert_close(a: f64, b: f64) {
         assert!((a - b).abs() < 1e-3, "{} != {}", a, b);
@@ -333,13 +377,12 @@ mod test_rolling_sd {
         let mut sd_calc = RollingSDCalculator::<f64, u64>::default();
         sd_calc.add(1.0, 1);
         sd_calc.add(0.0, 2);
-        assert_close(sd_calc.get_mean(), 1./3.);
+        assert_close(sd_calc.get_mean(), 1. / 3.);
 
         let mut sd_calc = RollingSDCalculator::<f64, u64>::default();
         sd_calc.add(1.0, 1);
         sd_calc.add(0.0, 2);
-        assert_close(sd_calc.get_mean(), 1./3.);
-
+        assert_close(sd_calc.get_mean(), 1. / 3.);
 
         let mut sd_calc = RollingSDCalculator::<f64, u64>::default();
         for x in ASCOMBES_Q1.iter() {

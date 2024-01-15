@@ -1,3 +1,5 @@
+use std::ops::{Add, Div, Mul, Sub};
+
 use crate::ms::frames::TimsPeak;
 use crate::utils;
 use crate::utils::within_distance_apply;
@@ -18,6 +20,7 @@ use rayon::prelude::*;
 
 use crate::kdtree::RadiusKDTree;
 use crate::quad::RadiusQuadTree;
+use num::cast::AsPrimitive;
 
 // Pseudocode from wikipedia.
 // Donate to wikipedia y'all. :3
@@ -65,14 +68,26 @@ impl HasIntensity<u32> for frames::TimsPeak {
 }
 
 // THIS IS A BOTTLENECK FUNCTION
-fn _dbscan<'a, const N: usize>(
+fn _dbscan<
+    'a,
+    const N: usize,
+    I: Div<Output = I>
+        + Add<Output = I>
+        + Mul<Output = I>
+        + Sub<Output = I>
+        + Default
+        + Copy
+        + PartialOrd<I>
+        + AsPrimitive<u64>,
+>(
     tree: &'a impl IndexedPoints<'a, N, usize>,
-    prefiltered_peaks: &Vec<impl HasIntensity<u32>>,
+    prefiltered_peaks: &Vec<impl HasIntensity<I>>,
     quad_points: &Vec<NDPoint<N>>, // TODO make generic over dimensions
     min_n: usize,
     min_intensity: u64,
-    intensity_sorted_indices: &Vec<(usize, u32)>,
-) -> (u64, Vec<ClusterLabel<u64>>) {
+    intensity_sorted_indices: &Vec<(usize, I)>,
+) -> (u64, Vec<ClusterLabel<u64>>)
+where {
     let mut cluster_labels = vec![ClusterLabel::Unassigned; prefiltered_peaks.len()];
     let mut cluster_id = 0;
 
@@ -94,7 +109,7 @@ fn _dbscan<'a, const N: usize>(
         let mut neighbor_intensity_total: u64 = 0;
 
         for i in neighbors.iter() {
-            neighbor_intensity_total += prefiltered_peaks[**i].intensity() as u64;
+            neighbor_intensity_total += prefiltered_peaks[**i].intensity().as_();
         }
 
         if neighbor_intensity_total < min_intensity {
@@ -123,10 +138,10 @@ fn _dbscan<'a, const N: usize>(
 
             let neighbors = tree.query_ndpoint(&quad_points[*neighbor]);
 
-            let neighbor_intensity: u32 = prefiltered_peaks[neighbor_index].intensity();
+            let neighbor_intensity = prefiltered_peaks[neighbor_index].intensity();
             let neighbor_intensity_total = neighbors
                 .iter()
-                .map(|i| prefiltered_peaks[**i].intensity() as u64)
+                .map(|i| prefiltered_peaks[**i].intensity().as_())
                 .sum::<u64>();
 
             if neighbors.len() >= min_n && neighbor_intensity_total >= min_intensity {
@@ -317,14 +332,26 @@ fn _inner<T: Copy, G: ClusterAggregator<T, R>, R>(
     cluster_vecs
 }
 
+// TODO: rename prefiltered peaks argument!
+
 // fn DBSCAN<C: NDPointConverter<T, D>, R, G: Default + ClusterAggregator<T,R,G>, T: HasIntensity<u32>, const D: usize>(
 pub fn dbscan_generic<
     C: NDPointConverter<T, N>,
     R: Send,
     G: Sync + Send + ClusterAggregator<T, R>,
-    T: HasIntensity<u32> + Send + Clone + Copy,
+    T: HasIntensity<Z> + Send + Clone + Copy,
     F: Fn() -> G + Send + Sync,
     const N: usize,
+    // Z is usually u32 or u64
+    Z: AsPrimitive<u64>
+        + Send
+        + Sync
+        + Add<Output = Z>
+        + PartialOrd
+        + Div<Output = Z>
+        + Mul<Output = Z>
+        + Default
+        + Sub<Output = Z>,
 >(
     converter: C,
     prefiltered_peaks: Vec<T>,
