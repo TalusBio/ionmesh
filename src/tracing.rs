@@ -6,7 +6,7 @@ use crate::utils;
 use crate::utils::RollingSDCalculator;
 use crate::visualization::RerunPlottable;
 
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use rayon::iter::IntoParallelIterator;
 use rayon::prelude::*;
 
@@ -298,7 +298,7 @@ fn _combine_single_window_traces(
     rt_scaling: f64,
     ims_scaling: f64,
 ) -> Vec<BaseTrace> {
-    info!("Prefiltered peaks: {}", prefiltered_peaks.len());
+    debug!("Prefiltered peaks: {}", prefiltered_peaks.len());
     let min_n = 3;
     let min_intensity = 200;
     let converter = TimeTimsPeakConverter {
@@ -323,7 +323,7 @@ fn _combine_single_window_traces(
             }
         });
 
-    info!("Combined traces: {}", foo.len());
+    debug!("Combined traces: {}", foo.len());
     foo
 }
 

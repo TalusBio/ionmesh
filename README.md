@@ -1,5 +1,15 @@
 
-# Generically named project ...
+# Peakachu
+
+## Usage
+
+
+```
+cargo build --release  --features par_dataprep
+./target/release/peakachu --help
+```
+
+## Performance
 
 ```
 cargo run --release  1899.11s user 18.79s system 694% cpu 4:36.29 total
@@ -8,14 +18,14 @@ cargo run --release  407.91s user 14.94s system 586% cpu 1:12.08 total # Change 
 cargo run --release  383.80s user 14.32s system 622% cpu 1:03.99 total # Implementing count search.
 cargo run --release  389.74s user 13.00s system 662% cpu 1:00.82 total # Implemented plotting and moved filter to single thread.
 
-# cargo build --release && time ./target/release/timsextractor
+# cargo build --release && time ./target/release/peakachu
 # After moving to dbscan denoising
-./target/release/timsextractor  479.13s user 11.96s system 725% cpu 1:07.67 total # MS2 only
-./target/release/timsextractor  2681.79s user 28.76s system 724% cpu 6:14.00 total
+./target/release/peakachu  479.13s user 11.96s system 725% cpu 1:07.67 total # MS2 only
+./target/release/peakachu  2681.79s user 28.76s system 724% cpu 6:14.00 total
 
 
 # Only ms2 + splitting
-cargo build --release && /usr/bin/time -lh ./target/release/timsextractor 
+cargo build --release && /usr/bin/time -lh ./target/release/peakachu 
         1m18.01s real           8m4.77s user            11.41s sys
           2949349376  maximum resident set size
               694,628  page reclaims
@@ -75,8 +85,8 @@ possible oprimization: split frames without making a dense rep of the peaks. (im
 
 
 # Added tracing in time
- INFO  timsextractor::utils      > Time elapsed in 'Denoising all MS2 frames' is: 57s
- INFO  timsextractor::utils      > Time elapsed in 'Tracing peaks in time' is: 115s
+ INFO  peakachu::utils      > Time elapsed in 'Denoising all MS2 frames' is: 57s
+ INFO  peakachu::utils      > Time elapsed in 'Tracing peaks in time' is: 115s
         2m54.76s real           8m36.68s user           5.18s sys
           2444378112  maximum resident set size
              1,038,443  page reclaims
@@ -95,8 +105,19 @@ possible oprimization: split frames without making a dense rep of the peaks. (im
                    5  page faults
                15949  voluntary context switches
              1,510,616  involuntary context switches
-       5411367473183  instructions retired
-       1754696245831  cycles elapsed
+       5,411,367,473,183  instructions retired
+       1,754,696,245,831  cycles elapsed
           5,508,632,704  peak memory footprint
+
+# Adding peaks initial (bad) implementation of pseudo-spectrum generation
+       2m21.58s real           10m47.15s user          7.71s sys
+       5,291,409,408  maximum resident set size
+           1,072,507  page reclaims
+                   5  page faults
+               16008  voluntary context switches
+              990886  involuntary context switches
+   5,759,247,615,620  instructions retired
+   1,855,415,105,617  cycles elapsed
+       5,662,807,296  peak memory footprint
 ```
 

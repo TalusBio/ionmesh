@@ -333,6 +333,7 @@ fn _inner<T: Copy, G: ClusterAggregator<T, R>, R>(
 }
 
 // TODO: rename prefiltered peaks argument!
+// TODO implement a version that takes a sparse distance matric.
 
 // fn DBSCAN<C: NDPointConverter<T, D>, R, G: Default + ClusterAggregator<T,R,G>, T: HasIntensity<u32>, const D: usize>(
 pub fn dbscan_generic<
@@ -473,14 +474,10 @@ pub fn dbscan_generic<
         cluster_vecs
     };
 
-    //     .par_iter_mut() // <<<<- This works but its slower.
-    //     .map(|cluster| cluster.aggregate())
-    //     .collect::<Vec<_>>()
-
     let timer =
         utils::ContextTimer::new("dbscan_generic::aggregation", true, utils::LogLevel::TRACE);
     let out = cluster_vecs
-        .iter()
+        .par_iter()
         .map(|cluster| cluster.aggregate())
         .collect::<Vec<_>>();
     timer.stop();
