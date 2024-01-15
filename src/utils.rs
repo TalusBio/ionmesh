@@ -137,41 +137,14 @@ mod test_count_neigh {
     }
 }
 
-// def online_variance(data):
-//     n = 0
-//     mean = 0.0
-//     M2 = 0.0
-//
-//     for x in data:
-//         n += 1
-//         delta = x - mean
-//         mean += delta/n
-//         M2 += delta*(x - mean)
-//
-//     if n < 2:
-//         return float('nan')
-//     else:
-//         return M2 / (n - 1)
-
+// Initial implementaition was based on the formulas here:
 // https://en.wikipedia.org/wiki/Bessel%27s_correction
 // Donate to wikipedia!!! <3
-//
-// def weighted_incremental_variance(data_weight_pairs):
-//     w_sum = w_sum2 = mean = S = 0
-//
-//     for x, w in data_weight_pairs:
-//         w_sum = w_sum + w
-//         w_sum2 = w_sum2 + w**2
-//         mean_old = mean
-//         mean = mean_old + (w / w_sum) * (x - mean_old)
-//         S = S + w * (x - mean_old) * (x - mean)
-//
-//     population_variance = S / w_sum
-//     # Bessel's correction for weighted samples
-//     # Frequency weights
-//     sample_frequency_variance = S / (w_sum - 1)
-//     # Reliability weights
-//     sample_reliability_variance = S / (w_sum - w_sum2 / w_sum)
+
+// Final implementation is based on the formulas here:
+// https://doi.org/10.1007/s00180-015-0637-z
+// and the c implementation here: 
+// https://www.johndcook.com/blog/skewness_kurtosis/
 
 /// Calculate the variance of a set of data points without storing them.
 ///
@@ -182,20 +155,22 @@ mod test_count_neigh {
 /// of the data points while being aggregated.
 ///
 /// 2. *W* - The type of the weights.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct RollingSDCalculator<T, W> {
+    n: u64,
     w_sum: W,
-    w_sum2: W,
-    mean: T,
-    s_: T,
-    count: u64,
+    sqare_w_sum: W,
+    m1: T,
+    m2: T,
+    m3: T,
+    m4: T,
 }
 
 // TODO evaluate the numeric accuracy of this implementation.
 
 impl<T, W> RollingSDCalculator<T, W>
 where
-    // NOTE: W > T needs to be 'losless' (u32 -> f63)
+    // NOTE: W > T needs to be 'losless' (u32 -> f64)
     // but T > W does not need to be.
     T: std::ops::Sub<Output = T>
         + std::ops::Mul<Output = T>
@@ -203,6 +178,7 @@ where
         + std::ops::Add<Output = T>
         + std::ops::AddAssign
         + std::cmp::PartialOrd
+        + Into<f64>
         + Copy
         + Default
         + 'static,
@@ -217,50 +193,85 @@ where
         + AsPrimitive<T>
         + 'static,
     u64: AsPrimitive<T>,
+    f64: AsPrimitive<T>,
 {
     pub fn add(&mut self, x: T, w: W) {
         // Check for overflows
-        debug_assert!(self.w_sum < self.w_sum + w);
-        debug_assert!(self.w_sum2 < self.w_sum2 + w * w);
-        self.w_sum += w;
-        self.w_sum2 += w * w;
-        let mean_old = self.mean;
-        self.mean = mean_old + ((w.as_() / self.w_sum.as_()) * (x - mean_old));
-        self.s_ += w.as_() * (x - mean_old) * (x - self.mean);
-        self.count += 1;
+        self.merge(&Self {
+            n: 1,
+            w_sum: w,
+            sqare_w_sum: w*w,
+            m1: x,
+            m2: 0.as_(),
+            m3: 0.as_(),
+            m4: 0.as_(),
+        });
     }
 
     pub fn get_variance(&self) -> T {
-        self.s_ / self.w_sum.as_()
+        self.m2 / self.w_sum.as_()
     }
 
     pub fn get_variance_bessel(&self) -> T {
         // Mod here to use the avg weight
         // instead of 1 for the correction
         // self.s_ / (self.w_sum - T::one())
-        let avg_weight = self.w_sum.as_() / self.count.as_();
-        self.s_ / (self.w_sum.as_() - avg_weight)
+        let avg_weight = self.w_sum.as_() / self.n.as_();
+        self.m2 / (self.w_sum.as_() - avg_weight)
     }
 
     pub fn get_variance_reliability(&self) -> T {
-        self.s_ / (self.w_sum.as_() - (self.w_sum2.as_() / self.w_sum.as_()))
+        self.m2 / (self.w_sum.as_() - (self.sqare_w_sum.as_() / self.w_sum.as_()))
     }
 
     pub fn get_mean(&self) -> T {
-        self.mean
+        self.m1
+    }
+
+    pub fn get_skew(&self) -> T {
+        self.w_sum.as_().into().sqrt().as_() * self.m3 / (self.m2.into().powf(1.5).as_())
+    }
+
+    pub fn get_kurtosis(&self) -> T {
+        self.w_sum.as_()*self.m4 / (self.m2*self.m2)
+
     }
 
     pub fn merge(&mut self, other: &Self) {
-        // Check for overflows
-        debug_assert!(self.w_sum < self.w_sum + other.w_sum);
-        debug_assert!(self.w_sum2 < self.w_sum2 + other.w_sum2);
-        self.w_sum += other.w_sum;
-        self.w_sum2 += other.w_sum2;
-        let mean_old = self.mean;
-        self.mean = mean_old + ((other.w_sum.as_() / self.w_sum.as_()) * (other.mean - mean_old));
-        self.s_ +=
-            other.s_ + other.w_sum.as_() * (other.mean - mean_old) * (other.mean - self.mean);
-        self.count += other.count;
+        // There is for sure some optimization to be done here.
+        // But right now the math is the hard part ...  would definitely pay off
+        let a = self.clone();
+        let b = other;
+
+        let combined_n = a.n + b.n;
+        let combined_weight = a.w_sum + b.w_sum;
+
+        let combined_weight_as = combined_weight.as_();
+        let a_weight = a.w_sum.as_();
+        let b_weight = b.w_sum.as_();
+
+        let delta = b.m1 - a.m1;
+        let delta2 = delta*delta;
+        let delta3 = delta*delta2;
+        let delta4 = delta2*delta2;
+        
+        let combined_m1 = (a_weight*a.m1 + b_weight*b.m1) / combined_weight_as;
+        let combined_m2 = a.m2 + b.m2 + delta2 * a_weight * b_weight / combined_weight_as;
+        
+        let mut combined_m3 = a.m3 + b.m3 + delta3 * a_weight * b_weight * (a_weight - b_weight)/(combined_weight_as*combined_weight_as);
+        combined_m3 += 3.0.as_()*delta * (a_weight*b.m2 - b_weight*a.m2) / combined_weight_as;
+        
+        let mut combined_m4 = a.m4 + b.m4 + delta4*a_weight*b_weight * (a_weight*a_weight - a_weight*b_weight + b_weight*b_weight) / (combined_weight_as*combined_weight_as*combined_weight_as);
+        combined_m4 += 6.0.as_()*delta2 * (a_weight*a_weight*b.m2 + b_weight*b_weight*a.m2)/(combined_weight_as*combined_weight_as) + 
+                      4.0.as_()*delta*(a_weight*b.m3 - b_weight*a.m3) / combined_weight_as;
+
+        self.n = combined_n;
+        self.w_sum = combined_weight;
+        self.sqare_w_sum = a.sqare_w_sum + b.sqare_w_sum;
+        self.m1 = combined_m1;
+        self.m2 = combined_m2;
+        self.m3 = combined_m3;
+        self.m4 = combined_m4;
     }
 }
 
@@ -268,60 +279,90 @@ where
 mod test_rolling_sd {
     use super::*;
 
+    
+    // All of these should have:
+    // - population variance of 10.0
+    // - Mean of 9.0
+    //
+    //  skews kurtosis
+    //   0.000 1.780
+    const ASCOMBES_QX: [f64;11] = [10., 8., 13., 9., 11., 14., 6., 4., 12., 7., 5.];
+    //   2.846 9.100
+    const ASCOMBES_QY: [f64;11] = [8., 8., 8., 8., 8., 8., 8., 19., 8., 8., 8.];
+
+    // All of these should have:
+    // - population variance of 3.75 +- 0.01
+    // - Mean of 7.5
+    //
+    //  skews kurtosis
+    //  -0.055 2.179
+    const ASCOMBES_Q1: [f64;11] = [8.04, 6.95, 7.58, 8.81, 8.33, 9.96, 7.24, 4.26, 10.84, 4.82, 5.68];
+    //  -1.129 3.007
+    const ASCOMBES_Q2: [f64;11] = [9.14, 8.14, 8.74, 8.77, 9.26, 8.10, 6.13, 3.10, 9.13, 7.26, 4.74];
+    //   1.592 5.130
+    const ASCOMBES_Q3: [f64;11] = [7.46, 6.77, 12.74, 7.11, 7.81, 8.84, 6.08, 5.39, 8.15, 6.42, 5.73];
+    //   1.293 4.390
+    const ASCOMBES_Q5: [f64;11] = [6.58, 5.76, 7.71, 8.84, 8.47, 7.04, 5.25, 12.50, 5.56, 7.91, 6.89];
+
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-3, "{} != {}", a, b);
+    }
+
     #[test]
     fn test_rolling_sd() {
         let mut sd_calc = RollingSDCalculator::<f64, u64>::default();
 
         sd_calc.add(1.0, 1);
-        sd_calc.add(2.0, 1);
-        sd_calc.add(3.0, 1);
-        sd_calc.add(4.0, 1);
-        sd_calc.add(5.0, 1);
-
-        assert_eq!(sd_calc.get_variance(), 2.5);
-        assert_eq!(sd_calc.get_variance_bessel(), 2.0);
-        assert_eq!(sd_calc.get_variance_reliability(), 2.0);
-    }
-
-    #[test]
-    fn test_rolling_constants_addition() {
-        let mut sd_calc = RollingSDCalculator::<f64, u64>::default();
-
-        sd_calc.add(2.0, 1);
-        sd_calc.add(2.0, 1);
-        sd_calc.add(2.0, 1);
-        sd_calc.add(2.0, 1);
-        sd_calc.add(2.0, 1);
-
-        assert!(sd_calc.mean == 2.0);
-        assert_eq!(sd_calc.get_variance(), 0.0);
-        assert_eq!(sd_calc.get_variance_bessel(), 0.0);
-        assert_eq!(sd_calc.get_variance_reliability(), 0.0);
-    }
-
-    fn test_merge() {
-        let mut sd_calc = RollingSDCalculator::<f64, u64>::default();
-
         sd_calc.add(1.0, 1);
-        sd_calc.add(2.0, 1);
-        sd_calc.add(3.0, 1);
-        sd_calc.add(4.0, 1);
-        sd_calc.add(5.0, 1);
 
-        let mut sd_calc2 = RollingSDCalculator::<f64, u64>::default();
+        assert_eq!(sd_calc.get_mean(), 1.0);
+        assert_eq!(sd_calc.get_variance(), 0.);
+        assert_eq!(sd_calc.get_variance_bessel(), 0.);
+        assert_eq!(sd_calc.get_variance_reliability(), 0.);
 
-        sd_calc2.add(1.0, 1);
-        sd_calc2.add(2.0, 1);
-        sd_calc2.add(3.0, 1);
-        sd_calc2.add(4.0, 1);
-        sd_calc2.add(5.0, 1);
+        let mut sd_calc = RollingSDCalculator::<f64, u64>::default();
+        sd_calc.add(1.0, 1);
+        sd_calc.add(0.0, 1);
+        assert_eq!(sd_calc.get_mean(), 0.5);
 
-        sd_calc.merge(&sd_calc2);
+        let mut sd_calc = RollingSDCalculator::<f64, u64>::default();
+        sd_calc.add(1.0, 200);
+        sd_calc.add(0.0, 200);
+        assert_eq!(sd_calc.get_mean(), 0.5);
 
-        assert_eq!(sd_calc.count, 10);
+        let mut sd_calc = RollingSDCalculator::<f64, u64>::default();
+        sd_calc.add(1.0, 1);
+        sd_calc.add(0.0, 2);
+        assert_close(sd_calc.get_mean(), 1./3.);
 
-        assert_eq!(sd_calc.get_variance(), 2.5);
-        assert_eq!(sd_calc.get_variance_bessel(), 2.0);
-        assert_eq!(sd_calc.get_variance_reliability(), 2.0);
+        let mut sd_calc = RollingSDCalculator::<f64, u64>::default();
+        sd_calc.add(1.0, 1);
+        sd_calc.add(0.0, 2);
+        assert_close(sd_calc.get_mean(), 1./3.);
+
+
+        let mut sd_calc = RollingSDCalculator::<f64, u64>::default();
+        for x in ASCOMBES_Q1.iter() {
+            sd_calc.add(*x, 1);
+        }
+        assert_close(sd_calc.get_mean(), 7.50);
+        assert_close(sd_calc.get_variance(), 3.752);
+        assert_close(sd_calc.get_skew(), -0.055);
+        assert_close(sd_calc.get_kurtosis(), 2.179);
+
+        // Now using ascombes Q4 to check for weighted values
+        let mut sd_calc = RollingSDCalculator::<f64, u64>::default();
+        sd_calc.add(8.0, 1000);
+        sd_calc.add(19.0, 100);
+        assert_close(sd_calc.get_mean(), 9.0);
+        assert_close(sd_calc.get_variance(), 10.0);
+
+        // Now using ascombes QY to check for weighted values
+        // With respect to last, the weight type should not influence the result
+        let mut sd_calc = RollingSDCalculator::<f64, f64>::default();
+        sd_calc.add(8.0, 1000.);
+        sd_calc.add(19.0, 100.);
+        assert_close(sd_calc.get_mean(), 9.0);
+        assert_close(sd_calc.get_variance(), 10.0);
     }
 }
