@@ -1,6 +1,7 @@
 use std::ops::{Add, Div, Mul, Sub};
 
 use crate::ms::frames::TimsPeak;
+use crate::space_generics::NDPointConverter;
 use crate::utils;
 use crate::utils::within_distance_apply;
 
@@ -67,6 +68,8 @@ impl HasIntensity<u32> for frames::TimsPeak {
     }
 }
 
+// TODO: rename quad_points, since this no longer uses a quadtree.
+
 // THIS IS A BOTTLENECK FUNCTION
 fn _dbscan<
     'a,
@@ -82,12 +85,11 @@ fn _dbscan<
 >(
     tree: &'a impl IndexedPoints<'a, N, usize>,
     prefiltered_peaks: &Vec<impl HasIntensity<I>>,
-    quad_points: &Vec<NDPoint<N>>, // TODO make generic over dimensions
+    quad_points: &Vec<NDPoint<N>>,
     min_n: usize,
     min_intensity: u64,
     intensity_sorted_indices: &Vec<(usize, I)>,
-) -> (u64, Vec<ClusterLabel<u64>>)
-where {
+) -> (u64, Vec<ClusterLabel<u64>>) {
     let mut cluster_labels = vec![ClusterLabel::Unassigned; prefiltered_peaks.len()];
     let mut cluster_id = 0;
 
@@ -105,7 +107,7 @@ where {
             continue;
         }
 
-        // Do I need to care about overflows here?
+        // Q: Do I need to care about overflows here? - Sebastian
         let mut neighbor_intensity_total: u64 = 0;
 
         for i in neighbors.iter() {
@@ -166,7 +168,7 @@ where {
                         // Using minkowski distance with p = 1, manhattan distance.
                         let dist = (p.values[0] - query_point.values[0]).abs()
                             + (p.values[1] - query_point.values[1]).abs();
-                        let within_distance = dist <= MAX_EXTENSION_DISTANCE.powi(2);
+                        let within_distance = dist <= MAX_EXTENSION_DISTANCE;
                         going_downhill && within_distance
                     })
                     .collect::<Vec<_>>();
@@ -178,89 +180,6 @@ where {
 
     (cluster_id, cluster_labels)
 }
-
-// pub fn dbscan(
-//     denseframe: frames::DenseFrame,
-//     mz_scaling: f64,
-//     ims_scaling: f32,
-//     min_n: usize,
-//     min_intensity: u64,
-// ) -> frames::DenseFrame {
-//     let out_frame_type: timsrust::FrameType = denseframe.frame_type.clone();
-//     let out_rt: f64 = denseframe.rt.clone();
-//     let out_index: usize = denseframe.index.clone();
-//
-//     let (quad_points, prefiltered_peaks, boundary) =
-//         denseframe_to_quadtree_points(denseframe, mz_scaling, ims_scaling, min_n.saturating_sub(1));
-//
-//     let mut tree = RadiusQuadTree::new(boundary, 20, 1.);
-//     // let mut tree = RadiusQuadTree::new(boundary, 20, 1.);
-//
-//     let quad_indices = (0..quad_points.len()).collect::<Vec<_>>();
-//
-//     for (quad_point, i) in quad_points.iter().zip(quad_indices.iter()) {
-//         tree.insert(quad_point.clone(), i);
-//     }
-//     let mut intensity_sorted_indices = prefiltered_peaks
-//         .iter()
-//         .enumerate()
-//         .map(|(i, peak)| (i.clone(), peak.intensity.clone()))
-//         .collect::<Vec<_>>();
-//
-//     intensity_sorted_indices.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-//
-//     let (cluster_id, cluster_labels) = _dbscan(
-//         &tree,
-//         &prefiltered_peaks,
-//         &quad_points,
-//         min_n,
-//         min_intensity,
-//         &intensity_sorted_indices,
-//     );
-//     // Each element is a tuple representing the summed cluster intensity, mz, and mobility.
-//     // And will be used to calculate the weighted average of mz and mobility AND the total intensity.
-//     let mut cluster_vecs = vec![(0u64, 0f64, 0f64); cluster_id as usize];
-//     for (point_index, cluster_label) in cluster_labels.iter().enumerate() {
-//         match cluster_label {
-//             ClusterLabel::Cluster(cluster_id) => {
-//                 let cluster_idx = *cluster_id as usize - 1;
-//                 let timspeak = prefiltered_peaks[point_index];
-//                 let f64_intensity = timspeak.intensity as f64;
-//                 let cluster_vec = &mut cluster_vecs[cluster_idx];
-//                 cluster_vec.0 += timspeak.intensity as u64;
-//                 cluster_vec.1 += (timspeak.mz as f64) * f64_intensity;
-//                 cluster_vec.2 += (timspeak.mobility as f64) * f64_intensity;
-//             }
-//             _ => {}
-//         }
-//     }
-//
-//     let denoised_peaks = cluster_vecs
-//         .iter_mut()
-//         .map(|(cluster_intensity, cluster_mz, cluster_mobility)| {
-//             let cluster_intensity = cluster_intensity; // Note not averaged
-//             let cluster_mz = *cluster_mz / *cluster_intensity as f64;
-//             let cluster_mobility = *cluster_mobility / *cluster_intensity as f64;
-//             frames::TimsPeak {
-//                 intensity: u32::try_from(*cluster_intensity).ok().unwrap(),
-//                 mz: cluster_mz,
-//                 mobility: cluster_mobility as f32,
-//             }
-//         })
-//         .collect::<Vec<_>>();
-//
-//     // TODO add an option to keep noise points
-//
-//     frames::DenseFrame {
-//         raw_peaks: denoised_peaks,
-//         index: out_index,
-//         rt: out_rt,
-//         frame_type: out_frame_type,
-//         sorted: None,
-//     }
-// }
-
-use crate::space_generics::NDPointConverter;
 
 /// A trait for aggregating points into a single point.
 /// This is used for the final step of dbscan.
@@ -333,9 +252,8 @@ fn _inner<T: Copy, G: ClusterAggregator<T, R>, R>(
 }
 
 // TODO: rename prefiltered peaks argument!
-// TODO implement a version that takes a sparse distance matric.
+// TODO implement a version that takes a sparse distance matrix.
 
-// fn DBSCAN<C: NDPointConverter<T, D>, R, G: Default + ClusterAggregator<T,R,G>, T: HasIntensity<u32>, const D: usize>(
 pub fn dbscan_generic<
     C: NDPointConverter<T, N>,
     R: Send,

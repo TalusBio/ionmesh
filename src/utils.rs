@@ -164,6 +164,8 @@ pub struct RollingSDCalculator<T, W> {
     m2: T,
     m3: T,
     m4: T,
+    min: Option<T>,
+    max: Option<T>,
 }
 
 // TODO evaluate the numeric accuracy of this implementation.
@@ -205,6 +207,8 @@ where
             m2: 0.as_(),
             m3: 0.as_(),
             m4: 0.as_(),
+            min: Some(x),
+            max: Some(x),
         });
     }
 
@@ -238,6 +242,14 @@ where
 
     pub fn get_kurtosis(&self) -> T {
         self.w_sum.as_() * self.m4 / (self.m2 * self.m2)
+    }
+
+    pub fn get_min(&self) -> Option<T> {
+        self.min
+    }
+
+    pub fn get_max(&self) -> Option<T> {
+        self.max
     }
 
     pub fn merge(&mut self, other: &Self) {
@@ -279,6 +291,18 @@ where
                 / (combined_weight_as * combined_weight_as)
                 + 4.0.as_() * delta * (a_weight * b.m3 - b_weight * a.m3) / combined_weight_as;
 
+        let mut min_use = a.min;
+        if b.min < min_use || min_use.is_none() {
+            min_use = b.min;
+        }
+
+        let mut max_use = a.max;
+        if b.max > max_use || max_use.is_none() {
+            max_use = b.max;
+        }
+
+        self.min = min_use;
+        self.max = max_use;
         self.n = combined_n;
         self.w_sum = combined_weight;
         self.sqare_w_sum = a.sqare_w_sum + b.sqare_w_sum;
@@ -399,6 +423,9 @@ mod test_rolling_sd {
         sd_calc.add(19.0, 100);
         assert_close(sd_calc.get_mean(), 9.0);
         assert_close(sd_calc.get_variance(), 10.0);
+
+        assert_close(sd_calc.max.unwrap(), 19.0);
+        assert_close(sd_calc.min.unwrap(), 8.0);
 
         // Now using ascombes QY to check for weighted values
         // With respect to last, the weight type should not influence the result

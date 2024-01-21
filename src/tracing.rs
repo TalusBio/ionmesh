@@ -9,15 +9,36 @@ use crate::visualization::RerunPlottable;
 use log::{debug, error, info, warn};
 use rayon::iter::IntoParallelIterator;
 use rayon::prelude::*;
+use serde::Serialize;
+use std::error::Error;
 
 type QuadLowHigh = (f64, f64);
-#[derive(Debug, Clone, Copy)]
+
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct BaseTrace {
     pub mz: f64,
+    pub mz_std: f64,
     pub intensity: u64,
     pub rt: f32,
+    pub rt_std: f32,
+    pub rt_kurtosis: f32,
+    pub rt_skew: f32,
+    pub rt_start: f32,
+    pub rt_end: f32,
     pub mobility: f32,
+    pub num_agg: usize,
+
+    #[serde(skip_serializing)]
     pub quad_low_high: QuadLowHigh,
+}
+
+pub fn write_trace_csv(traces: &Vec<BaseTrace>, path: &String) -> Result<(), Box<dyn Error>> {
+    let mut wtr = csv::Writer::from_path(path).unwrap();
+    for trace in traces {
+        wtr.serialize(trace)?;
+    }
+    let _ = wtr.flush();
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -219,14 +240,29 @@ impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
 
     fn aggregate(&self) -> BaseTrace {
         let mz = self.mz.get_mean() as f64;
-        let rt = self.rt.get_mean() as f64;
-        let ims = self.ims.get_mean() as f64;
+        let rt = self.rt.get_mean() as f32;
+        let ims = self.ims.get_mean() as f32;
+        let min_rt = match self.rt.get_min() {
+            Some(x) => x as f32,
+            None => rt,
+        };
+        let max_rt = match self.rt.get_max() {
+            Some(x) => x as f32,
+            None => rt,
+        };
 
         BaseTrace {
             mz: mz,
+            mz_std: self.mz.get_sd() as f64,
             intensity: self.intensity.clone(),
-            rt: rt as f32,
-            mobility: ims as f32,
+            rt: rt,
+            rt_std: self.rt.get_sd() as f32,
+            rt_kurtosis: self.rt.get_kurtosis() as f32,
+            rt_skew: self.rt.get_skew() as f32,
+            rt_start: min_rt,
+            rt_end: max_rt,
+            mobility: ims,
+            num_agg: self.num_peaks,
             quad_low_high: self.quad_low_high.clone(),
         }
     }

@@ -9,3 +9,4 @@ pub mod tdf;
 pub mod tracing;
 pub mod utils;
 pub mod visualization;
+pub mod trace_combination;

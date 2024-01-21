@@ -7,7 +7,6 @@
 //     ('fragment_intensity', Float32)])
 //
 
-use apache_avro::{Codec, Error, Schema, Writer};
 mod dbscan;
 mod extraction;
 mod kdtree;
@@ -20,13 +19,13 @@ mod tdf;
 mod tracing;
 mod utils;
 mod visualization;
+mod trace_combination;
 
-extern crate pretty_env_logger;
-#[macro_use]
 extern crate log;
+extern crate pretty_env_logger;
 
 use clap::Parser;
-
+use log::info;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -36,8 +35,7 @@ struct Args {
     file: String,
 }
 
-
-fn main() -> Result<(), Error> {
+fn main() {
     let args = Args::parse();
 
     pretty_env_logger::init();
@@ -56,6 +54,14 @@ fn main() -> Result<(), Error> {
     let ims_scaling = 0.015;
 
     let traces = tracing::combine_traces(dia_frames, mz_scaling, rt_scaling, ims_scaling, &mut rec);
+
+    let out = tracing::write_trace_csv(&traces, &"traces_debug.csv".into());
+    match out {
+        Ok(_) => {}
+        Err(e) => {
+            println!("Error writing traces: {:?}", e);
+        }
+    }
 
     let quad_scaling = 5.;
     let pseudoscans =
@@ -83,6 +89,4 @@ fn main() -> Result<(), Error> {
     println!("rt_sd_stats: {:?}", rt_sd_stats);
 
     println!("npeaks: {:?}", npeaks);
-
-    Ok(())
 }
