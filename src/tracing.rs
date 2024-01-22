@@ -414,9 +414,10 @@ fn _combine_single_window_traces(
 
 // NOW ... combine traces into pseudospectra
 
+/// Peaks are mz-intensity pairs
 type Peak = (f64, u64);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PseudoSpectrum {
     pub peaks: Vec<Peak>,
     pub rt: f64,
@@ -425,6 +426,7 @@ pub struct PseudoSpectrum {
     pub ims: f64,
     pub ims_std: f64,
     pub ims_skew: f64,
+    pub quad_low_high: QuadLowHigh,
 }
 
 #[derive(Debug)]
@@ -433,6 +435,8 @@ pub struct PseudoSpectrumAggregator {
     intensity: u64,
     rt: RollingSDCalculator<f64, u64>,
     ims: RollingSDCalculator<f64, u64>,
+    quad_low: RollingSDCalculator<f32, u64>,
+    quad_high: RollingSDCalculator<f32, u64>,
 }
 
 impl Default for PseudoSpectrumAggregator {
@@ -443,6 +447,10 @@ impl Default for PseudoSpectrumAggregator {
             intensity: 0,
             rt: RollingSDCalculator::default(),
             ims: RollingSDCalculator::default(),
+            // I am adding here because in the future I want to support
+            // the weird pasef modes.
+            quad_low: RollingSDCalculator::default(),
+            quad_high: RollingSDCalculator::default(),
         }
     }
 }
@@ -453,7 +461,10 @@ impl<'a> ClusterAggregator<BaseTrace, PseudoSpectrum> for PseudoSpectrumAggregat
 
         self.rt.add(peak.rt as f64, peak.intensity);
         self.ims.add(peak.mobility as f64, peak.intensity);
+        self.quad_low.add(peak.quad_low_high.0 as f32, peak.intensity);
+        self.quad_high.add(peak.quad_low_high.1 as f32, peak.intensity);
         self.peaks.push((peak.mz, peak.intensity));
+
     }
 
     fn aggregate(&self) -> PseudoSpectrum {
@@ -463,6 +474,10 @@ impl<'a> ClusterAggregator<BaseTrace, PseudoSpectrum> for PseudoSpectrumAggregat
         let ims_skew = self.ims.get_skew() as f64;
         let rt_std = self.rt.get_sd() as f64;
         let ims_std = self.ims.get_sd() as f64;
+        let quad_low_high = (
+            self.quad_low.get_mean() as f64,
+            self.quad_high.get_mean() as f64,
+        );
 
         PseudoSpectrum {
             peaks: self.peaks.clone(),
@@ -472,6 +487,7 @@ impl<'a> ClusterAggregator<BaseTrace, PseudoSpectrum> for PseudoSpectrumAggregat
             ims_std: ims_std,
             rt_skew: rt_skew,
             ims_skew: ims_skew,
+            quad_low_high: quad_low_high,
         }
     }
 
@@ -480,15 +496,21 @@ impl<'a> ClusterAggregator<BaseTrace, PseudoSpectrum> for PseudoSpectrumAggregat
         peaks.extend(other.peaks.clone());
         let mut rt = self.rt.clone();
         let mut ims = self.ims.clone();
+        let mut quad_low = self.quad_low.clone();
+        let mut quad_high = self.quad_high.clone();
 
         rt.merge(&other.rt);
         ims.merge(&other.ims);
+        quad_low.merge(&other.quad_low);
+        quad_high.merge(&other.quad_high);
 
         let out = PseudoSpectrumAggregator {
             peaks: peaks,
             intensity: self.intensity + other.intensity,
             rt: rt,
             ims: ims,
+            quad_low: quad_low,
+            quad_high: quad_high,
         };
         out
     }
@@ -522,7 +544,7 @@ pub fn combine_pseudospectra(
 ) -> Vec<PseudoSpectrum> {
     let timer = utils::ContextTimer::new("Combining pseudospectra", true, utils::LogLevel::INFO);
 
-    let min_n = 5;
+    let min_n = 6;
     let min_intensity = 200;
     let converter = BaseTraceConverter {
         rt_scaling,
