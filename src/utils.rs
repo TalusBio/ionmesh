@@ -6,8 +6,10 @@ pub struct ContextTimer {
     start: Instant,
     name: String,
     level: LogLevel,
+    report_start: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum LogLevel {
     INFO,
     DEBUG,
@@ -20,6 +22,7 @@ impl ContextTimer {
             start: Instant::now(),
             name: name.to_string(),
             level,
+            report_start,
         };
         if report_start {
             out.start_msg();
@@ -56,6 +59,10 @@ impl ContextTimer {
             ),
         }
         duration
+    }
+
+    pub fn start_sub_timer(&self, name: &str) -> ContextTimer {
+        ContextTimer::new(&format!("{}::{}", self.name, name), self.report_start, self.level)
     }
 }
 

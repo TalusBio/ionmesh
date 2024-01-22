@@ -63,12 +63,61 @@ impl HasIntensity<u32> for TimeTimsPeak {
     }
 }
 
+pub fn iou(a: &(f32, f32), b: &(f32, f32)) -> f32
+{
+    let (a_start, a_end) = a;
+    let (b_start, b_end) = b;
+
+    let intersection = if a_start > b_end || b_start > a_end {
+        0.
+    } else {
+        let start = a_start.max(*b_start);
+        let end = a_end.min(*b_end);
+        end - start
+    };
+
+    let union = (a_end - a_start) + (b_end - b_start) - intersection;
+
+    intersection / union
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_giou() {
+        let a = (0., 10.);
+        let b = (5., 15.);
+        let c = (10., 15.);
+
+        let giou_ab = iou(&a, &b);
+        assert!(giou_ab > 0.33);
+        assert!(giou_ab < 0.34);
+
+        let giou_ac = iou(&a, &c);
+        assert!(giou_ac == 0.);
+    }
+}
+
+
+impl BaseTrace {
+    pub fn rt_iou(&self, other: &BaseTrace) -> f32 {
+        let a = (self.rt_start, self.rt_end);
+        let b = (other.rt_start, other.rt_end);
+        iou(&a, &b)
+    }
+}
+
+
 impl HasIntensity<u64> for BaseTrace {
     fn intensity(&self) -> u64 {
         self.intensity
     }
 }
 
+
+// TODO consider if this trait is actually requried ...
 impl TraceLike<f32> for BaseTrace {
     fn get_mz(&self) -> f64 {
         self.mz

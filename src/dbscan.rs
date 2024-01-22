@@ -56,7 +56,7 @@ use num::cast::AsPrimitive;
 // 3. Use an intensity threshold intead of a minimum number of neighbors.
 
 #[derive(Debug, PartialEq, Clone)]
-enum ClusterLabel<T> {
+pub enum ClusterLabel<T> {
     Unassigned,
     Noise,
     Cluster(T),
@@ -69,6 +69,9 @@ impl HasIntensity<u32> for frames::TimsPeak {
 }
 
 // TODO: rename quad_points, since this no longer uses a quadtree.
+// TODO: refactor to take a filter function instead of requiting
+//       a min intensity and an intensity trait.
+// TODO: rename the pre-filtered...
 
 // THIS IS A BOTTLENECK FUNCTION
 fn _dbscan<
@@ -108,11 +111,10 @@ fn _dbscan<
         }
 
         // Q: Do I need to care about overflows here? - Sebastian
-        let mut neighbor_intensity_total: u64 = 0;
-
-        for i in neighbors.iter() {
-            neighbor_intensity_total += prefiltered_peaks[**i].intensity().as_();
-        }
+        let neighbor_intensity_total = neighbors
+            .iter()
+            .map(|i| prefiltered_peaks[**i].intensity().as_())
+            .sum::<u64>();
 
         if neighbor_intensity_total < min_intensity {
             cluster_labels[point_index] = ClusterLabel::Noise;
@@ -140,7 +142,7 @@ fn _dbscan<
 
             let neighbors = tree.query_ndpoint(&quad_points[*neighbor]);
 
-            let neighbor_intensity = prefiltered_peaks[neighbor_index].intensity();
+            let query_intensity = prefiltered_peaks[neighbor_index].intensity();
             let neighbor_intensity_total = neighbors
                 .iter()
                 .map(|i| prefiltered_peaks[**i].intensity().as_())
@@ -162,7 +164,7 @@ fn _dbscan<
                     .into_iter()
                     .filter(|i| {
                         let going_downhill =
-                            prefiltered_peaks[**i].intensity() <= neighbor_intensity;
+                            prefiltered_peaks[**i].intensity() <= query_intensity;
 
                         let p = &quad_points[**i];
                         // Using minkowski distance with p = 1, manhattan distance.
@@ -251,6 +253,110 @@ fn _inner<T: Copy, G: ClusterAggregator<T, R>, R>(
     cluster_vecs
 }
 
+
+pub fn aggregate_clusters<
+    T: HasIntensity<Z> + Send + Clone + Copy,
+    G: Sync + Send + ClusterAggregator<T, R>,
+    R: Send,
+    F: Fn() -> G + Send + Sync,
+    Z: AsPrimitive<u64>
+        + Send
+        + Sync
+        + Add<Output = Z>
+        + PartialOrd
+        + Div<Output = Z>
+        + Mul<Output = Z>
+        + Default
+        + Sub<Output = Z>,
+
+>(tot_clusters: u64, cluster_labels: Vec<ClusterLabel<u64>>, elements: Vec<T>, def_aggregator: F) -> Vec<R>{
+    let cluster_vecs: Vec<G> = if cfg!(feature = "par_dataprep") {
+        let timer = utils::ContextTimer::new(
+            "dbscan_generic::par_aggregation",
+            true,
+            utils::LogLevel::TRACE,
+        );
+        let out: Vec<(usize, T)> = cluster_labels
+            .iter()
+            .enumerate()
+            .map(|(point_index, x)| match x {
+                ClusterLabel::Cluster(cluster_id) => {
+                    let cluster_idx = *cluster_id as usize - 1;
+                    let tmp: Option<(usize, T)> =
+                        Some((cluster_idx, elements[point_index].clone()));
+                    tmp
+                }
+                _ => None,
+            })
+            .filter(|x| x.is_some())
+            .map(|x| x.unwrap())
+            .collect();
+
+        let run_closure =
+            |chunk: Vec<(usize, T)>| _inner(&chunk, tot_clusters.clone() as usize, &def_aggregator);
+        let chunk_size = (out.len() / rayon::current_num_threads()) / 2;
+        let chunk_size = chunk_size.max(1);
+        let out2 = out
+            .into_par_iter()
+            .chunks(chunk_size)
+            .map(run_closure)
+            .reduce(
+                || Vec::new(),
+                |l, r| {
+                    if l.len() == 0 {
+                        r
+                    } else {
+                        l.into_iter()
+                            .zip(r.into_iter())
+                            .map(|(l, r)| match (l, r) {
+                                (Some(l), Some(r)) => {
+                                    let o = l.combine(r);
+                                    Some(o)
+                                }
+                                (Some(l), None) => Some(l),
+                                (None, Some(r)) => Some(r),
+                                (None, None) => None,
+                            })
+                            .collect::<Vec<_>>()
+                    }
+                },
+            );
+
+        let cluster_vecs = out2
+            .into_iter()
+            .filter(|x| x.is_some())
+            .map(|x| x.unwrap())
+            .collect::<Vec<_>>();
+        timer.stop();
+        cluster_vecs
+    } else {
+        let mut cluster_vecs: Vec<G> = Vec::with_capacity(tot_clusters as usize);
+        for _ in (0..tot_clusters).into_iter() {
+            cluster_vecs.push(def_aggregator());
+        }
+        for (point_index, cluster_label) in cluster_labels.iter().enumerate() {
+            match cluster_label {
+                ClusterLabel::Cluster(cluster_id) => {
+                    let cluster_idx = *cluster_id as usize - 1;
+                    cluster_vecs[cluster_idx].add(&(elements[point_index]));
+                }
+                _ => {}
+            }
+        }
+        cluster_vecs
+    };
+
+    let timer =
+        utils::ContextTimer::new("dbscan_generic::aggregation", true, utils::LogLevel::TRACE);
+    let out = cluster_vecs
+        .par_iter()
+        .map(|cluster| cluster.aggregate())
+        .collect::<Vec<_>>();
+    timer.stop();
+
+    out
+}
+
 // TODO: rename prefiltered peaks argument!
 // TODO implement a version that takes a sparse distance matrix.
 
@@ -306,7 +412,7 @@ pub fn dbscan_generic<
     timer.stop();
 
     let timer = utils::ContextTimer::new("dbscan_generic::dbscan", true, utils::LogLevel::TRACE);
-    let (cluster_id, cluster_labels) = _dbscan(
+    let (tot_clusters, cluster_labels) = _dbscan(
         &tree,
         &prefiltered_peaks,
         &ndpoints,
@@ -316,91 +422,8 @@ pub fn dbscan_generic<
     );
     timer.stop();
 
-    let cluster_vecs: Vec<G> = if cfg!(feature = "par_dataprep") {
-        let timer = utils::ContextTimer::new(
-            "dbscan_generic::par_aggregation",
-            true,
-            utils::LogLevel::TRACE,
-        );
-        let out: Vec<(usize, T)> = cluster_labels
-            .iter()
-            .enumerate()
-            .map(|(point_index, x)| match x {
-                ClusterLabel::Cluster(cluster_id) => {
-                    let cluster_idx = *cluster_id as usize - 1;
-                    let tmp: Option<(usize, T)> =
-                        Some((cluster_idx, prefiltered_peaks[point_index].clone()));
-                    tmp
-                }
-                _ => None,
-            })
-            .filter(|x| x.is_some())
-            .map(|x| x.unwrap())
-            .collect();
+    aggregate_clusters(tot_clusters, cluster_labels, prefiltered_peaks, def_aggregator)
 
-        let run_closure =
-            |chunk: Vec<(usize, T)>| _inner(&chunk, cluster_id.clone() as usize, &def_aggregator);
-        let chunk_size = (out.len() / rayon::current_num_threads()) / 2;
-        let chunk_size = chunk_size.max(1);
-        let out2 = out
-            .into_par_iter()
-            .chunks(chunk_size)
-            .map(run_closure)
-            .reduce(
-                || Vec::new(),
-                |l, r| {
-                    if l.len() == 0 {
-                        r
-                    } else {
-                        l.into_iter()
-                            .zip(r.into_iter())
-                            .map(|(l, r)| match (l, r) {
-                                (Some(l), Some(r)) => {
-                                    let o = l.combine(r);
-                                    Some(o)
-                                }
-                                (Some(l), None) => Some(l),
-                                (None, Some(r)) => Some(r),
-                                (None, None) => None,
-                            })
-                            .collect::<Vec<_>>()
-                    }
-                },
-            );
-
-        let cluster_vecs = out2
-            .into_iter()
-            .filter(|x| x.is_some())
-            .map(|x| x.unwrap())
-            .collect::<Vec<_>>();
-        timer.stop();
-        cluster_vecs
-    } else {
-        let mut cluster_vecs: Vec<G> = Vec::with_capacity(cluster_id as usize);
-        for _ in (0..cluster_id).into_iter() {
-            cluster_vecs.push(def_aggregator());
-        }
-        for (point_index, cluster_label) in cluster_labels.iter().enumerate() {
-            match cluster_label {
-                ClusterLabel::Cluster(cluster_id) => {
-                    let cluster_idx = *cluster_id as usize - 1;
-                    cluster_vecs[cluster_idx].add(&(prefiltered_peaks[point_index]));
-                }
-                _ => {}
-            }
-        }
-        cluster_vecs
-    };
-
-    let timer =
-        utils::ContextTimer::new("dbscan_generic::aggregation", true, utils::LogLevel::TRACE);
-    let out = cluster_vecs
-        .par_iter()
-        .map(|cluster| cluster.aggregate())
-        .collect::<Vec<_>>();
-    timer.stop();
-
-    out
 }
 
 struct DenseFrameConverter {
