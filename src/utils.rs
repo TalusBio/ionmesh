@@ -62,14 +62,18 @@ impl ContextTimer {
     }
 
     pub fn start_sub_timer(&self, name: &str) -> ContextTimer {
-        ContextTimer::new(&format!("{}::{}", self.name, name), self.report_start, self.level)
+        ContextTimer::new(
+            &format!("{}::{}", self.name, name),
+            self.report_start,
+            self.level,
+        )
     }
 }
 
-pub fn within_distance_apply<T, R, W>(
+pub fn within_distance_apply<T, R: Clone, W>(
     elems: &[T],
     key: &dyn Fn(&T) -> R,
-    max_dist: R,
+    max_dist: &R,
     out_func: &dyn Fn(&usize, &usize) -> W,
 ) -> Vec<W>
 where
@@ -93,6 +97,7 @@ where
     // 2. Slide the right index until the mz difference while sliding is greater than the mz tolerance.
     // 3. If the number of points between the left and right index is greater than the minimum number of points, add them to the prefiltered peaks.
 
+    let max_dist = max_dist.clone();
     let elems_len = elems.len();
     let elems_len_minus_one = elems_len - 1;
     for (curr_i, elem) in elems.iter().enumerate() {
@@ -136,7 +141,7 @@ mod test_count_neigh {
         let elems = vec![0.0, 1.0, 2.0, 3.0, 4.0];
 
         let prefiltered_peaks_bool =
-            within_distance_apply(&elems, &|x| *x, 1.1, &|i_right, i_left| {
+            within_distance_apply(&elems, &|x| *x, &1.1, &|i_right, i_left| {
                 (i_right - i_left) >= 3
             });
 

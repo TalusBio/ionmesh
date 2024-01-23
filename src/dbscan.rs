@@ -85,13 +85,15 @@ fn _dbscan<
         + Copy
         + PartialOrd<I>
         + AsPrimitive<u64>,
+    E: HasIntensity<I>,
 >(
     tree: &'a impl IndexedPoints<'a, N, usize>,
-    prefiltered_peaks: &Vec<impl HasIntensity<I>>,
+    prefiltered_peaks: &Vec<E>,
     quad_points: &Vec<NDPoint<N>>,
     min_n: usize,
     min_intensity: u64,
     intensity_sorted_indices: &Vec<(usize, I)>,
+    filter_fun: Option<&impl Fn(&E, &E) -> bool>,
 ) -> (u64, Vec<ClusterLabel<u64>>) {
     let mut cluster_labels = vec![ClusterLabel::Unassigned; prefiltered_peaks.len()];
     let mut cluster_id = 0;
@@ -103,7 +105,16 @@ fn _dbscan<
         }
 
         let query_point = quad_points[point_index].clone();
-        let neighbors = tree.query_ndpoint(&query_point);
+        let mut neighbors = tree.query_ndpoint(&query_point);
+
+        if filter_fun.is_some() {
+            let filter_fun = filter_fun.unwrap();
+            let query_peak = &prefiltered_peaks[point_index];
+            neighbors = neighbors
+                .into_iter()
+                .filter(|i| filter_fun(query_peak, &prefiltered_peaks[**i]))
+                .collect::<Vec<_>>();
+        }
 
         if neighbors.len() < min_n {
             cluster_labels[point_index] = ClusterLabel::Noise;
@@ -140,7 +151,16 @@ fn _dbscan<
 
             cluster_labels[neighbor_index] = ClusterLabel::Cluster(cluster_id);
 
-            let neighbors = tree.query_ndpoint(&quad_points[*neighbor]);
+            let mut neighbors = tree.query_ndpoint(&quad_points[*neighbor]);
+
+            if filter_fun.is_some() {
+                let filter_fun = filter_fun.unwrap();
+                let query_peak = &prefiltered_peaks[point_index];
+                neighbors = neighbors
+                    .into_iter()
+                    .filter(|i| filter_fun(query_peak, &prefiltered_peaks[**i]))
+                    .collect::<Vec<_>>();
+            }
 
             let query_intensity = prefiltered_peaks[neighbor_index].intensity();
             let neighbor_intensity_total = neighbors
@@ -163,8 +183,7 @@ fn _dbscan<
                 let local_neighbors2 = local_neighbors
                     .into_iter()
                     .filter(|i| {
-                        let going_downhill =
-                            prefiltered_peaks[**i].intensity() <= query_intensity;
+                        let going_downhill = prefiltered_peaks[**i].intensity() <= query_intensity;
 
                         let p = &quad_points[**i];
                         // Using minkowski distance with p = 1, manhattan distance.
@@ -253,7 +272,6 @@ fn _inner<T: Copy, G: ClusterAggregator<T, R>, R>(
     cluster_vecs
 }
 
-
 pub fn aggregate_clusters<
     T: HasIntensity<Z> + Send + Clone + Copy,
     G: Sync + Send + ClusterAggregator<T, R>,
@@ -268,8 +286,12 @@ pub fn aggregate_clusters<
         + Mul<Output = Z>
         + Default
         + Sub<Output = Z>,
-
->(tot_clusters: u64, cluster_labels: Vec<ClusterLabel<u64>>, elements: Vec<T>, def_aggregator: F) -> Vec<R>{
+>(
+    tot_clusters: u64,
+    cluster_labels: Vec<ClusterLabel<u64>>,
+    elements: Vec<T>,
+    def_aggregator: F,
+) -> Vec<R> {
     let cluster_vecs: Vec<G> = if cfg!(feature = "par_dataprep") {
         let timer = utils::ContextTimer::new(
             "dbscan_generic::par_aggregation",
@@ -383,6 +405,7 @@ pub fn dbscan_generic<
     min_n: usize,
     min_intensity: u64,
     def_aggregator: F,
+    extra_filter_fun: Option<&impl Fn(&T, &T) -> bool>,
 ) -> Vec<R> {
     let timer =
         utils::ContextTimer::new("dbscan_generic::conversion", true, utils::LogLevel::TRACE);
@@ -419,11 +442,16 @@ pub fn dbscan_generic<
         min_n,
         min_intensity,
         &intensity_sorted_indices,
+        extra_filter_fun,
     );
     timer.stop();
 
-    aggregate_clusters(tot_clusters, cluster_labels, prefiltered_peaks, def_aggregator)
-
+    aggregate_clusters(
+        tot_clusters,
+        cluster_labels,
+        prefiltered_peaks,
+        def_aggregator,
+    )
 }
 
 struct DenseFrameConverter {
@@ -444,8 +472,8 @@ impl NDPointConverter<TimsPeak, 2> for DenseFrameConverter {
 
 pub fn dbscan_denseframes(
     mut denseframe: frames::DenseFrame,
-    mz_scaling: f64,
-    ims_scaling: f32,
+    mz_scaling: &f64,
+    ims_scaling: &f32,
     min_n: usize,
     min_intensity: u64,
 ) -> frames::DenseFrame {
@@ -477,12 +505,17 @@ pub fn dbscan_denseframes(
     };
 
     let converter = DenseFrameConverter {
-        mz_scaling,
-        ims_scaling,
+        mz_scaling: mz_scaling.clone(),
+        ims_scaling: ims_scaling.clone(),
     };
-    let peak_vec = dbscan_generic(converter, prefiltered_peaks, min_n, min_intensity, &|| {
-        TimsPeakAggregator::default()
-    });
+    let peak_vec = dbscan_generic(
+        converter,
+        prefiltered_peaks,
+        min_n,
+        min_intensity,
+        &|| TimsPeakAggregator::default(),
+        None::<&Box<dyn Fn(&TimsPeak, &TimsPeak) -> bool>>,
+    );
 
     frames::DenseFrame {
         raw_peaks: peak_vec,

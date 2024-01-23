@@ -9,6 +9,11 @@ cargo build --release  --features par_dataprep
 ./target/release/peakachu --help
 ```
 
+## Ideas
+ 
+- Add offset 
+- keep unagregated peaks
+
 ## Performance
 
 ```

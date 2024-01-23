@@ -9,8 +9,10 @@ use crate::visualization::RerunPlottable;
 use log::{debug, error, info, warn};
 use rayon::iter::IntoParallelIterator;
 use rayon::prelude::*;
+use rerun::Time;
 use serde::Serialize;
 use std::error::Error;
+use std::io::Write;
 
 type QuadLowHigh = (f64, f64);
 
@@ -27,9 +29,8 @@ pub struct BaseTrace {
     pub rt_end: f32,
     pub mobility: f32,
     pub num_agg: usize,
-
-    #[serde(skip_serializing)]
-    pub quad_low_high: QuadLowHigh,
+    pub quad_low: f32,
+    pub quad_high: f32,
 }
 
 pub fn write_trace_csv(traces: &Vec<BaseTrace>, path: &String) -> Result<(), Box<dyn Error>> {
@@ -63,8 +64,7 @@ impl HasIntensity<u32> for TimeTimsPeak {
     }
 }
 
-pub fn iou(a: &(f32, f32), b: &(f32, f32)) -> f32
-{
+pub fn iou(a: &(f32, f32), b: &(f32, f32)) -> f32 {
     let (a_start, a_end) = a;
     let (b_start, b_end) = b;
 
@@ -100,7 +100,6 @@ mod tests {
     }
 }
 
-
 impl BaseTrace {
     pub fn rt_iou(&self, other: &BaseTrace) -> f32 {
         let a = (self.rt_start, self.rt_end);
@@ -109,13 +108,11 @@ impl BaseTrace {
     }
 }
 
-
 impl HasIntensity<u64> for BaseTrace {
     fn intensity(&self) -> u64 {
         self.intensity
     }
 }
-
 
 // TODO consider if this trait is actually requried ...
 impl TraceLike<f32> for BaseTrace {
@@ -141,6 +138,8 @@ pub fn combine_traces(
     mz_scaling: f64,
     rt_scaling: f64,
     ims_scaling: f64,
+    min_n: usize,
+    min_intensity: u32,
     record_stream: &mut Option<rerun::RecordingStream>,
 ) -> Vec<BaseTrace> {
     // Grouping by quad windows + group id
@@ -185,7 +184,16 @@ pub fn combine_traces(
     // Combine the traces
     let out: Vec<BaseTrace> = grouped_windows
         .into_par_iter()
-        .map(|x| _combine_single_window_traces(x, mz_scaling, rt_scaling, ims_scaling))
+        .map(|x| {
+            _combine_single_window_traces(
+                x,
+                mz_scaling,
+                rt_scaling,
+                ims_scaling,
+                min_n,
+                min_intensity,
+            )
+        })
         .flatten()
         .collect();
 
@@ -312,7 +320,8 @@ impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
             rt_end: max_rt,
             mobility: ims,
             num_agg: self.num_peaks,
-            quad_low_high: self.quad_low_high.clone(),
+            quad_low: self.quad_low_high.0 as f32,
+            quad_high: self.quad_low_high.1 as f32,
         }
     }
 
@@ -382,10 +391,10 @@ fn _combine_single_window_traces(
     mz_scaling: f64,
     rt_scaling: f64,
     ims_scaling: f64,
+    min_n: usize,
+    min_intensity: u32,
 ) -> Vec<BaseTrace> {
     debug!("Prefiltered peaks: {}", prefiltered_peaks.len());
-    let min_n = 3;
-    let min_intensity = 200;
     let converter = TimeTimsPeakConverter {
         mz_scaling,
         rt_scaling,
@@ -396,17 +405,22 @@ fn _combine_single_window_traces(
         prefiltered_peaks[0].quad_low_high.1,
     );
     warn!("Assuming all quad windows are the same!!! (fine for diaPASEF)");
-    let foo: Vec<BaseTrace> =
-        dbscan_generic(converter, prefiltered_peaks, min_n, min_intensity, &|| {
-            TraceAggregator {
-                mz: RollingSDCalculator::default(),
-                intensity: 0,
-                rt: RollingSDCalculator::default(),
-                ims: RollingSDCalculator::default(),
-                num_peaks: 0,
-                quad_low_high: window_quad_low_high.clone(),
-            }
-        });
+
+    let foo: Vec<BaseTrace> = dbscan_generic(
+        converter,
+        prefiltered_peaks,
+        min_n,
+        min_intensity.into(),
+        &|| TraceAggregator {
+            mz: RollingSDCalculator::default(),
+            intensity: 0,
+            rt: RollingSDCalculator::default(),
+            ims: RollingSDCalculator::default(),
+            num_peaks: 0,
+            quad_low_high: window_quad_low_high.clone(),
+        },
+        None::<&Box<dyn Fn(&TimeTimsPeak, &TimeTimsPeak) -> bool>>,
+    );
 
     debug!("Combined traces: {}", foo.len());
     foo
@@ -420,13 +434,16 @@ type Peak = (f64, u64);
 #[derive(Debug, Clone, Serialize)]
 pub struct PseudoSpectrum {
     pub peaks: Vec<Peak>,
-    pub rt: f64,
-    pub rt_std: f64,
-    pub rt_skew: f64,
-    pub ims: f64,
-    pub ims_std: f64,
-    pub ims_skew: f64,
-    pub quad_low_high: QuadLowHigh,
+    pub rt: f32,
+    pub rt_min: f32,
+    pub rt_max: f32,
+    pub rt_std: f32,
+    pub rt_skew: f32,
+    pub ims: f32,
+    pub ims_std: f32,
+    pub ims_skew: f32,
+    pub quad_low: f32,
+    pub quad_high: f32,
 }
 
 #[derive(Debug)]
@@ -461,33 +478,33 @@ impl<'a> ClusterAggregator<BaseTrace, PseudoSpectrum> for PseudoSpectrumAggregat
 
         self.rt.add(peak.rt as f64, peak.intensity);
         self.ims.add(peak.mobility as f64, peak.intensity);
-        self.quad_low.add(peak.quad_low_high.0 as f32, peak.intensity);
-        self.quad_high.add(peak.quad_low_high.1 as f32, peak.intensity);
+        self.quad_low.add(peak.quad_low, peak.intensity);
+        self.quad_high.add(peak.quad_high, peak.intensity);
         self.peaks.push((peak.mz, peak.intensity));
-
     }
 
     fn aggregate(&self) -> PseudoSpectrum {
-        let rt = self.rt.get_mean() as f64;
-        let ims = self.ims.get_mean() as f64;
-        let rt_skew = self.rt.get_skew() as f64;
-        let ims_skew = self.ims.get_skew() as f64;
-        let rt_std = self.rt.get_sd() as f64;
-        let ims_std = self.ims.get_sd() as f64;
-        let quad_low_high = (
-            self.quad_low.get_mean() as f64,
-            self.quad_high.get_mean() as f64,
-        );
+        // TECHNICALLY this can error out if there are no elements...
+        let rt = self.rt.get_mean() as f32;
+        let ims = self.ims.get_mean() as f32;
+        let rt_skew = self.rt.get_skew() as f32;
+        let ims_skew = self.ims.get_skew() as f32;
+        let rt_std = self.rt.get_sd() as f32;
+        let ims_std = self.ims.get_sd() as f32;
+        let quad_low_high = (self.quad_low.get_mean(), self.quad_high.get_mean());
 
         PseudoSpectrum {
             peaks: self.peaks.clone(),
             rt: rt,
             ims: ims,
+            rt_min: self.rt.get_min().unwrap() as f32,
+            rt_max: self.rt.get_max().unwrap() as f32,
             rt_std: rt_std,
             ims_std: ims_std,
             rt_skew: rt_skew,
             ims_skew: ims_skew,
-            quad_low_high: quad_low_high,
+            quad_low: quad_low_high.0,
+            quad_high: quad_low_high.1,
         }
     }
 
@@ -528,8 +545,8 @@ impl NDPointConverter<BaseTrace, 4> for BaseTraceConverter {
             values: [
                 (elem.rt as f64 / self.rt_scaling) as Float,
                 (elem.mobility as f64 / self.ims_scaling) as Float,
-                (elem.quad_low_high.0 / self.quad_scaling) as Float,
-                (elem.quad_low_high.1 / self.quad_scaling) as Float,
+                (elem.quad_low as f64 / self.quad_scaling) as Float,
+                (elem.quad_high as f64 / self.quad_scaling) as Float,
             ],
         }
     }
@@ -540,21 +557,31 @@ pub fn combine_pseudospectra(
     rt_scaling: f64,
     ims_scaling: f64,
     quad_scaling: f64,
+    min_intensity: u32,
+    min_n: usize,
     record_stream: &mut Option<rerun::RecordingStream>,
 ) -> Vec<PseudoSpectrum> {
     let timer = utils::ContextTimer::new("Combining pseudospectra", true, utils::LogLevel::INFO);
 
-    let min_n = 6;
-    let min_intensity = 200;
     let converter = BaseTraceConverter {
         rt_scaling,
         ims_scaling,
         quad_scaling,
     };
 
-    let foo: Vec<PseudoSpectrum> = dbscan_generic(converter, traces, min_n, min_intensity, &|| {
-        PseudoSpectrumAggregator::default()
-    });
+    const IOU_THRESH: f32 = 0.5;
+    let extra_filter_fun = |x: &BaseTrace, y: &BaseTrace| {
+        let iou = x.rt_iou(y);
+        iou > IOU_THRESH
+    };
+    let foo: Vec<PseudoSpectrum> = dbscan_generic(
+        converter,
+        traces,
+        min_n,
+        min_intensity.into(),
+        &|| PseudoSpectrumAggregator::default(),
+        Some(&extra_filter_fun),
+    );
 
     info!("Combined pseudospectra: {}", foo.len());
     timer.stop();
@@ -567,10 +594,14 @@ pub fn combine_pseudospectra(
     foo
 }
 
-//
-//
-//
-// pub fn combine_pseudocspectra(traces: Vec<BaseTrace>, rt_scaling: f64, ims_scaling: f64, record_stream: &mut Option<rerun::RecordingStream>) {
-//
-//
-// }
+pub fn write_pseudoscans_json(
+    pseudocscans: &[PseudoSpectrum],
+    out_path: String,
+) -> Result<(), Box<dyn Error>> {
+    info!("Writting pseudoscans to json");
+    let json = serde_json::to_string(&pseudocscans)?;
+
+    let mut file = std::fs::File::create(out_path)?;
+    file.write(json.as_bytes())?;
+    Ok(())
+}
