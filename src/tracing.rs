@@ -10,7 +10,7 @@ use log::{debug, error, info, warn};
 use rayon::iter::IntoParallelIterator;
 use rayon::prelude::*;
 use rerun::Time;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::io::Write;
 
@@ -65,18 +65,14 @@ impl HasIntensity<u32> for TimeTimsPeak {
 }
 
 pub fn iou(a: &(f32, f32), b: &(f32, f32)) -> f32 {
-    let (a_start, a_end) = a;
-    let (b_start, b_end) = b;
+    let min_ends = a.1.min(b.1);
+    let max_starts = a.0.max(b.0);
 
-    let intersection = if a_start > b_end || b_start > a_end {
-        0.
-    } else {
-        let start = a_start.max(*b_start);
-        let end = a_end.min(*b_end);
-        end - start
-    };
+    let max_ends = a.1.max(b.1);
+    let min_starts = a.0.min(b.0);
 
-    let union = (a_end - a_start) + (b_end - b_start) - intersection;
+    let intersection = min_ends - max_starts;
+    let union = max_ends - min_starts;
 
     intersection / union
 }
@@ -90,6 +86,7 @@ mod tests {
         let a = (0., 10.);
         let b = (5., 15.);
         let c = (10., 15.);
+        let d = (15., 20.);
 
         let giou_ab = iou(&a, &b);
         assert!(giou_ab > 0.33);
@@ -97,13 +94,19 @@ mod tests {
 
         let giou_ac = iou(&a, &c);
         assert!(giou_ac == 0.);
+
+        let giou_ad = iou(&a, &d);
+        assert_eq!(giou_ad, -0.25);
     }
 }
 
 impl BaseTrace {
     pub fn rt_iou(&self, other: &BaseTrace) -> f32 {
-        let a = (self.rt_start, self.rt_end);
-        let b = (other.rt_start, other.rt_end);
+        // TODO change this to be the measured peak width ...
+        let width_a = self.rt_std.max(0.7);
+        let width_b: f32 = other.rt_std.max(0.7);
+        let a = (self.rt - width_a, self.rt + width_a);
+        let b = (other.rt - width_b, other.rt + width_b);
         iou(&a, &b)
     }
 }
@@ -420,6 +423,7 @@ fn _combine_single_window_traces(
             quad_low_high: window_quad_low_high.clone(),
         },
         None::<&Box<dyn Fn(&TimeTimsPeak, &TimeTimsPeak) -> bool>>,
+        None,
     );
 
     debug!("Combined traces: {}", foo.len());
@@ -431,7 +435,7 @@ fn _combine_single_window_traces(
 /// Peaks are mz-intensity pairs
 type Peak = (f64, u64);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PseudoSpectrum {
     pub peaks: Vec<Peak>,
     pub rt: f32,
@@ -569,9 +573,10 @@ pub fn combine_pseudospectra(
         quad_scaling,
     };
 
-    const IOU_THRESH: f32 = 0.5;
+    const IOU_THRESH: f32 = 0.2;
     let extra_filter_fun = |x: &BaseTrace, y: &BaseTrace| {
         let iou = x.rt_iou(y);
+        // println!("iou: {}:{} vs {}:{} {}", x.rt, x.rt_std, y.rt, y.rt_std, iou);
         iou > IOU_THRESH
     };
     let foo: Vec<PseudoSpectrum> = dbscan_generic(
@@ -581,6 +586,7 @@ pub fn combine_pseudospectra(
         min_intensity.into(),
         &|| PseudoSpectrumAggregator::default(),
         Some(&extra_filter_fun),
+        Some(utils::LogLevel::INFO),
     );
 
     info!("Combined pseudospectra: {}", foo.len());
@@ -599,9 +605,27 @@ pub fn write_pseudoscans_json(
     out_path: String,
 ) -> Result<(), Box<dyn Error>> {
     info!("Writting pseudoscans to json");
-    let json = serde_json::to_string(&pseudocscans)?;
-
     let mut file = std::fs::File::create(out_path)?;
-    file.write(json.as_bytes())?;
+    file.write("[".as_bytes())?;
+    let mut is_first = true;
+    for x in pseudocscans {
+        let json = serde_json::to_string(&x)?;
+        if is_first {
+            is_first = false;
+        } else {
+            file.write(",\n".as_bytes())?;
+        }
+        file.write(json.as_bytes())?;
+    }
+    file.write("]".as_bytes())?;
+
     Ok(())
+}
+
+pub fn read_pseudoscans_json(in_path: String) -> Result<Vec<PseudoSpectrum>, Box<dyn Error>> {
+    info!("Reading pseudoscans from json");
+    let file = std::fs::File::open(in_path)?;
+    let reader = std::io::BufReader::new(file);
+    let out: Vec<PseudoSpectrum> = serde_json::from_reader(reader)?;
+    Ok(out)
 }

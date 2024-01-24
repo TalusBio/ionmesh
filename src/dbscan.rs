@@ -15,7 +15,8 @@ use crate::utils::within_distance_apply;
 use crate::mod_types::Float;
 use crate::ms::frames;
 use crate::space_generics::{HasIntensity, IndexedPoints, NDPoint};
-use log::{error, trace};
+use indicatif::ProgressIterator;
+use log::{error, log_enabled, trace};
 
 use rayon::prelude::*;
 
@@ -94,11 +95,18 @@ fn _dbscan<
     min_intensity: u64,
     intensity_sorted_indices: &Vec<(usize, I)>,
     filter_fun: Option<&impl Fn(&E, &E) -> bool>,
+    progress: bool,
 ) -> (u64, Vec<ClusterLabel<u64>>) {
     let mut cluster_labels = vec![ClusterLabel::Unassigned; prefiltered_peaks.len()];
     let mut cluster_id = 0;
 
-    for (point_index, _intensity) in intensity_sorted_indices.iter() {
+    let my_progbar = if progress {
+            indicatif::ProgressBar::new(intensity_sorted_indices.len() as u64)
+        } else {
+            indicatif::ProgressBar::hidden()
+        };
+
+    for (point_index, _intensity) in intensity_sorted_indices.iter().progress_with(my_progbar) {
         let point_index = *point_index;
         if cluster_labels[point_index] != ClusterLabel::Unassigned {
             continue;
@@ -107,6 +115,11 @@ fn _dbscan<
         let query_point = quad_points[point_index].clone();
         let mut neighbors = tree.query_ndpoint(&query_point);
 
+        if neighbors.len() < min_n {
+            cluster_labels[point_index] = ClusterLabel::Noise;
+            continue;
+        }
+
         if filter_fun.is_some() {
             let filter_fun = filter_fun.unwrap();
             let query_peak = &prefiltered_peaks[point_index];
@@ -114,12 +127,13 @@ fn _dbscan<
                 .into_iter()
                 .filter(|i| filter_fun(query_peak, &prefiltered_peaks[**i]))
                 .collect::<Vec<_>>();
+
+            if neighbors.len() < min_n {
+                cluster_labels[point_index] = ClusterLabel::Noise;
+                continue;
+            }
         }
 
-        if neighbors.len() < min_n {
-            cluster_labels[point_index] = ClusterLabel::Noise;
-            continue;
-        }
 
         // Q: Do I need to care about overflows here? - Sebastian
         let neighbor_intensity_total = neighbors
@@ -291,12 +305,13 @@ pub fn aggregate_clusters<
     cluster_labels: Vec<ClusterLabel<u64>>,
     elements: Vec<T>,
     def_aggregator: F,
+    log_level: utils::LogLevel,
 ) -> Vec<R> {
     let cluster_vecs: Vec<G> = if cfg!(feature = "par_dataprep") {
         let timer = utils::ContextTimer::new(
             "dbscan_generic::par_aggregation",
             true,
-            utils::LogLevel::TRACE,
+            log_level,
         );
         let out: Vec<(usize, T)> = cluster_labels
             .iter()
@@ -406,24 +421,32 @@ pub fn dbscan_generic<
     min_intensity: u64,
     def_aggregator: F,
     extra_filter_fun: Option<&impl Fn(&T, &T) -> bool>,
+    log_level: Option<utils::LogLevel>,
 ) -> Vec<R> {
+    let show_progress = log_level.is_some();
+    let log_level = match log_level {
+        Some(x) => x,
+        None => utils::LogLevel::TRACE
+    };
+
     let timer =
-        utils::ContextTimer::new("dbscan_generic::conversion", true, utils::LogLevel::TRACE);
+        utils::ContextTimer::new("dbscan_generic::", true, log_level);
+    let i_timer = timer.start_sub_timer("conversion");
     let (ndpoints, boundary) = converter.convert_vec(&prefiltered_peaks);
-    timer.stop();
+    i_timer.stop();
     // let mut tree = RadiusKDTree::new_empty(boundary, 1000, 1.);
     // let mut tree = RadiusQuadTree::new_empty(boundary, 1000, 1.);
 
-    let timer = utils::ContextTimer::new("dbscan_generic::tree", true, utils::LogLevel::TRACE);
+    let i_timer = timer.start_sub_timer("tree");
     let mut tree = RadiusKDTree::new_empty(boundary, 500, 1.);
     let quad_indices = (0..ndpoints.len()).collect::<Vec<_>>();
 
     for (quad_point, i) in ndpoints.iter().zip(quad_indices.iter()) {
         tree.insert_ndpoint(quad_point.clone(), i);
     }
-    timer.stop();
+    i_timer.stop();
 
-    let timer = utils::ContextTimer::new("dbscan_generic::pre-sort", true, utils::LogLevel::TRACE);
+    let i_timer = timer.start_sub_timer("pre-sort");
     let mut intensity_sorted_indices = prefiltered_peaks
         .iter()
         .enumerate()
@@ -432,9 +455,9 @@ pub fn dbscan_generic<
     // Q: Does ^^^^ need a clone? i and peak intensity ... - S
 
     intensity_sorted_indices.par_sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-    timer.stop();
+    i_timer.stop();
 
-    let timer = utils::ContextTimer::new("dbscan_generic::dbscan", true, utils::LogLevel::TRACE);
+    let i_timer = timer.start_sub_timer("dbscan");
     let (tot_clusters, cluster_labels) = _dbscan(
         &tree,
         &prefiltered_peaks,
@@ -443,14 +466,16 @@ pub fn dbscan_generic<
         min_intensity,
         &intensity_sorted_indices,
         extra_filter_fun,
+        show_progress,
     );
-    timer.stop();
+    i_timer.stop();
 
     aggregate_clusters(
         tot_clusters,
         cluster_labels,
         prefiltered_peaks,
         def_aggregator,
+        log_level,
     )
 }
 
@@ -515,6 +540,7 @@ pub fn dbscan_denseframes(
         min_intensity,
         &|| TimsPeakAggregator::default(),
         None::<&Box<dyn Fn(&TimsPeak, &TimsPeak) -> bool>>,
+        None,
     );
 
     frames::DenseFrame {

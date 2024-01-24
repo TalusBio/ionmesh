@@ -151,84 +151,91 @@ fn main() {
 
     let path_use = args.file;
     // ms_denoise::read_all_ms1_denoising(path_use.clone(), &mut rec);
-    let dia_frames = ms_denoise::read_all_dia_denoising(
-        path_use.clone(),
-        config.denoise_config.ms2_min_n.into(),
-        config.denoise_config.ms2_min_cluster_intensity.into(),
-        config.denoise_config.mz_scaling.into(),
-        config.denoise_config.ims_scaling.into(),
-        &mut rec,
-    );
 
-    let traces = tracing::combine_traces(
-        dia_frames,
-        config.tracing_config.mz_scaling.into(),
-        config.tracing_config.rt_scaling.into(),
-        config.tracing_config.ims_scaling.into(),
-        config.tracing_config.min_n.into(),
-        config.tracing_config.min_neighbor_intensity.into(),
-        &mut rec,
-    );
+    if false {
+        let dia_frames = ms_denoise::read_all_dia_denoising(
+            path_use.clone(),
+            config.denoise_config.ms2_min_n.into(),
+            config.denoise_config.ms2_min_cluster_intensity.into(),
+            config.denoise_config.mz_scaling.into(),
+            config.denoise_config.ims_scaling.into(),
+            &mut rec,
+        );
 
-    let out = tracing::write_trace_csv(&traces, &"traces_debug.csv".into());
-    match out {
-        Ok(_) => {}
-        Err(e) => {
-            log::warn!("Error writing traces: {:?}", e);
+        let traces = tracing::combine_traces(
+            dia_frames,
+            config.tracing_config.mz_scaling.into(),
+            config.tracing_config.rt_scaling.into(),
+            config.tracing_config.ims_scaling.into(),
+            config.tracing_config.min_n.into(),
+            config.tracing_config.min_neighbor_intensity.into(),
+            &mut rec,
+        );
+
+        let out = tracing::write_trace_csv(&traces, &"traces_debug.csv".into());
+        match out {
+            Ok(_) => {}
+            Err(e) => {
+                log::warn!("Error writing traces: {:?}", e);
+            }
+        }
+
+        // Maybe reparametrize as 1.1 cycle time
+        let pseudoscans = tracing::combine_pseudospectra(
+            traces,
+            config.pseudoscan_generation_config.rt_scaling.into(),
+            config.pseudoscan_generation_config.ims_scaling.into(),
+            config.pseudoscan_generation_config.quad_scaling.into(),
+            config
+                .pseudoscan_generation_config
+                .min_neighbor_intensity
+                .into(),
+            config.pseudoscan_generation_config.min_n.into(),
+            &mut rec,
+        );
+
+        // Report min/max/average/std and skew for ims and rt
+        let ims_stats = utils::get_stats(&pseudoscans.iter().map(|x| x.ims as f64).collect::<Vec<_>>());
+        let ims_sd_stats = utils::get_stats(
+            &pseudoscans
+                .iter()
+                .map(|x| x.ims_std as f64)
+                .collect::<Vec<_>>(),
+        );
+        let rt_stats = utils::get_stats(&pseudoscans.iter().map(|x| x.rt as f64).collect::<Vec<_>>());
+        let rt_sd_stats = utils::get_stats(
+            &pseudoscans
+                .iter()
+                .map(|x| x.rt_std as f64)
+                .collect::<Vec<_>>(),
+        );
+        let npeaks = utils::get_stats(
+            &pseudoscans
+                .iter()
+                .map(|x| x.peaks.len() as f64)
+                .collect::<Vec<_>>(),
+        );
+
+        println!("ims_stats: {:?}", ims_stats);
+        println!("rt_stats: {:?}", rt_stats);
+
+        println!("ims_sd_stats: {:?}", ims_sd_stats);
+        println!("rt_sd_stats: {:?}", rt_sd_stats);
+
+        println!("npeaks: {:?}", npeaks);
+
+        let out = tracing::write_pseudoscans_json(&pseudoscans, r"pseudoscans_debug.json".into());
+        match out {
+            Ok(_) => {}
+            Err(e) => {
+                log::warn!("Error writing pseudoscans: {:?}", e);
+            }
         }
     }
 
-    // Maybe reparametrize as 1.1 cycle time
-    let pseudoscans = tracing::combine_pseudospectra(
-        traces,
-        config.pseudoscan_generation_config.rt_scaling.into(),
-        config.pseudoscan_generation_config.ims_scaling.into(),
-        config.pseudoscan_generation_config.quad_scaling.into(),
-        config
-            .pseudoscan_generation_config
-            .min_neighbor_intensity
-            .into(),
-        config.pseudoscan_generation_config.min_n.into(),
-        &mut rec,
-    );
-
-    // Report min/max/average/std and skew for ims and rt
-    let ims_stats = utils::get_stats(&pseudoscans.iter().map(|x| x.ims as f64).collect::<Vec<_>>());
-    let ims_sd_stats = utils::get_stats(
-        &pseudoscans
-            .iter()
-            .map(|x| x.ims_std as f64)
-            .collect::<Vec<_>>(),
-    );
-    let rt_stats = utils::get_stats(&pseudoscans.iter().map(|x| x.rt as f64).collect::<Vec<_>>());
-    let rt_sd_stats = utils::get_stats(
-        &pseudoscans
-            .iter()
-            .map(|x| x.rt_std as f64)
-            .collect::<Vec<_>>(),
-    );
-    let npeaks = utils::get_stats(
-        &pseudoscans
-            .iter()
-            .map(|x| x.peaks.len() as f64)
-            .collect::<Vec<_>>(),
-    );
-
-    println!("ims_stats: {:?}", ims_stats);
-    println!("rt_stats: {:?}", rt_stats);
-
-    println!("ims_sd_stats: {:?}", ims_sd_stats);
-    println!("rt_sd_stats: {:?}", rt_sd_stats);
-
-    println!("npeaks: {:?}", npeaks);
-
-    // let out = tracing::write_pseudoscans_json(&pseudoscans, r"pseudoscans_debug.json".into());
-    // match out {
-    //     Ok(_) => {}
-    //     Err(e) => {
-    //         log::warn!("Error writing pseudoscans: {:?}", e);
-    //     }
-    // }
+    let pseudoscans_read = tracing::read_pseudoscans_json(r"pseudoscans_debug.json".into());
+    let pseudoscans = pseudoscans_read.unwrap();
+    println!("pseudoscans: {:?}", pseudoscans.len());
 
     let fasta_path = "/Users/sebastianpaez/git/2023_dev_diadem_report/data/UP000005640_9606.fasta";
     let score_out = scoring::score_pseudospectra(pseudoscans, fasta_path.into());

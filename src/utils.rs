@@ -249,6 +249,9 @@ where
     }
 
     pub fn get_skew(&self) -> T {
+        if self.m2 == 0.as_() {
+            return 0.as_();
+        }
         self.w_sum.as_().into().sqrt().as_() * self.m3 / (self.m2.into().powf(1.5).as_())
     }
 
