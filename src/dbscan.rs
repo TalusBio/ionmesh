@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::ops::{Add, Div, Mul, Sub};
+use std::ops::{Add, Deref, Div, Mul, Sub};
 
 use crate::ms::frames::TimsPeak;
 use crate::space_generics::NDPointConverter;
@@ -130,22 +130,27 @@ fn _dbscan<
             indicatif::ProgressBar::hidden()
         };
 
-    // // make a 'real_neighbor_vec' that is the same size as the intensity_sorted_indices
-    // let real_indices = intensity_sorted_indices.par_iter().map(|(i, intens)| {
-    //     let query_point = quad_points[*i].clone();
-    //     let neighbors = indexed_points.query_ndpoint(&query_point);
-    //     if filter_fun.is_some() {
-    //         let query_peak = &prefiltered_peaks[*i];
-    //         let neighbors = neighbors
-    //             .into_iter()
-    //             .filter(|ii| filter_fun.unwrap()(&prefiltered_peaks[**ii], &query_peak))
-    //             .collect::<Vec<_>>();
-    //         neighbors
-    //     } else {
-    //         neighbors
-    //     }
+    // make a 'real_neighbor_vec' that is the same size as the intensity_sorted_indices
+    // IDEA: Since usually one needs to query only the first 25% or so of the points,
+    //       it might be worth doing a greedy search for the first 25% of the points
+    //       and for the rest fall back got the default search.
 
-    // }).collect::<Vec<_>>();
+    let num_greedy_queries = (intensity_sorted_indices.len() as f64 * 0.25) as usize;
+    let greedy_query_sorted_indices = &intensity_sorted_indices[0..num_greedy_queries];
+    let real_neighbor_vec = greedy_query_sorted_indices.par_iter().map(|(i, _intens)| {
+        let query_point = quad_points[*i].clone();
+        let neighbors = indexed_points.query_ndpoint(&query_point);
+        if filter_fun.is_some() {
+            let query_peak = &prefiltered_peaks[*i];
+            let neighbors = neighbors
+                .into_iter()
+                .filter(|ii| filter_fun.unwrap()(&prefiltered_peaks[**ii], &query_peak))
+                .collect::<Vec<_>>();
+            neighbors
+        } else {
+            neighbors
+        }
+    }).collect::<Vec<_>>();
 
     for (point_index, _intensity) in intensity_sorted_indices.iter().progress_with(my_progbar) {
         let point_index = *point_index;
@@ -154,31 +159,36 @@ fn _dbscan<
         }
 
         let query_point = quad_points[point_index].clone();
-        let mut neighbors = indexed_points.query_ndpoint(&query_point);
+        // let mut neighbors = indexed_points.query_ndpoint(&query_point);
+        let neighbors = if point_index >= num_greedy_queries {
+            indexed_points.query_ndpoint(&query_point)
+        } else {
+            real_neighbor_vec[point_index].clone()
+        }.into_iter().map(|i| *i).collect::<Vec<_>>();
 
         if neighbors.len() < min_n {
             cluster_labels[point_index] = ClusterLabel::Noise;
             continue;
         }
 
-        if filter_fun.is_some() {
-            let query_peak = &prefiltered_peaks[point_index];
-            neighbors = neighbors
-                .into_iter()
-                .filter(|i| filterfun_with_cache(**i, point_index, &query_peak))
-                .collect::<Vec<_>>();
+        // if filter_fun.is_some() {
+        //     let query_peak = &prefiltered_peaks[point_index];
+        //     neighbors = neighbors
+        //         .into_iter()
+        //         .filter(|i| filterfun_with_cache(**i, point_index, &query_peak))
+        //         .collect::<Vec<_>>();
 
-            if neighbors.len() < min_n {
-                cluster_labels[point_index] = ClusterLabel::Noise;
-                continue;
-            }
-        }
+        //     if neighbors.len() < min_n {
+        //         cluster_labels[point_index] = ClusterLabel::Noise;
+        //         continue;
+        //     }
+        // }
 
 
         // Q: Do I need to care about overflows here? - Sebastian
         let neighbor_intensity_total = neighbors
             .iter()
-            .map(|i| prefiltered_peaks[**i].intensity().as_())
+            .map(|i| prefiltered_peaks[*i].intensity().as_())
             .sum::<u64>();
 
         if neighbor_intensity_total < min_intensity {
@@ -189,7 +199,7 @@ fn _dbscan<
         cluster_id += 1;
         cluster_labels[point_index] = ClusterLabel::Cluster(cluster_id);
         let mut seed_set: Vec<&usize> = Vec::new();
-        seed_set.extend(neighbors);
+        seed_set.extend(&neighbors);
 
         const MAX_EXTENSION_DISTANCE: Float = 5.;
 
@@ -205,15 +215,22 @@ fn _dbscan<
 
             cluster_labels[neighbor_index] = ClusterLabel::Cluster(cluster_id);
 
-            let mut neighbors = indexed_points.query_ndpoint(&quad_points[*neighbor]);
+            let neighbors = if neighbor_index >= num_greedy_queries {
+                indexed_points.query_ndpoint(&quad_points[neighbor_index])
+            } else {
+                real_neighbor_vec[neighbor_index].clone()
+            };
+            
+            // &real_neighbor_vec[neighbor_index];
 
-            if filter_fun.is_some() {
-                let query_peak = &prefiltered_peaks[point_index];
-                neighbors = neighbors
-                    .into_iter()
-                    .filter(|i| filterfun_with_cache(**i, point_index, &query_peak))
-                    .collect::<Vec<_>>();
-            }
+            // let mut neighbors = indexed_points.query_ndpoint(&quad_points[*neighbor]);
+            // if filter_fun.is_some() {
+            //     let query_peak = &prefiltered_peaks[point_index];
+            //     neighbors = neighbors
+            //         .into_iter()
+            //         .filter(|i| filterfun_with_cache(**i, point_index, &query_peak))
+            //         .collect::<Vec<_>>();
+            // }
 
             let query_intensity = prefiltered_peaks[neighbor_index].intensity();
             let neighbor_intensity_total = neighbors
