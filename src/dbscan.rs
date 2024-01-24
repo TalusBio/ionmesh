@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::ops::{Add, Div, Mul, Sub};
 
 use crate::ms::frames::TimsPeak;
@@ -16,7 +17,7 @@ use crate::mod_types::Float;
 use crate::ms::frames;
 use crate::space_generics::{HasIntensity, IndexedPoints, NDPoint};
 use indicatif::ProgressIterator;
-use log::{error, log_enabled, trace};
+use log::{error, log_enabled, trace, info};
 
 use rayon::prelude::*;
 
@@ -73,6 +74,8 @@ impl HasIntensity<u32> for frames::TimsPeak {
 // TODO: refactor to take a filter function instead of requiting
 //       a min intensity and an intensity trait.
 // TODO: rename the pre-filtered...
+// TODO: reimplement this a two-stage pass, where the first in parallel
+//       gets the neighbors and the second does the iterative aggregation.
 
 // THIS IS A BOTTLENECK FUNCTION
 fn _dbscan<
@@ -85,26 +88,64 @@ fn _dbscan<
         + Default
         + Copy
         + PartialOrd<I>
-        + AsPrimitive<u64>,
-    E: HasIntensity<I>,
+        + AsPrimitive<u64>
+        + Send
+        + Sync,
+    E: Sync + HasIntensity<I>,
+    T: IndexedPoints<'a, N, usize> 
+        + std::marker::Sync,
+    FF: Fn(&E, &E) -> bool + Send + Sync + Copy,
 >(
-    tree: &'a impl IndexedPoints<'a, N, usize>,
+    indexed_points: &'a T,
     prefiltered_peaks: &Vec<E>,
     quad_points: &Vec<NDPoint<N>>,
     min_n: usize,
     min_intensity: u64,
     intensity_sorted_indices: &Vec<(usize, I)>,
-    filter_fun: Option<&impl Fn(&E, &E) -> bool>,
+    filter_fun: Option<FF>,
     progress: bool,
 ) -> (u64, Vec<ClusterLabel<u64>>) {
     let mut cluster_labels = vec![ClusterLabel::Unassigned; prefiltered_peaks.len()];
     let mut cluster_id = 0;
+    let mut cached_queries = 0;
+    let mut tot_queries = 0;
+
+    let mut filterfun_cache = HashMap::new();
+    let mut filterfun_with_cache = |elem_idx: usize, reference_idx: usize, reference: &E| {
+        let key = (elem_idx, reference_idx);
+        tot_queries += 1;
+        if filterfun_cache.contains_key(&key) {
+            cached_queries += 1;
+            return *filterfun_cache.get(&key).unwrap();
+        }
+        let out = filter_fun.expect("filter_fun should be Some")(&prefiltered_peaks[elem_idx], reference);
+        filterfun_cache.insert(key, out);
+        filterfun_cache.insert((key.1, key.0), out);
+        out
+    };
 
     let my_progbar = if progress {
             indicatif::ProgressBar::new(intensity_sorted_indices.len() as u64)
         } else {
             indicatif::ProgressBar::hidden()
         };
+
+    // // make a 'real_neighbor_vec' that is the same size as the intensity_sorted_indices
+    // let real_indices = intensity_sorted_indices.par_iter().map(|(i, intens)| {
+    //     let query_point = quad_points[*i].clone();
+    //     let neighbors = indexed_points.query_ndpoint(&query_point);
+    //     if filter_fun.is_some() {
+    //         let query_peak = &prefiltered_peaks[*i];
+    //         let neighbors = neighbors
+    //             .into_iter()
+    //             .filter(|ii| filter_fun.unwrap()(&prefiltered_peaks[**ii], &query_peak))
+    //             .collect::<Vec<_>>();
+    //         neighbors
+    //     } else {
+    //         neighbors
+    //     }
+
+    // }).collect::<Vec<_>>();
 
     for (point_index, _intensity) in intensity_sorted_indices.iter().progress_with(my_progbar) {
         let point_index = *point_index;
@@ -113,7 +154,7 @@ fn _dbscan<
         }
 
         let query_point = quad_points[point_index].clone();
-        let mut neighbors = tree.query_ndpoint(&query_point);
+        let mut neighbors = indexed_points.query_ndpoint(&query_point);
 
         if neighbors.len() < min_n {
             cluster_labels[point_index] = ClusterLabel::Noise;
@@ -121,11 +162,10 @@ fn _dbscan<
         }
 
         if filter_fun.is_some() {
-            let filter_fun = filter_fun.unwrap();
             let query_peak = &prefiltered_peaks[point_index];
             neighbors = neighbors
                 .into_iter()
-                .filter(|i| filter_fun(query_peak, &prefiltered_peaks[**i]))
+                .filter(|i| filterfun_with_cache(**i, point_index, &query_peak))
                 .collect::<Vec<_>>();
 
             if neighbors.len() < min_n {
@@ -165,14 +205,13 @@ fn _dbscan<
 
             cluster_labels[neighbor_index] = ClusterLabel::Cluster(cluster_id);
 
-            let mut neighbors = tree.query_ndpoint(&quad_points[*neighbor]);
+            let mut neighbors = indexed_points.query_ndpoint(&quad_points[*neighbor]);
 
             if filter_fun.is_some() {
-                let filter_fun = filter_fun.unwrap();
                 let query_peak = &prefiltered_peaks[point_index];
                 neighbors = neighbors
                     .into_iter()
-                    .filter(|i| filter_fun(query_peak, &prefiltered_peaks[**i]))
+                    .filter(|i| filterfun_with_cache(**i, point_index, &query_peak))
                     .collect::<Vec<_>>();
             }
 
@@ -211,6 +250,16 @@ fn _dbscan<
                 seed_set.extend(local_neighbors2);
             }
         }
+    }
+
+    if tot_queries > 1000 {
+        let cache_hit_rate = cached_queries as f64 / tot_queries as f64;
+        info!(
+            "Cache hit rate: {} / {} = {}",
+            cached_queries,
+            tot_queries,
+            cache_hit_rate
+        );
     }
 
     (cluster_id, cluster_labels)
@@ -359,11 +408,30 @@ pub fn aggregate_clusters<
                 },
             );
 
-        let cluster_vecs = out2
+        let mut cluster_vecs = out2
             .into_iter()
             .filter(|x| x.is_some())
             .map(|x| x.unwrap())
             .collect::<Vec<_>>();
+
+        let unclustered_elems: Vec<usize> = cluster_labels
+            .iter()
+            .enumerate()
+            .filter(|(_, x)| match x {
+                ClusterLabel::Unassigned => true,
+                _ => false,
+            }).map(|(i, _elem)| i).collect();
+
+        let unclustered_elems = unclustered_elems.iter()
+            .map(|i| {
+                let mut oe = def_aggregator();
+                oe.add(&elements[*i]);
+                oe
+            })
+            .collect::<Vec<_>>();
+
+        cluster_vecs.extend(unclustered_elems);
+        
         timer.stop();
         cluster_vecs
     } else {
@@ -401,7 +469,7 @@ pub fn dbscan_generic<
     C: NDPointConverter<T, N>,
     R: Send,
     G: Sync + Send + ClusterAggregator<T, R>,
-    T: HasIntensity<Z> + Send + Clone + Copy,
+    T: HasIntensity<Z> + Send + Clone + Copy + Sync,
     F: Fn() -> G + Send + Sync,
     const N: usize,
     // Z is usually u32 or u64
@@ -414,13 +482,14 @@ pub fn dbscan_generic<
         + Mul<Output = Z>
         + Default
         + Sub<Output = Z>,
+    FF: Send + Sync + Fn(&T, &T) -> bool,
 >(
     converter: C,
     prefiltered_peaks: Vec<T>,
     min_n: usize,
     min_intensity: u64,
     def_aggregator: F,
-    extra_filter_fun: Option<&impl Fn(&T, &T) -> bool>,
+    extra_filter_fun: Option<&FF>,
     log_level: Option<utils::LogLevel>,
 ) -> Vec<R> {
     let show_progress = log_level.is_some();
@@ -434,8 +503,6 @@ pub fn dbscan_generic<
     let i_timer = timer.start_sub_timer("conversion");
     let (ndpoints, boundary) = converter.convert_vec(&prefiltered_peaks);
     i_timer.stop();
-    // let mut tree = RadiusKDTree::new_empty(boundary, 1000, 1.);
-    // let mut tree = RadiusQuadTree::new_empty(boundary, 1000, 1.);
 
     let i_timer = timer.start_sub_timer("tree");
     let mut tree = RadiusKDTree::new_empty(boundary, 500, 1.);
@@ -495,6 +562,8 @@ impl NDPointConverter<TimsPeak, 2> for DenseFrameConverter {
     }
 }
 
+type FFTimsPeak = fn(&TimsPeak, &TimsPeak) -> bool;
+// <FF: Send + Sync + Fn(&TimsPeak, &TimsPeak) -> bool>
 pub fn dbscan_denseframes(
     mut denseframe: frames::DenseFrame,
     mz_scaling: &f64,
@@ -533,13 +602,13 @@ pub fn dbscan_denseframes(
         mz_scaling: mz_scaling.clone(),
         ims_scaling: ims_scaling.clone(),
     };
-    let peak_vec = dbscan_generic(
+    let peak_vec: Vec<TimsPeak> = dbscan_generic(
         converter,
         prefiltered_peaks,
         min_n,
         min_intensity,
         &|| TimsPeakAggregator::default(),
-        None::<&Box<dyn Fn(&TimsPeak, &TimsPeak) -> bool>>,
+        None::<&FFTimsPeak>,
         None,
     );
 

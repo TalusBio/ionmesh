@@ -152,7 +152,7 @@ fn main() {
     let path_use = args.file;
     // ms_denoise::read_all_ms1_denoising(path_use.clone(), &mut rec);
 
-    if false {
+    if true {
         let dia_frames = ms_denoise::read_all_dia_denoising(
             path_use.clone(),
             config.denoise_config.ms2_min_n.into(),

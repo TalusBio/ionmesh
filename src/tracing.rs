@@ -389,6 +389,9 @@ fn _flatten_denseframe_vec(denseframe_windows: Vec<DenseFrameWindow>) -> Vec<Tim
         .collect::<Vec<_>>()
 }
 
+// Needed to specify the generic in dbscan_generic
+type FFTimeTimsPeak = fn(&TimeTimsPeak, &TimeTimsPeak) -> bool;
+
 fn _combine_single_window_traces(
     prefiltered_peaks: Vec<TimeTimsPeak>,
     mz_scaling: f64,
@@ -397,6 +400,7 @@ fn _combine_single_window_traces(
     min_n: usize,
     min_intensity: u32,
 ) -> Vec<BaseTrace> {
+    
     debug!("Prefiltered peaks: {}", prefiltered_peaks.len());
     let converter = TimeTimsPeakConverter {
         mz_scaling,
@@ -409,6 +413,7 @@ fn _combine_single_window_traces(
     );
     warn!("Assuming all quad windows are the same!!! (fine for diaPASEF)");
 
+    // TODO make dbscan_generic a runner-class
     let foo: Vec<BaseTrace> = dbscan_generic(
         converter,
         prefiltered_peaks,
@@ -422,7 +427,7 @@ fn _combine_single_window_traces(
             num_peaks: 0,
             quad_low_high: window_quad_low_high.clone(),
         },
-        None::<&Box<dyn Fn(&TimeTimsPeak, &TimeTimsPeak) -> bool>>,
+        None::<&FFTimeTimsPeak>,
         None,
     );
 
