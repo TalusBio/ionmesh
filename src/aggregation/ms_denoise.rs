@@ -83,7 +83,7 @@ fn _denoise_denseframe(
 ) -> DenseFrame {
     // I am 99% sure the compiler will remove this section when optimizing ... but I still need to test it.
     let frame_stats_start = FrameStats::new(&frame);
-    let index = frame.index.clone();
+    let index = frame.index;
     // this is the line that matters
     // TODO move the scalings to parameters
     let denoised_frame =
@@ -111,7 +111,9 @@ fn _denoise_dia_frame(
         .split_frame(frame)
         .expect("Only DIA frames should be passed to this function");
 
-    let out = frame_windows
+    
+
+    frame_windows
         .into_iter()
         .map(|frame_window| {
             let denseframe_window = DenseFrameWindow::from_frame_window(
@@ -138,9 +140,7 @@ fn _denoise_dia_frame(
                 quad_group_id: denseframe_window.quad_group_id,
             }
         })
-        .collect::<Vec<_>>();
-
-    out
+        .collect::<Vec<_>>()
 }
 
 trait Denoiser<'a, T, W, X, Z>
@@ -174,7 +174,7 @@ where
             // let keep = [false, true, true, false, true];
             let mut keep = vec![false; start]
                 .into_iter()
-                .chain(vec![true; len_keep].into_iter())
+                .chain(vec![true; len_keep])
                 .collect::<Vec<_>>();
 
             keep.append(&mut vec![false; frames.len() - start - len_keep]);
@@ -287,13 +287,10 @@ pub fn read_all_ms1_denoising(
     let ims_converter = reader.get_scan_converter().unwrap();
     let mz_converter = reader.get_tof_converter().unwrap();
 
-    frames = frames
-        .into_iter()
-        .filter(|frame| match frame.frame_type {
+    frames.retain(|frame| match frame.frame_type {
             timsrust::FrameType::MS1 => true,
             _ => false,
-        })
-        .collect();
+        });
 
     // let min_intensity = 100u64;
     // let min_n: usize = 3;

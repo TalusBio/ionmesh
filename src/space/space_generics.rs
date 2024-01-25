@@ -43,7 +43,7 @@ impl<const D: usize> NDBoundary<D> {
                 return false;
             }
         }
-        return true;
+        true
     }
 
     pub fn intersects(&self, other: &NDBoundary<D>) -> bool {
@@ -52,7 +52,7 @@ impl<const D: usize> NDBoundary<D> {
                 return false;
             }
         }
-        return true;
+        true
     }
 
     pub fn from_ndpoints(points: &[NDPoint<D>]) -> NDBoundary<D> {

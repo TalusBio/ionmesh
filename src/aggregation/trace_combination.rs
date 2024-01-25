@@ -1,6 +1,6 @@
-use crate::aggregation::tracing::BaseTrace;
+
 use crate::mod_types::Float;
-use crate::utils::within_distance_apply;
+
 
 /// This is an attempt to use dbscan ... again to cluster the traces into  pseudo-spectra (or peptides)
 ///

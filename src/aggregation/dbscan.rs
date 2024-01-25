@@ -17,12 +17,12 @@ use crate::mod_types::Float;
 use crate::ms::frames;
 use crate::space::space_generics::{HasIntensity, IndexedPoints, NDPoint};
 use indicatif::ProgressIterator;
-use log::{error, info, log_enabled, trace};
+use log::{info};
 
-use rayon::{prelude::*, vec};
+use rayon::{prelude::*};
 
 use crate::space::kdtree::RadiusKDTree;
-use crate::space::quad::RadiusQuadTree;
+
 use num::cast::AsPrimitive;
 
 // Pseudocode from wikipedia.
@@ -96,7 +96,7 @@ impl<'a> FilterFunCache<'a> {
             Some(ref map) => match map.get(&reference_idx) {
                 Some(x) => {
                     self.cached_queries += 1;
-                    x.clone()
+                    *x
                 }
                 None => {
                     let out: bool = (self.filter_fun)(&elem_idx, &reference_idx);
@@ -178,9 +178,9 @@ fn _dbscan<
     };
     let mut filterfun_cache =
         FilterFunCache::new(Box::new(&usize_filterfun), prefiltered_peaks.len());
-    let mut filterfun_with_cache = |elem_idx: usize, reference_idx: usize, reference: &E| {
-        let out = filterfun_cache.get(elem_idx, reference_idx);
-        out
+    let mut filterfun_with_cache = |elem_idx: usize, reference_idx: usize, _reference: &E| {
+        
+        filterfun_cache.get(elem_idx, reference_idx)
     };
 
     let my_progbar = if progress {
@@ -207,7 +207,7 @@ fn _dbscan<
             let query_peak = &prefiltered_peaks[point_index];
             neighbors = neighbors
                 .into_iter()
-                .filter(|i| filterfun_with_cache(**i, point_index, &query_peak))
+                .filter(|i| filterfun_with_cache(**i, point_index, query_peak))
                 // .filter(|i| filter_fun.unwrap()(&prefiltered_peaks[**i], &query_peak))
                 .collect::<Vec<_>>();
 
@@ -236,7 +236,7 @@ fn _dbscan<
         const MAX_EXTENSION_DISTANCE: Float = 5.;
 
         while let Some(neighbor) = seed_set.pop() {
-            let neighbor_index = neighbor.clone();
+            let neighbor_index = *neighbor;
             if cluster_labels[neighbor_index] == ClusterLabel::Noise {
                 cluster_labels[neighbor_index] = ClusterLabel::Cluster(cluster_id);
             }
@@ -253,7 +253,7 @@ fn _dbscan<
                 let query_peak = &prefiltered_peaks[point_index];
                 neighbors = neighbors
                     .into_iter()
-                    .filter(|i| filterfun_with_cache(**i, point_index, &query_peak))
+                    .filter(|i| filterfun_with_cache(**i, point_index, query_peak))
                     // .filter(|i| filter_fun.unwrap()(&prefiltered_peaks[**i], &query_peak))
                     .collect::<Vec<_>>();
             }
@@ -335,7 +335,7 @@ impl ClusterAggregator<TimsPeak, TimsPeak> for TimsPeakAggregator {
         let f64_intensity = elem.intensity as f64;
         debug_assert!((elem.intensity as u64) < (u64::MAX - self.cluster_intensity));
         self.cluster_intensity += elem.intensity as u64;
-        self.cluster_mz += (elem.mz as f64) * f64_intensity;
+        self.cluster_mz += elem.mz * f64_intensity;
         self.cluster_mobility += (elem.mobility as f64) * f64_intensity;
         self.num_peaks += 1;
     }
@@ -351,13 +351,13 @@ impl ClusterAggregator<TimsPeak, TimsPeak> for TimsPeakAggregator {
     }
 
     fn combine(self, other: Self) -> Self {
-        let out = Self {
+        
+        Self {
             cluster_intensity: self.cluster_intensity + other.cluster_intensity,
             cluster_mz: self.cluster_mz + other.cluster_mz,
             cluster_mobility: self.cluster_mobility + other.cluster_mobility,
             num_peaks: self.num_peaks + other.num_peaks,
-        };
-        out
+        }
     }
 }
 
@@ -372,7 +372,7 @@ fn _inner<T: Copy, G: ClusterAggregator<T, R>, R>(
         if cluster_vecs[*cluster_idx].is_none() {
             cluster_vecs[*cluster_idx] = Some(def_aggregator());
         }
-        cluster_vecs[*cluster_idx].as_mut().unwrap().add(&point);
+        cluster_vecs[*cluster_idx].as_mut().unwrap().add(point);
     }
 
     cluster_vecs
@@ -404,21 +404,19 @@ pub fn aggregate_clusters<
         let out: Vec<(usize, T)> = cluster_labels
             .iter()
             .enumerate()
-            .map(|(point_index, x)| match x {
+            .filter_map(|(point_index, x)| match x {
                 ClusterLabel::Cluster(cluster_id) => {
                     let cluster_idx = *cluster_id as usize - 1;
                     let tmp: Option<(usize, T)> =
-                        Some((cluster_idx, elements[point_index].clone()));
+                        Some((cluster_idx, elements[point_index]));
                     tmp
                 }
                 _ => None,
             })
-            .filter(|x| x.is_some())
-            .map(|x| x.unwrap())
             .collect();
 
         let run_closure =
-            |chunk: Vec<(usize, T)>| _inner(&chunk, tot_clusters.clone() as usize, &def_aggregator);
+            |chunk: Vec<(usize, T)>| _inner(&chunk, tot_clusters as usize, &def_aggregator);
         let chunk_size = (out.len() / rayon::current_num_threads()) / 2;
         let chunk_size = chunk_size.max(1);
         let out2 = out
@@ -426,13 +424,13 @@ pub fn aggregate_clusters<
             .chunks(chunk_size)
             .map(run_closure)
             .reduce(
-                || Vec::new(),
+                Vec::new,
                 |l, r| {
-                    if l.len() == 0 {
+                    if l.is_empty() {
                         r
                     } else {
                         l.into_iter()
-                            .zip(r.into_iter())
+                            .zip(r)
                             .map(|(l, r)| match (l, r) {
                                 (Some(l), Some(r)) => {
                                     let o = l.combine(r);
@@ -449,8 +447,7 @@ pub fn aggregate_clusters<
 
         let mut cluster_vecs = out2
             .into_iter()
-            .filter(|x| x.is_some())
-            .map(|x| x.unwrap())
+            .flatten()
             .collect::<Vec<_>>();
 
         let unclustered_elems: Vec<usize> = cluster_labels
@@ -478,7 +475,7 @@ pub fn aggregate_clusters<
         cluster_vecs
     } else {
         let mut cluster_vecs: Vec<G> = Vec::with_capacity(tot_clusters as usize);
-        for _ in (0..tot_clusters).into_iter() {
+        for _ in 0..tot_clusters {
             cluster_vecs.push(def_aggregator());
         }
         for (point_index, cluster_label) in cluster_labels.iter().enumerate() {
@@ -558,7 +555,7 @@ pub fn dbscan_generic<
     let mut intensity_sorted_indices = prefiltered_peaks
         .iter()
         .enumerate()
-        .map(|(i, peak)| (i.clone(), peak.intensity()))
+        .map(|(i, peak)| (i, peak.intensity()))
         .collect::<Vec<_>>();
     // Q: Does ^^^^ need a clone? i and peak intensity ... - S
 
@@ -612,9 +609,9 @@ pub fn dbscan_denseframes(
     min_n: usize,
     min_intensity: u64,
 ) -> frames::DenseFrame {
-    let out_frame_type: timsrust::FrameType = denseframe.frame_type.clone();
-    let out_rt: f64 = denseframe.rt.clone();
-    let out_index: usize = denseframe.index.clone();
+    let out_frame_type: timsrust::FrameType = denseframe.frame_type;
+    let out_rt: f64 = denseframe.rt;
+    let out_index: usize = denseframe.index;
 
     let prefiltered_peaks = {
         denseframe.sort_by_mz();
@@ -627,28 +624,28 @@ pub fn dbscan_denseframes(
         );
 
         // Filter the peaks and replace the raw peaks with the filtered peaks.
-        let prefiltered_peaks = denseframe
+        
+
+        denseframe
             .raw_peaks
             .clone()
             .into_iter()
-            .zip(keep_vector.into_iter())
+            .zip(keep_vector)
             .filter(|(_, b)| *b)
             .map(|(peak, _)| peak) // Clone the TimsPeak
-            .collect::<Vec<_>>();
-
-        prefiltered_peaks
+            .collect::<Vec<_>>()
     };
 
     let converter = DenseFrameConverter {
-        mz_scaling: mz_scaling.clone(),
-        ims_scaling: ims_scaling.clone(),
+        mz_scaling: *mz_scaling,
+        ims_scaling: *ims_scaling,
     };
     let peak_vec: Vec<TimsPeak> = dbscan_generic(
         converter,
         prefiltered_peaks,
         min_n,
         min_intensity,
-        &|| TimsPeakAggregator::default(),
+        TimsPeakAggregator::default,
         None::<&FFTimsPeak>,
         None,
     );

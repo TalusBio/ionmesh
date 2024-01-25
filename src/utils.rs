@@ -97,7 +97,7 @@ where
     // 2. Slide the right index until the mz difference while sliding is greater than the mz tolerance.
     // 3. If the number of points between the left and right index is greater than the minimum number of points, add them to the prefiltered peaks.
 
-    let max_dist = max_dist.clone();
+    let max_dist = *max_dist;
     let elems_len = elems.len();
     let elems_len_minus_one = elems_len - 1;
     for (curr_i, elem) in elems.iter().enumerate() {
@@ -270,7 +270,7 @@ where
     pub fn merge(&mut self, other: &Self) {
         // There is for sure some optimization to be done here.
         // But right now the math is the hard part ...  would definitely pay off
-        let a = self.clone();
+        let a = *self;
         let b = other;
 
         let combined_n = a.n + b.n;

@@ -21,7 +21,7 @@ extern crate log;
 extern crate pretty_env_logger;
 
 use clap::Parser;
-use log::info;
+
 use serde::{Deserialize, Serialize};
 use std::fs;
 
@@ -153,7 +153,7 @@ fn main() {
             config.denoise_config.ms2_min_n.into(),
             config.denoise_config.ms2_min_cluster_intensity.into(),
             config.denoise_config.mz_scaling.into(),
-            config.denoise_config.ims_scaling.into(),
+            config.denoise_config.ims_scaling,
             &mut rec,
         );
 
@@ -163,7 +163,7 @@ fn main() {
             config.tracing_config.rt_scaling.into(),
             config.tracing_config.ims_scaling.into(),
             config.tracing_config.min_n.into(),
-            config.tracing_config.min_neighbor_intensity.into(),
+            config.tracing_config.min_neighbor_intensity,
             &mut rec,
         );
 
@@ -183,8 +183,7 @@ fn main() {
             config.pseudoscan_generation_config.quad_scaling.into(),
             config
                 .pseudoscan_generation_config
-                .min_neighbor_intensity
-                .into(),
+                .min_neighbor_intensity,
             config.pseudoscan_generation_config.min_n.into(),
             &mut rec,
         );

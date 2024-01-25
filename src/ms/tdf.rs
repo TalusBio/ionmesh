@@ -77,7 +77,7 @@ impl DIAFrameInfo {
         let group_id = self.frame_groups[frame_id];
 
         match group_id {
-            None => return None,
+            None => None,
             Some(group_id) => self.groups[group_id].as_ref(),
         }
     }
@@ -184,7 +184,7 @@ impl DIAFrameInfo {
                 index: frame.index,
                 rt: frame.rt,
                 frame_type: frame.frame_type,
-                scan_start: scan_range.scan_start as usize,
+                scan_start: scan_range.scan_start,
                 group_id: group.id,
                 quad_group_id: i,
             };
@@ -237,10 +237,10 @@ impl DIAFrameInfo {
 
             let frame = DenseFrame {
                 raw_peaks: denseframe.raw_peaks[start..end].to_vec(),
-                index: denseframe.index.clone(),
-                rt: denseframe.rt.clone(),
-                frame_type: denseframe.frame_type.clone(),
-                sorted: denseframe.sorted.clone(),
+                index: denseframe.index,
+                rt: denseframe.rt,
+                frame_type: denseframe.frame_type,
+                sorted: denseframe.sorted,
             };
 
             let frame_window = DenseFrameWindow {
@@ -454,7 +454,7 @@ pub fn read_dia_frame_info(dotd_file: String) -> Result<DIAFrameInfo> {
 
     let max_window_id = groups_vec
         .iter()
-        .map(|(id, _, _, _, _, _)| id.clone())
+        .map(|(id, _, _, _, _, _)| *id)
         .max()
         .unwrap();
 
@@ -489,7 +489,7 @@ pub fn read_dia_frame_info(dotd_file: String) -> Result<DIAFrameInfo> {
             None => continue,
             Some(scan_ranges) => scan_ranges,
         };
-        if scan_ranges.len() == 0 {
+        if scan_ranges.is_empty() {
             continue;
         } else {
             groups_vec_o[i] = Some(DIAWindowGroup { id: i, scan_ranges });

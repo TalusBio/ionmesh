@@ -175,7 +175,7 @@ pub fn combine_traces(
     let grouped_windows: Vec<Vec<DenseFrameWindow>> = grouped_windows
         .into_iter()
         .flatten()
-        .filter_map(|x| x)
+        .flatten()
         .collect();
 
     let grouped_windows: Vec<Vec<TimeTimsPeak>> = grouped_windows
@@ -288,7 +288,7 @@ struct TraceAggregator {
 
 impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
     fn add(&mut self, peak: &TimeTimsPeak) {
-        let f64_intensity = peak.intensity as f64;
+        let _f64_intensity = peak.intensity as f64;
         self.mz.add(peak.mz, peak.intensity);
         debug_assert!(peak.intensity < u64::MAX - self.intensity);
         self.intensity += peak.intensity;
@@ -298,7 +298,7 @@ impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
     }
 
     fn aggregate(&self) -> BaseTrace {
-        let mz = self.mz.get_mean() as f64;
+        let mz = self.mz.get_mean();
         let rt = self.rt.get_mean() as f32;
         let ims = self.ims.get_mean() as f32;
         let min_rt = match self.rt.get_min() {
@@ -311,10 +311,10 @@ impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
         };
 
         BaseTrace {
-            mz: mz,
-            mz_std: self.mz.get_sd() as f64,
-            intensity: self.intensity.clone(),
-            rt: rt,
+            mz,
+            mz_std: self.mz.get_sd(),
+            intensity: self.intensity,
+            rt,
             rt_std: self.rt.get_sd() as f32,
             rt_kurtosis: self.rt.get_kurtosis() as f32,
             rt_skew: self.rt.get_skew() as f32,
@@ -328,23 +328,23 @@ impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
     }
 
     fn combine(self, other: Self) -> Self {
-        let mut mz = self.mz.clone();
-        let mut rt = self.rt.clone();
-        let mut ims = self.ims.clone();
+        let mut mz = self.mz;
+        let mut rt = self.rt;
+        let mut ims = self.ims;
 
         mz.merge(&other.mz);
         rt.merge(&other.rt);
         ims.merge(&other.ims);
 
-        let out = TraceAggregator {
-            mz: mz,
+        
+        TraceAggregator {
+            mz,
             intensity: self.intensity + other.intensity,
-            rt: rt,
-            ims: ims,
+            rt,
+            ims,
             num_peaks: self.num_peaks + other.num_peaks,
             quad_low_high: self.quad_low_high,
-        };
-        out
+        }
     }
 }
 
@@ -371,20 +371,19 @@ impl NDPointConverter<TimeTimsPeak, 3> for TimeTimsPeakConverter {
 fn _flatten_denseframe_vec(denseframe_windows: Vec<DenseFrameWindow>) -> Vec<TimeTimsPeak> {
     denseframe_windows
         .into_iter()
-        .map(|dfw| {
+        .flat_map(|dfw| {
             let mut out = Vec::new();
             for peak in dfw.frame.raw_peaks {
                 out.push(TimeTimsPeak {
                     mz: peak.mz,
                     intensity: peak.intensity as u64,
                     rt: dfw.frame.rt as f32,
-                    ims: peak.mobility as f32,
+                    ims: peak.mobility,
                     quad_low_high: (dfw.mz_start, dfw.mz_end),
                 });
             }
             out
         })
-        .flatten()
         .collect::<Vec<_>>()
 }
 
@@ -417,13 +416,13 @@ fn _combine_single_window_traces(
         prefiltered_peaks,
         min_n,
         min_intensity.into(),
-        &|| TraceAggregator {
+        || TraceAggregator {
             mz: RollingSDCalculator::default(),
             intensity: 0,
             rt: RollingSDCalculator::default(),
             ims: RollingSDCalculator::default(),
             num_peaks: 0,
-            quad_low_high: window_quad_low_high.clone(),
+            quad_low_high: window_quad_low_high,
         },
         None::<&FFTimeTimsPeak>,
         None,
@@ -502,14 +501,14 @@ impl<'a> ClusterAggregator<BaseTrace, PseudoSpectrum> for PseudoSpectrumAggregat
 
         PseudoSpectrum {
             peaks: self.peaks.clone(),
-            rt: rt,
-            ims: ims,
+            rt,
+            ims,
             rt_min: self.rt.get_min().unwrap() as f32,
             rt_max: self.rt.get_max().unwrap() as f32,
-            rt_std: rt_std,
-            ims_std: ims_std,
-            rt_skew: rt_skew,
-            ims_skew: ims_skew,
+            rt_std,
+            ims_std,
+            rt_skew,
+            ims_skew,
             quad_low: quad_low_high.0,
             quad_high: quad_low_high.1,
         }
@@ -518,25 +517,25 @@ impl<'a> ClusterAggregator<BaseTrace, PseudoSpectrum> for PseudoSpectrumAggregat
     fn combine(self, other: Self) -> Self {
         let mut peaks = self.peaks.clone();
         peaks.extend(other.peaks.clone());
-        let mut rt = self.rt.clone();
-        let mut ims = self.ims.clone();
-        let mut quad_low = self.quad_low.clone();
-        let mut quad_high = self.quad_high.clone();
+        let mut rt = self.rt;
+        let mut ims = self.ims;
+        let mut quad_low = self.quad_low;
+        let mut quad_high = self.quad_high;
 
         rt.merge(&other.rt);
         ims.merge(&other.ims);
         quad_low.merge(&other.quad_low);
         quad_high.merge(&other.quad_high);
 
-        let out = PseudoSpectrumAggregator {
-            peaks: peaks,
+        
+        PseudoSpectrumAggregator {
+            peaks,
             intensity: self.intensity + other.intensity,
-            rt: rt,
-            ims: ims,
-            quad_low: quad_low,
-            quad_high: quad_high,
-        };
-        out
+            rt,
+            ims,
+            quad_low,
+            quad_high,
+        }
     }
 }
 
@@ -597,7 +596,7 @@ pub fn combine_pseudospectra(
         traces,
         min_n,
         min_intensity.into(),
-        &|| PseudoSpectrumAggregator::default(),
+        PseudoSpectrumAggregator::default,
         Some(&extra_filter_fun),
         Some(utils::LogLevel::INFO),
     );
@@ -605,7 +604,7 @@ pub fn combine_pseudospectra(
     info!("Combined pseudospectra: {}", foo.len());
     timer.stop();
 
-    if let Some(stream) = record_stream.as_mut() {
+    if let Some(_stream) = record_stream.as_mut() {
         warn!("Plotting pseudospectra is not implemented yet");
         // let _ = foo.plot(stream, String::from("points/pseudospectra"), None, None);
     }

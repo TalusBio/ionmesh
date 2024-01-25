@@ -3,7 +3,7 @@ use std::str::FromStr;
 use crate::aggregation::tracing::PseudoSpectrum;
 use indicatif::ParallelProgressIterator;
 use log::warn;
-use sage_core::database::Builder as SageDatabaseBuilder;
+
 use sage_core::database::Parameters as SageDatabaseParameters;
 use sage_core::database::{EnzymeBuilder, IndexedDatabase};
 use sage_core::ion_series::Kind;
@@ -111,13 +111,13 @@ fn pseudospectrum_to_spec(pseudo: PseudoSpectrum, scan_id: String) -> RawSpectru
     let prec_width = pseudo.quad_high - pseudo.quad_low;
 
     let precursor = Precursor {
-        mz: prec_center as f32,
+        mz: prec_center,
         intensity: None,
         charge: None,
         spectrum_ref: None,
         isolation_window: Some(Tolerance::Da(
-            (-prec_width / 2.) as f32,
-            (prec_width / 2.) as f32,
+            -prec_width / 2.,
+            prec_width / 2.,
         )),
     };
 
@@ -128,20 +128,20 @@ fn pseudospectrum_to_spec(pseudo: PseudoSpectrum, scan_id: String) -> RawSpectru
         .unzip();
     let tic = ints.iter().sum();
 
-    let spec = RawSpectrum {
+    
+
+    RawSpectrum {
         file_id,
         ms_level,
         id: scan_id,
         precursors: vec![precursor],
         representation: Representation::Centroid,
-        scan_start_time: pseudo.rt as f32,
+        scan_start_time: pseudo.rt,
         mz: mzs,
         intensity: ints,
         ion_injection_time: 100.,
         total_ion_current: tic,
-    };
-
-    spec
+    }
 }
 
 pub fn score_pseudospectra(
