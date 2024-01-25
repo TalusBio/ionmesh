@@ -1,11 +1,11 @@
 use core::panic;
 
-use crate::dbscan;
+use crate::aggregation::dbscan;
 use crate::ms::frames::Converters;
 use crate::ms::frames::DenseFrame;
 use crate::ms::frames::DenseFrameWindow;
-use crate::tdf;
-use crate::tdf::DIAFrameInfo;
+use crate::ms::tdf;
+use crate::ms::tdf::DIAFrameInfo;
 use crate::utils;
 use crate::visualization::RerunPlottable;
 

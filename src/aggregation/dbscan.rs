@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::ops::{Add, Div, Mul, Sub};
 
 use crate::ms::frames::TimsPeak;
-use crate::space_generics::NDPointConverter;
+use crate::space::space_generics::NDPointConverter;
 use crate::utils;
 use crate::utils::within_distance_apply;
 
@@ -15,14 +15,14 @@ use crate::utils::within_distance_apply;
 ///
 use crate::mod_types::Float;
 use crate::ms::frames;
-use crate::space_generics::{HasIntensity, IndexedPoints, NDPoint};
+use crate::space::space_generics::{HasIntensity, IndexedPoints, NDPoint};
 use indicatif::ProgressIterator;
-use log::{error, log_enabled, trace, info};
+use log::{error, info, log_enabled, trace};
 
-use rayon::prelude::*;
+use rayon::{prelude::*, vec};
 
-use crate::kdtree::RadiusKDTree;
-use crate::quad::RadiusQuadTree;
+use crate::space::kdtree::RadiusKDTree;
+use crate::space::quad::RadiusQuadTree;
 use num::cast::AsPrimitive;
 
 // Pseudocode from wikipedia.
@@ -70,6 +70,69 @@ impl HasIntensity<u32> for frames::TimsPeak {
     }
 }
 
+struct FilterFunCache<'a> {
+    cache: Vec<Option<BTreeMap<usize, bool>>>,
+    filter_fun: Box<&'a dyn Fn(&usize, &usize) -> bool>,
+    tot_queries: u64,
+    cached_queries: u64,
+}
+
+impl<'a> FilterFunCache<'a> {
+    fn new(filter_fun: Box<&'a dyn Fn(&usize, &usize) -> bool>, capacity: usize) -> Self {
+        Self {
+            cache: vec![None; capacity],
+            filter_fun,
+            tot_queries: 0,
+            cached_queries: 0,
+        }
+    }
+
+    fn get(&mut self, elem_idx: usize, reference_idx: usize) -> bool {
+        // Get the value if it exists, call the functon, insert it and
+        // return it if it doesn't.
+        self.tot_queries += 1;
+
+        let out: bool = match self.cache[elem_idx] {
+            Some(ref map) => match map.get(&reference_idx) {
+                Some(x) => {
+                    self.cached_queries += 1;
+                    x.clone()
+                }
+                None => {
+                    let out: bool = (self.filter_fun)(&elem_idx, &reference_idx);
+                    self.insert(elem_idx, reference_idx, out);
+                    self.insert(reference_idx, elem_idx, out);
+                    out
+                }
+            },
+            None => {
+                let out = (self.filter_fun)(&elem_idx, &reference_idx);
+                self.insert(elem_idx, reference_idx, out);
+                self.insert(reference_idx, elem_idx, out);
+                out
+            }
+        };
+        out
+    }
+
+    fn insert(&mut self, elem_idx: usize, reference_idx: usize, value: bool) {
+        match self.cache[elem_idx] {
+            Some(ref mut map) => {
+                _ = map.insert(reference_idx, value);
+            }
+            None => {
+                let mut map = BTreeMap::new();
+                map.insert(reference_idx, value);
+                self.cache[elem_idx] = Some(map);
+            }
+        }
+    }
+
+    fn get_stats(&self) -> (u64, u64) {
+        (self.tot_queries, self.cached_queries)
+    }
+}
+
 // TODO: rename quad_points, since this no longer uses a quadtree.
 // TODO: refactor to take a filter function instead of requiting
 //       a min intensity and an intensity trait.
@@ -92,8 +155,7 @@ fn _dbscan<
         + Send
         + Sync,
     E: Sync + HasIntensity<I>,
-    T: IndexedPoints<'a, N, usize> 
-        + std::marker::Sync,
+    T: IndexedPoints<'a, N, usize> + std::marker::Sync,
     FF: Fn(&E, &E) -> bool + Send + Sync + Copy,
 >(
     indexed_points: &'a T,
@@ -107,45 +169,25 @@ fn _dbscan<
 ) -> (u64, Vec<ClusterLabel<u64>>) {
     let mut cluster_labels = vec![ClusterLabel::Unassigned; prefiltered_peaks.len()];
     let mut cluster_id = 0;
-    let mut cached_queries = 0;
-    let mut tot_queries = 0;
 
-    let mut filterfun_cache = HashMap::new();
+    let usize_filterfun = |a: &usize, b: &usize| {
+        filter_fun.expect("filter_fun should be Some")(
+            &prefiltered_peaks[*a],
+            &prefiltered_peaks[*b],
+        )
+    };
+    let mut filterfun_cache =
+        FilterFunCache::new(Box::new(&usize_filterfun), prefiltered_peaks.len());
     let mut filterfun_with_cache = |elem_idx: usize, reference_idx: usize, reference: &E| {
-        let key = (elem_idx, reference_idx);
-        tot_queries += 1;
-        if filterfun_cache.contains_key(&key) {
-            cached_queries += 1;
-            return *filterfun_cache.get(&key).unwrap();
-        }
-        let out = filter_fun.expect("filter_fun should be Some")(&prefiltered_peaks[elem_idx], reference);
-        filterfun_cache.insert(key, out);
-        filterfun_cache.insert((key.1, key.0), out);
+        let out = filterfun_cache.get(elem_idx, reference_idx);
         out
     };
 
     let my_progbar = if progress {
-            indicatif::ProgressBar::new(intensity_sorted_indices.len() as u64)
-        } else {
-            indicatif::ProgressBar::hidden()
-        };
-
-    // // make a 'real_neighbor_vec' that is the same size as the intensity_sorted_indices
-    // let real_indices = intensity_sorted_indices.par_iter().map(|(i, intens)| {
-    //     let query_point = quad_points[*i].clone();
-    //     let neighbors = indexed_points.query_ndpoint(&query_point);
-    //     if filter_fun.is_some() {
-    //         let query_peak = &prefiltered_peaks[*i];
-    //         let neighbors = neighbors
-    //             .into_iter()
-    //             .filter(|ii| filter_fun.unwrap()(&prefiltered_peaks[**ii], &query_peak))
-    //             .collect::<Vec<_>>();
-    //         neighbors
-    //     } else {
-    //         neighbors
-    //     }
-
-    // }).collect::<Vec<_>>();
+        indicatif::ProgressBar::new(intensity_sorted_indices.len() as u64)
+    } else {
+        indicatif::ProgressBar::hidden()
+    };
 
     for (point_index, _intensity) in intensity_sorted_indices.iter().progress_with(my_progbar) {
         let point_index = *point_index;
@@ -166,6 +208,7 @@ fn _dbscan<
             neighbors = neighbors
                 .into_iter()
                 .filter(|i| filterfun_with_cache(**i, point_index, &query_peak))
+                // .filter(|i| filter_fun.unwrap()(&prefiltered_peaks[**i], &query_peak))
                 .collect::<Vec<_>>();
 
             if neighbors.len() < min_n {
@@ -173,7 +216,6 @@ fn _dbscan<
                 continue;
             }
         }
-
 
         // Q: Do I need to care about overflows here? - Sebastian
         let neighbor_intensity_total = neighbors
@@ -212,6 +254,7 @@ fn _dbscan<
                 neighbors = neighbors
                     .into_iter()
                     .filter(|i| filterfun_with_cache(**i, point_index, &query_peak))
+                    // .filter(|i| filter_fun.unwrap()(&prefiltered_peaks[**i], &query_peak))
                     .collect::<Vec<_>>();
             }
 
@@ -252,13 +295,13 @@ fn _dbscan<
         }
     }
 
+    let (tot_queries, cached_queries) = filterfun_cache.get_stats();
+
     if tot_queries > 1000 {
         let cache_hit_rate = cached_queries as f64 / tot_queries as f64;
         info!(
             "Cache hit rate: {} / {} = {}",
-            cached_queries,
-            tot_queries,
-            cache_hit_rate
+            cached_queries, tot_queries, cache_hit_rate
         );
     }
 
@@ -357,11 +400,7 @@ pub fn aggregate_clusters<
     log_level: utils::LogLevel,
 ) -> Vec<R> {
     let cluster_vecs: Vec<G> = if cfg!(feature = "par_dataprep") {
-        let timer = utils::ContextTimer::new(
-            "dbscan_generic::par_aggregation",
-            true,
-            log_level,
-        );
+        let timer = utils::ContextTimer::new("dbscan_generic::par_aggregation", true, log_level);
         let out: Vec<(usize, T)> = cluster_labels
             .iter()
             .enumerate()
@@ -420,9 +459,12 @@ pub fn aggregate_clusters<
             .filter(|(_, x)| match x {
                 ClusterLabel::Unassigned => true,
                 _ => false,
-            }).map(|(i, _elem)| i).collect();
+            })
+            .map(|(i, _elem)| i)
+            .collect();
 
-        let unclustered_elems = unclustered_elems.iter()
+        let unclustered_elems = unclustered_elems
+            .iter()
             .map(|i| {
                 let mut oe = def_aggregator();
                 oe.add(&elements[*i]);
@@ -431,7 +473,7 @@ pub fn aggregate_clusters<
             .collect::<Vec<_>>();
 
         cluster_vecs.extend(unclustered_elems);
-        
+
         timer.stop();
         cluster_vecs
     } else {
@@ -495,11 +537,10 @@ pub fn dbscan_generic<
     let show_progress = log_level.is_some();
     let log_level = match log_level {
         Some(x) => x,
-        None => utils::LogLevel::TRACE
+        None => utils::LogLevel::TRACE,
     };
 
-    let timer =
-        utils::ContextTimer::new("dbscan_generic::", true, log_level);
+    let timer = utils::ContextTimer::new("dbscan_generic::", true, log_level);
     let i_timer = timer.start_sub_timer("conversion");
     let (ndpoints, boundary) = converter.convert_vec(&prefiltered_peaks);
     i_timer.stop();

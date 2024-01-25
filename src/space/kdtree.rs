@@ -1,5 +1,5 @@
 use crate::mod_types::Float;
-use crate::space_generics::{IndexedPoints, NDBoundary, NDPoint};
+use crate::space::space_generics::{IndexedPoints, NDBoundary, NDPoint};
 use log::warn;
 
 const EPSILON: Float = Float::EPSILON;

@@ -1,7 +1,7 @@
-use crate::dbscan::{dbscan_generic, ClusterAggregator};
+use crate::aggregation::dbscan::{dbscan_generic, ClusterAggregator};
 use crate::mod_types::Float;
 use crate::ms::frames::{DenseFrame, DenseFrameWindow, TimsPeak};
-use crate::space_generics::{HasIntensity, NDPoint, NDPointConverter, TraceLike};
+use crate::space::space_generics::{HasIntensity, NDPoint, NDPointConverter, TraceLike};
 use crate::utils;
 use crate::utils::RollingSDCalculator;
 use crate::visualization::RerunPlottable;
@@ -9,7 +9,6 @@ use crate::visualization::RerunPlottable;
 use log::{debug, error, info, warn};
 use rayon::iter::IntoParallelIterator;
 use rayon::prelude::*;
-use rerun::Time;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::io::Write;
@@ -400,7 +399,6 @@ fn _combine_single_window_traces(
     min_n: usize,
     min_intensity: u32,
 ) -> Vec<BaseTrace> {
-    
     debug!("Prefiltered peaks: {}", prefiltered_peaks.len());
     let converter = TimeTimsPeakConverter {
         mz_scaling,
@@ -544,15 +542,23 @@ impl<'a> ClusterAggregator<BaseTrace, PseudoSpectrum> for PseudoSpectrumAggregat
 
 struct BaseTraceConverter {
     rt_scaling: f64,
+    rt_start_end_ratio: f64,
     ims_scaling: f64,
     quad_scaling: f64,
+    peak_width_prior: f64,
 }
 
-impl NDPointConverter<BaseTrace, 4> for BaseTraceConverter {
-    fn convert(&self, elem: &BaseTrace) -> NDPoint<4> {
+impl NDPointConverter<BaseTrace, 6> for BaseTraceConverter {
+    fn convert(&self, elem: &BaseTrace) -> NDPoint<6> {
+        // TODO fix this magic number ...
+        let rt_start_use = (elem.rt - elem.rt_std).min(elem.rt - self.peak_width_prior as f32);
+        let rt_end_use = (elem.rt + elem.rt_std).max(elem.rt + self.peak_width_prior as f32);
+        let rt_start_end_scaling = self.rt_scaling * self.rt_start_end_ratio;
         NDPoint {
             values: [
                 (elem.rt as f64 / self.rt_scaling) as Float,
+                (rt_start_use as f64 / rt_start_end_scaling) as Float,
+                (rt_end_use as f64 / rt_start_end_scaling) as Float,
                 (elem.mobility as f64 / self.ims_scaling) as Float,
                 (elem.quad_low as f64 / self.quad_scaling) as Float,
                 (elem.quad_high as f64 / self.quad_scaling) as Float,
@@ -576,6 +582,8 @@ pub fn combine_pseudospectra(
         rt_scaling,
         ims_scaling,
         quad_scaling,
+        rt_start_end_ratio: 2.,
+        peak_width_prior: 0.75,
     };
 
     const IOU_THRESH: f32 = 0.2;

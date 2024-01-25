@@ -1,6 +1,6 @@
 use crate::mod_types::Float;
 use crate::ms::frames::{DenseFrame, TimsPeak};
-use crate::space_generics::{IndexedPoints, NDBoundary, NDPoint, NDPointConverter};
+use crate::space::space_generics::{IndexedPoints, NDBoundary, NDPoint, NDPointConverter};
 use core::panic;
 use log::trace;
 

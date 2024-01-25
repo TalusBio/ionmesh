@@ -5,8 +5,8 @@ pub use timsrust::{
 };
 
 use crate::mod_types::Float;
-use crate::space_generics::NDPoint;
-use crate::tdf::{DIAFrameInfo, ScanRange};
+use crate::ms::tdf::{DIAFrameInfo, ScanRange};
+use crate::space::space_generics::NDPoint;
 use crate::visualization::RerunPlottable;
 
 use log::info;

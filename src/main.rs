@@ -7,18 +7,13 @@
 //     ('fragment_intensity', Float32)])
 //
 
-mod dbscan;
+mod aggregation;
 mod extraction;
-mod kdtree;
 mod mod_types;
 mod ms;
-mod ms_denoise;
-mod quad;
 mod scoring;
-mod space_generics;
-mod tdf;
-mod trace_combination;
-mod tracing;
+mod space;
+
 mod utils;
 mod visualization;
 
@@ -153,7 +148,7 @@ fn main() {
     // ms_denoise::read_all_ms1_denoising(path_use.clone(), &mut rec);
 
     if true {
-        let dia_frames = ms_denoise::read_all_dia_denoising(
+        let dia_frames = aggregation::ms_denoise::read_all_dia_denoising(
             path_use.clone(),
             config.denoise_config.ms2_min_n.into(),
             config.denoise_config.ms2_min_cluster_intensity.into(),
@@ -162,7 +157,7 @@ fn main() {
             &mut rec,
         );
 
-        let traces = tracing::combine_traces(
+        let traces = aggregation::tracing::combine_traces(
             dia_frames,
             config.tracing_config.mz_scaling.into(),
             config.tracing_config.rt_scaling.into(),
@@ -172,7 +167,7 @@ fn main() {
             &mut rec,
         );
 
-        let out = tracing::write_trace_csv(&traces, &"traces_debug.csv".into());
+        let out = aggregation::tracing::write_trace_csv(&traces, &"traces_debug.csv".into());
         match out {
             Ok(_) => {}
             Err(e) => {
@@ -181,7 +176,7 @@ fn main() {
         }
 
         // Maybe reparametrize as 1.1 cycle time
-        let pseudoscans = tracing::combine_pseudospectra(
+        let pseudoscans = aggregation::tracing::combine_pseudospectra(
             traces,
             config.pseudoscan_generation_config.rt_scaling.into(),
             config.pseudoscan_generation_config.ims_scaling.into(),
@@ -195,14 +190,16 @@ fn main() {
         );
 
         // Report min/max/average/std and skew for ims and rt
-        let ims_stats = utils::get_stats(&pseudoscans.iter().map(|x| x.ims as f64).collect::<Vec<_>>());
+        let ims_stats =
+            utils::get_stats(&pseudoscans.iter().map(|x| x.ims as f64).collect::<Vec<_>>());
         let ims_sd_stats = utils::get_stats(
             &pseudoscans
                 .iter()
                 .map(|x| x.ims_std as f64)
                 .collect::<Vec<_>>(),
         );
-        let rt_stats = utils::get_stats(&pseudoscans.iter().map(|x| x.rt as f64).collect::<Vec<_>>());
+        let rt_stats =
+            utils::get_stats(&pseudoscans.iter().map(|x| x.rt as f64).collect::<Vec<_>>());
         let rt_sd_stats = utils::get_stats(
             &pseudoscans
                 .iter()
@@ -224,7 +221,10 @@ fn main() {
 
         println!("npeaks: {:?}", npeaks);
 
-        let out = tracing::write_pseudoscans_json(&pseudoscans, r"pseudoscans_debug.json".into());
+        let out = aggregation::tracing::write_pseudoscans_json(
+            &pseudoscans,
+            r"pseudoscans_debug.json".into(),
+        );
         match out {
             Ok(_) => {}
             Err(e) => {
@@ -233,7 +233,8 @@ fn main() {
         }
     }
 
-    let pseudoscans_read = tracing::read_pseudoscans_json(r"pseudoscans_debug.json".into());
+    let pseudoscans_read =
+        aggregation::tracing::read_pseudoscans_json(r"pseudoscans_debug.json".into());
     let pseudoscans = pseudoscans_read.unwrap();
     println!("pseudoscans: {:?}", pseudoscans.len());
 

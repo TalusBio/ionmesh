@@ -1,15 +1,8 @@
-use std::fs::read_to_string;
 use std::str::FromStr;
 
-use crate::tracing::PseudoSpectrum;
+use crate::aggregation::tracing::PseudoSpectrum;
 use indicatif::ParallelProgressIterator;
 use log::warn;
-use rayon::iter::IndexedParallelIterator;
-use rayon::iter::IntoParallelIterator;
-use rayon::iter::ParallelIterator;
-use serde::Deserialize;
-use serde::Serialize;
-use serde::ser::SerializeStruct;
 use sage_core::database::Builder as SageDatabaseBuilder;
 use sage_core::database::Parameters as SageDatabaseParameters;
 use sage_core::database::{EnzymeBuilder, IndexedDatabase};
@@ -17,9 +10,11 @@ use sage_core::ion_series::Kind;
 use sage_core::mass::Tolerance;
 use sage_core::ml::linear_discriminant::score_psms;
 use sage_core::modification::ModificationSpecificity;
+use sage_core::scoring::Feature;
 use sage_core::scoring::Scorer;
 use sage_core::spectrum::{Precursor, RawSpectrum, Representation, SpectrumProcessor};
-use sage_core::scoring::Feature;
+use serde::ser::SerializeStruct;
+use serde::Serialize;
 use serde::Serializer;
 
 use std::collections::HashMap;
@@ -52,14 +47,15 @@ struct SerializableFeature<'a> {
     feature: &'a Feature,
 }
 
-impl <'a>SerializableFeature<'a> {
+impl<'a> SerializableFeature<'a> {
     fn from_feature(feat: &'a sage_core::scoring::Feature, db: &IndexedDatabase) -> Self {
         let peptide = db[feat.peptide_idx].to_string().clone();
-        SerializableFeature { peptide, feature: feat }
+        SerializableFeature {
+            peptide,
+            feature: feat,
+        }
     }
 }
-
-
 
 impl Serialize for SerializableFeature<'_> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -104,7 +100,6 @@ impl Serialize for SerializableFeature<'_> {
         row.end()
     }
 }
-
 
 //
 

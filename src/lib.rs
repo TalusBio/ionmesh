@@ -1,13 +1,7 @@
-pub mod dbscan;
-pub mod kdtree;
+pub mod aggregation;
 mod mod_types;
 pub mod ms;
-pub mod ms_denoise;
-pub mod quad;
 pub mod scoring;
-pub mod space_generics;
-pub mod tdf;
-pub mod trace_combination;
-pub mod tracing;
+pub mod space;
 pub mod utils;
 pub mod visualization;
