@@ -333,7 +333,7 @@ impl RerunPlottable<Option<usize>> for DenseFrame {
             &rerun::Points2D::new(
                 quad_points
                     .iter()
-                    .map(|point| (point.values[0], point.values[1])),
+                    .map(|point| (point.values[0] as f32, point.values[1] as f32)),
             )
             .with_radii(radii),
         )?;

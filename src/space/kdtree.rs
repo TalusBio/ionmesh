@@ -178,7 +178,7 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
     }
 
     pub fn query(&'a self, point: &NDPoint<D>) -> Vec<&'a T> {
-        let candidates = self.query_range(&NDBoundary::new(
+        let candidates: Vec<(&NDPoint<D>, &T)> = self.query_range(&NDBoundary::new(
             point
                 .values
                 .iter()
@@ -194,20 +194,7 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
                 .try_into()
                 .unwrap(),
         ));
-
-        let out: Vec<&T> = candidates
-            .into_iter()
-            .filter(|x| {
-                let dist =
-                    x.0.values
-                        .iter()
-                        .zip(point.values.iter())
-                        .map(|(x, y)| (x - y).abs())
-                        .sum::<Float>();
-                dist < self.radius
-            })
-            .map(|x| x.1)
-            .collect();
+        let out = self.refine_query(point, candidates);
 
         out
     }
@@ -239,6 +226,26 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
 
         result
     }
+
+    /// Calculates the manhattan distance between the query point and the
+    /// candidate points. If the distance is less than the radius, the candidate
+    /// point is kept.
+    fn refine_query(&self, point: &NDPoint<D>, candidates: Vec<(&'a NDPoint<D>, &'a T)>) -> Vec<&'a T> {
+        let out: Vec<&'a T> = candidates
+            .into_iter()
+            .filter(|x| {
+                let dist =
+                    x.0.values
+                        .iter()
+                        .zip(point.values.iter())
+                        .map(|(x, y)| (x - y).abs())
+                        .sum::<Float>();
+                dist < self.radius
+            })
+            .map(|x| x.1)
+            .collect();
+        out
+    }
 }
 
 impl<'a, T, const D: usize> IndexedPoints<'a, D, T> for RadiusKDTree<'a, T, D> {
@@ -246,8 +253,12 @@ impl<'a, T, const D: usize> IndexedPoints<'a, D, T> for RadiusKDTree<'a, T, D> {
         self.query(point)
     }
 
-    fn query_ndrange(&'a self, boundary: &NDBoundary<D>) -> Vec<&'a T> {
-        let out = self.query_range(boundary);
-        out.iter().map(|x| x.1).collect()
+    fn query_ndrange(&'a self, boundary: &NDBoundary<D>, reference_point: Option<&NDPoint<D>>) -> Vec<&'a T> {
+        let candidates = self.query_range(boundary);
+        if let Some(point) = reference_point {
+            self.refine_query(point, candidates)
+        } else {
+            candidates.iter().map(|x| x.1).collect()
+        }
     }
 }

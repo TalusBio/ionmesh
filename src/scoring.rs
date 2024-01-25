@@ -16,6 +16,7 @@ use sage_core::spectrum::{Precursor, RawSpectrum, Representation, SpectrumProces
 use serde::ser::SerializeStruct;
 use serde::Serialize;
 use serde::Serializer;
+use serde::Deserialize;
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -23,6 +24,22 @@ use std::fs;
 
 use rayon::prelude::*;
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SageSearchConfig {
+    pub static_mods: Vec<(String, f32)>,
+    pub variable_mods: Vec<(String, Vec<f32>)>,
+    pub fasta_path: String,
+}
+
+impl Default for SageSearchConfig {
+    fn default() -> Self {
+        SageSearchConfig {
+            static_mods: vec![("C".into(), 57.02146)],
+            variable_mods: vec![("M".into(), vec![15.994915])],
+            fasta_path: "".into(),
+        }
+    }
+}
 // Copied from sage_cloudpath just to prevent one more depencency ...
 
 pub fn read_fasta<S>(
@@ -128,8 +145,6 @@ fn pseudospectrum_to_spec(pseudo: PseudoSpectrum, scan_id: String) -> RawSpectru
         .unzip();
     let tic = ints.iter().sum();
 
-    
-
     RawSpectrum {
         file_id,
         ms_level,
@@ -146,7 +161,7 @@ fn pseudospectrum_to_spec(pseudo: PseudoSpectrum, scan_id: String) -> RawSpectru
 
 pub fn score_pseudospectra(
     elems: Vec<PseudoSpectrum>,
-    fasta_path: String,
+    config: SageSearchConfig
 ) -> Result<(), Box<dyn Error>> {
     // 1. Buid raw spectra from the pseudospectra
 
@@ -171,13 +186,14 @@ pub fn score_pseudospectra(
 
     // Parameters -> Parameters::build -> IndexedDb
     let mut static_mods: HashMap<ModificationSpecificity, f32> = HashMap::new();
-    static_mods.insert(ModificationSpecificity::from_str("C").unwrap(), 57.02146);
+    for x in config.static_mods {
+        static_mods.insert(ModificationSpecificity::from_str(&x.0).unwrap(), x.1);
+    }
 
     let mut variable_mods: HashMap<ModificationSpecificity, Vec<f32>> = HashMap::new();
-    variable_mods.insert(
-        ModificationSpecificity::from_str("M").unwrap(),
-        vec![15.99491],
-    );
+    for x in config.variable_mods {
+        variable_mods.insert(ModificationSpecificity::from_str(&x.0).unwrap(), x.1);
+    }
 
     let parameters = SageDatabaseParameters {
         bucket_size: 8192,
@@ -201,11 +217,11 @@ pub fn score_pseudospectra(
         max_variable_mods: 1,
         decoy_tag: "rev_".into(),
         generate_decoys: true,
-        fasta: fasta_path.clone(),
+        fasta: config.fasta_path.clone(),
     };
 
     let sage_fasta = read_fasta(
-        fasta_path.clone(),
+        config.fasta_path.clone(),
         parameters.decoy_tag.clone(),
         parameters.generate_decoys,
     )

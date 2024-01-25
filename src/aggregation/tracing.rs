@@ -12,6 +12,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::io::Write;
+use std::path::Path;
 
 type QuadLowHigh = (f64, f64);
 
@@ -549,7 +550,6 @@ struct BaseTraceConverter {
 
 impl NDPointConverter<BaseTrace, 6> for BaseTraceConverter {
     fn convert(&self, elem: &BaseTrace) -> NDPoint<6> {
-        // TODO fix this magic number ...
         let rt_start_use = (elem.rt - elem.rt_std).min(elem.rt - self.peak_width_prior as f32);
         let rt_end_use = (elem.rt + elem.rt_std).max(elem.rt + self.peak_width_prior as f32);
         let rt_start_end_scaling = self.rt_scaling * self.rt_start_end_ratio;
@@ -563,6 +563,30 @@ impl NDPointConverter<BaseTrace, 6> for BaseTraceConverter {
                 (elem.quad_high as f64 / self.quad_scaling) as Float,
             ],
         }
+    }
+
+    fn convert_to_bounds_query<'a>(&self, point: &'a NDPoint<6>) -> (crate::space::space_generics::NDBoundary<6>, Option<&'a NDPoint<6>>) {
+        let range_center = (point.values[1] + point.values[2]) / 2.;
+        let mut starts = point.values.clone();
+        let mut ends = point.values.clone();
+        for i in 0..6 {
+            starts[i] = starts[i] - 1.;
+            ends[i] = ends[i] + 1.;
+        }
+
+        // KEY =                 [-------]
+        // Allowed ends =            [------]
+        // Allowed starts =  [------]
+
+        ends[1] = range_center;
+        starts[2] = range_center;
+
+        let bounds = crate::space::space_generics::NDBoundary::new(
+            starts,
+            ends
+        );
+        (bounds, Some(point))
+        
     }
 }
 
@@ -614,9 +638,9 @@ pub fn combine_pseudospectra(
 
 pub fn write_pseudoscans_json(
     pseudocscans: &[PseudoSpectrum],
-    out_path: String,
+    out_path: impl AsRef<Path>,
 ) -> Result<(), Box<dyn Error>> {
-    info!("Writting pseudoscans to json");
+    info!("Writting pseudoscans to json: {}", out_path.as_ref().display());
     let mut file = std::fs::File::create(out_path)?;
     file.write("[".as_bytes())?;
     let mut is_first = true;
@@ -634,7 +658,7 @@ pub fn write_pseudoscans_json(
     Ok(())
 }
 
-pub fn read_pseudoscans_json(in_path: String) -> Result<Vec<PseudoSpectrum>, Box<dyn Error>> {
+pub fn read_pseudoscans_json(in_path: impl AsRef<Path>) -> Result<Vec<PseudoSpectrum>, Box<dyn Error>> {
     info!("Reading pseudoscans from json");
     let file = std::fs::File::open(in_path)?;
     let reader = std::io::BufReader::new(file);

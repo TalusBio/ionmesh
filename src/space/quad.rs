@@ -180,19 +180,35 @@ impl<'a, T> RadiusQuadTree<'a, T> {
         self.points.clear();
     }
 
-    pub fn query(&'a self, point: &NDPoint<2>) -> Vec<&'a T> {
+    pub fn query(&'a self, point: &NDPoint<2>) -> Vec<(&'a NDPoint<2>, &'a T)> {
         let mut result = Vec::new();
         let range = NDBoundary::new(
             [point.values[0] - self.radius, point.values[1] - self.radius],
             [point.values[0] + self.radius, point.values[1] + self.radius],
         );
         self.query_range(&range, &mut result);
+        let out = self.refine_query(point, result);
+
+        out
+    }
+
+    fn refine_query(&'a self, point: &NDPoint<2>, candidates: Vec<(&'a NDPoint<2>, &'a T)>) -> Vec<(&NDPoint<2>, &T)> {
+        let mut result = Vec::new();
+        let radius_squared = self.radius.powi(2);
+
+        for (candidate_point, candidate_data) in candidates.into_iter() {
+            let distance_squared = (candidate_point.values[0] - point.values[0]).powi(2)
+                + (candidate_point.values[1] - point.values[1]).powi(2);
+            if distance_squared <= radius_squared {
+                result.push((candidate_point, candidate_data));
+            }
+        }
 
         result
     }
 
     // This function is used a lot so any optimization here will have a big impact.
-    pub fn query_range(&'a self, range: &NDBoundary<2>, result: &mut Vec<&'a T>) {
+    pub fn query_range(&'a self, range: &NDBoundary<2>, result: &mut Vec<(&'a NDPoint<2>, &'a T)>) {
         if !self.boundary.intersects(range) || self.count == 0 {
             return;
         }
@@ -207,7 +223,7 @@ impl<'a, T> RadiusQuadTree<'a, T> {
                     let dist = (point.values[0] - range.centers[0]).abs()
                         + (point.values[1] - range.centers[1]).abs();
                     if dist <= self.radius {
-                        result.push(data);
+                        result.push((point, data));
                     }
                 }
             }
@@ -227,11 +243,20 @@ impl<'a, T> RadiusQuadTree<'a, T> {
 impl<'a, T> IndexedPoints<'a, 2, T> for RadiusQuadTree<'a, T> {
     fn query_ndpoint(&'a self, point: &NDPoint<2>) -> Vec<&'a T> {
         self.query(point)
+            .into_iter()
+            .map(|x| x.1)
+            .collect::<Vec<_>>()
     }
 
-    fn query_ndrange(&'a self, boundary: &NDBoundary<2>) -> Vec<&'a T> {
+    fn query_ndrange(&'a self, boundary: &NDBoundary<2>, reference_point: Option<&NDPoint<2>>) -> Vec<&'a T> {
         let mut result = Vec::new();
         self.query_range(boundary, &mut result);
-        result
+
+        match reference_point {
+            Some(point) => {
+                self.refine_query(point, result)
+            }
+            None => result,
+        }.into_iter().map(|x| x.1).collect::<Vec<_>>()
     }
 }

@@ -3,7 +3,7 @@ use std::ops::{Add, Div, Mul, Sub};
 
 use crate::ms::frames::TimsPeak;
 use crate::space::space_generics::NDPointConverter;
-use crate::utils;
+use crate::utils::{self, RollingSDCalculator};
 use crate::utils::within_distance_apply;
 
 /// Density-based spatial clustering of applications with noise (DBSCAN)
@@ -17,7 +17,7 @@ use crate::mod_types::Float;
 use crate::ms::frames;
 use crate::space::space_generics::{HasIntensity, IndexedPoints, NDPoint};
 use indicatif::ProgressIterator;
-use log::{info};
+use log::{info,debug};
 
 use rayon::{prelude::*};
 
@@ -144,6 +144,7 @@ impl<'a> FilterFunCache<'a> {
 fn _dbscan<
     'a,
     const N: usize,
+    C: NDPointConverter<E, N>,
     I: Div<Output = I>
         + Add<Output = I>
         + Mul<Output = I>
@@ -165,8 +166,12 @@ fn _dbscan<
     min_intensity: u64,
     intensity_sorted_indices: &Vec<(usize, I)>,
     filter_fun: Option<FF>,
+    converter: C,
     progress: bool,
 ) -> (u64, Vec<ClusterLabel<u64>>) {
+    let mut initial_candidates_counts = utils::RollingSDCalculator::default();
+    let mut final_candidates_counts = utils::RollingSDCalculator::default();
+
     let mut cluster_labels = vec![ClusterLabel::Unassigned; prefiltered_peaks.len()];
     let mut cluster_id = 0;
 
@@ -178,7 +183,7 @@ fn _dbscan<
     };
     let mut filterfun_cache =
         FilterFunCache::new(Box::new(&usize_filterfun), prefiltered_peaks.len());
-    let mut filterfun_with_cache = |elem_idx: usize, reference_idx: usize, _reference: &E| {
+    let mut filterfun_with_cache = |elem_idx: usize, reference_idx: usize| {
         
         filterfun_cache.get(elem_idx, reference_idx)
     };
@@ -195,8 +200,9 @@ fn _dbscan<
             continue;
         }
 
-        let query_point = quad_points[point_index].clone();
-        let mut neighbors = indexed_points.query_ndpoint(&query_point);
+        let query_elems = converter.convert_to_bounds_query(&quad_points[point_index]);
+        let mut neighbors = indexed_points.query_ndrange(&query_elems.0, query_elems.1);
+
 
         if neighbors.len() < min_n {
             cluster_labels[point_index] = ClusterLabel::Noise;
@@ -204,18 +210,23 @@ fn _dbscan<
         }
 
         if filter_fun.is_some() {
-            let query_peak = &prefiltered_peaks[point_index];
+            let num_initial_candidates = neighbors.len();
             neighbors = neighbors
                 .into_iter()
-                .filter(|i| filterfun_with_cache(**i, point_index, query_peak))
+                .filter(|i| filterfun_with_cache(**i, point_index))
                 // .filter(|i| filter_fun.unwrap()(&prefiltered_peaks[**i], &query_peak))
                 .collect::<Vec<_>>();
+
+            let candidates_after_filter = neighbors.len();
+            initial_candidates_counts.add(num_initial_candidates as f32, 1);
+            final_candidates_counts.add(candidates_after_filter as f32, 1);
 
             if neighbors.len() < min_n {
                 cluster_labels[point_index] = ClusterLabel::Noise;
                 continue;
             }
         }
+
 
         // Q: Do I need to care about overflows here? - Sebastian
         let neighbor_intensity_total = neighbors
@@ -234,6 +245,7 @@ fn _dbscan<
         seed_set.extend(neighbors);
 
         const MAX_EXTENSION_DISTANCE: Float = 5.;
+        let mut internal_neighbor_additions = 0;
 
         while let Some(neighbor) = seed_set.pop() {
             let neighbor_index = *neighbor;
@@ -247,13 +259,13 @@ fn _dbscan<
 
             cluster_labels[neighbor_index] = ClusterLabel::Cluster(cluster_id);
 
-            let mut neighbors = indexed_points.query_ndpoint(&quad_points[*neighbor]);
+            let inner_query_elems = converter.convert_to_bounds_query(&quad_points[*neighbor]);
+            let mut neighbors = indexed_points.query_ndrange(&inner_query_elems.0, inner_query_elems.1);
 
             if filter_fun.is_some() {
-                let query_peak = &prefiltered_peaks[point_index];
                 neighbors = neighbors
                     .into_iter()
-                    .filter(|i| filterfun_with_cache(**i, point_index, query_peak))
+                    .filter(|i| filterfun_with_cache(**i, point_index))
                     // .filter(|i| filter_fun.unwrap()(&prefiltered_peaks[**i], &query_peak))
                     .collect::<Vec<_>>();
             }
@@ -282,6 +294,7 @@ fn _dbscan<
                         let going_downhill = prefiltered_peaks[**i].intensity() <= query_intensity;
 
                         let p = &quad_points[**i];
+                        let query_point = query_elems.1.unwrap();
                         // Using minkowski distance with p = 1, manhattan distance.
                         let dist = (p.values[0] - query_point.values[0]).abs()
                             + (p.values[1] - query_point.values[1]).abs();
@@ -290,6 +303,7 @@ fn _dbscan<
                     })
                     .collect::<Vec<_>>();
 
+                internal_neighbor_additions += local_neighbors2.len();
                 seed_set.extend(local_neighbors2);
             }
         }
@@ -303,7 +317,15 @@ fn _dbscan<
             "Cache hit rate: {} / {} = {}",
             cached_queries, tot_queries, cache_hit_rate
         );
+
+        let avg_initial_candidates = initial_candidates_counts.get_mean();
+        let avg_final_candidates = final_candidates_counts.get_mean();
+        debug!(
+            "Avg initial candidates: {} Avg final candidates: {}",
+            avg_initial_candidates, avg_final_candidates
+        );
     }
+
 
     (cluster_id, cluster_labels)
 }
@@ -537,7 +559,7 @@ pub fn dbscan_generic<
         None => utils::LogLevel::TRACE,
     };
 
-    let timer = utils::ContextTimer::new("dbscan_generic::", true, log_level);
+    let timer = utils::ContextTimer::new("dbscan_generic", true, log_level);
     let i_timer = timer.start_sub_timer("conversion");
     let (ndpoints, boundary) = converter.convert_vec(&prefiltered_peaks);
     i_timer.stop();
@@ -571,6 +593,7 @@ pub fn dbscan_generic<
         min_intensity,
         &intensity_sorted_indices,
         extra_filter_fun,
+        converter,
         show_progress,
     );
     i_timer.stop();

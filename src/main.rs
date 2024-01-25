@@ -24,17 +24,21 @@ use clap::Parser;
 
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::path::Path;
+use crate::scoring::SageSearchConfig;
+
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// File Path to use (.d)
-    #[arg(short, long)]
-    file: String,
     #[arg(short, long)]
     config: String,
+    #[arg(short, long, default_value = "peakachu_output")]
+    output_dir: String,
     #[arg(long, action)]
     write_template: bool,
+    /// File Path to use (.d)
+    files: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
@@ -102,11 +106,13 @@ impl Default for PseudoscanGenerationConfig {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, Clone, Copy)]
+
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
 struct Config {
     denoise_config: DenoiseConfig,
     tracing_config: TracingConfig,
     pseudoscan_generation_config: PseudoscanGenerationConfig,
+    sage_search_config: SageSearchConfig,
 }
 
 impl Config {
@@ -124,11 +130,11 @@ fn main() {
         let config = Config::default();
         let config_str = toml::to_string_pretty(&config).unwrap();
 
-        let out_path = "default_peakachu_config.toml";
-        if fs::metadata(out_path).is_ok() {
+        let out_path = args.config;
+        if fs::metadata(out_path.clone()).is_ok() {
             panic!("File already exists: {}", out_path);
         } else {
-            std::fs::write(out_path, config_str).unwrap();
+            std::fs::write(out_path.clone(), config_str).unwrap();
             println!("Wrote default config to {}", out_path);
             return;
         }
@@ -144,8 +150,20 @@ fn main() {
         rec = Some(visualization::setup_recorder());
     }
 
-    let path_use = args.file;
+    let path_use = args.files;
+    if path_use.len() != 1 {
+        panic!("I have only implemented one path!!!");
+    }
+    let path_use = path_use[0].clone();
     // ms_denoise::read_all_ms1_denoising(path_use.clone(), &mut rec);
+
+    let out_path_dir = Path::new(&args.output_dir);
+    // Create dir if not exists ...
+    if !out_path_dir.exists() {
+        fs::create_dir_all(out_path_dir).unwrap();
+    }
+    let out_path_scans = out_path_dir.join("pseudoscans_debug.json");
+
 
     if true {
         let dia_frames = aggregation::ms_denoise::read_all_dia_denoising(
@@ -220,9 +238,10 @@ fn main() {
 
         println!("npeaks: {:?}", npeaks);
 
+
         let out = aggregation::tracing::write_pseudoscans_json(
             &pseudoscans,
-            r"pseudoscans_debug.json".into(),
+            out_path_scans.clone(),
         );
         match out {
             Ok(_) => {}
@@ -233,12 +252,11 @@ fn main() {
     }
 
     let pseudoscans_read =
-        aggregation::tracing::read_pseudoscans_json(r"pseudoscans_debug.json".into());
+        aggregation::tracing::read_pseudoscans_json(out_path_scans);
     let pseudoscans = pseudoscans_read.unwrap();
     println!("pseudoscans: {:?}", pseudoscans.len());
 
-    let fasta_path = "/Users/sebastianpaez/git/2023_dev_diadem_report/data/UP000005640_9606.fasta";
-    let score_out = scoring::score_pseudospectra(pseudoscans, fasta_path.into());
+    let score_out = scoring::score_pseudospectra(pseudoscans, config.sage_search_config);
     match score_out {
         Ok(_) => {}
         Err(e) => {
