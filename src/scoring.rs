@@ -24,6 +24,8 @@ use std::fs;
 
 use rayon::prelude::*;
 
+const PCT_BP_KEEP: f64 = 0.01;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SageSearchConfig {
     pub static_mods: Vec<(String, f32)>,
@@ -138,11 +140,16 @@ fn pseudospectrum_to_spec(pseudo: PseudoSpectrum, scan_id: String) -> RawSpectru
         )),
     };
 
-    let (mzs, ints): (Vec<f32>, Vec<f32>) = pseudo
-        .peaks
+    let mut peaks = pseudo.peaks.clone();
+    peaks.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    let max_peak = peaks.iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap()).unwrap().1 as f64; 
+
+    let (mzs, ints): (Vec<f32>, Vec<f32>) = peaks
         .into_iter()
+        .filter(|x| x.1 > (PCT_BP_KEEP * max_peak) as u64)
         .map(|x| (x.0 as f32, x.1 as f32))
         .unzip();
+
     let tic = ints.iter().sum();
 
     RawSpectrum {
