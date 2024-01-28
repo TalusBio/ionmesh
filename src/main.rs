@@ -163,6 +163,7 @@ fn main() {
         fs::create_dir_all(out_path_dir).unwrap();
     }
     let out_path_scans = out_path_dir.join("pseudoscans_debug.json");
+    let out_path_features = out_path_dir.join("features_debug.csv");
 
 
     if true {
@@ -256,7 +257,7 @@ fn main() {
     let pseudoscans = pseudoscans_read.unwrap();
     println!("pseudoscans: {:?}", pseudoscans.len());
 
-    let score_out = scoring::score_pseudospectra(pseudoscans, config.sage_search_config);
+    let score_out = scoring::score_pseudospectra(pseudoscans, config.sage_search_config, out_path_features.clone());
     match score_out {
         Ok(_) => {}
         Err(e) => {

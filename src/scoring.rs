@@ -21,6 +21,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
+use std::path::PathBuf;
 
 use rayon::prelude::*;
 
@@ -168,7 +169,8 @@ fn pseudospectrum_to_spec(pseudo: PseudoSpectrum, scan_id: String) -> RawSpectru
 
 pub fn score_pseudospectra(
     elems: Vec<PseudoSpectrum>,
-    config: SageSearchConfig
+    config: SageSearchConfig,
+    out_path_features: PathBuf,
 ) -> Result<(), Box<dyn Error>> {
     // 1. Buid raw spectra from the pseudospectra
 
@@ -279,7 +281,7 @@ pub fn score_pseudospectra(
 
     // Serialize to a csv for debugging
     warn!("Writing features to features.csv ... and sebastian should delete this b4 publishing...");
-    let mut wtr = csv::Writer::from_path("features.csv")?;
+    let mut wtr = csv::Writer::from_path(out_path_features)?;
     for feat in &features {
         let s_feat = SerializableFeature::from_feature(feat, &db);
         wtr.serialize(s_feat)?;

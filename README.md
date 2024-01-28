@@ -13,6 +13,7 @@ cargo build --release  --features par_dataprep
  
 - Add offset 
 - keep unagregated peaks
+- add 1% filter
 
 ## Performance
 
