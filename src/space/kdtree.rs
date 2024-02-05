@@ -230,7 +230,11 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
     /// Calculates the manhattan distance between the query point and the
     /// candidate points. If the distance is less than the radius, the candidate
     /// point is kept.
-    fn refine_query(&self, point: &NDPoint<D>, candidates: Vec<(&'a NDPoint<D>, &'a T)>) -> Vec<&'a T> {
+    fn refine_query(
+        &self,
+        point: &NDPoint<D>,
+        candidates: Vec<(&'a NDPoint<D>, &'a T)>,
+    ) -> Vec<&'a T> {
         let out: Vec<&'a T> = candidates
             .into_iter()
             .filter(|x| {
@@ -253,7 +257,11 @@ impl<'a, T, const D: usize> IndexedPoints<'a, D, T> for RadiusKDTree<'a, T, D> {
         self.query(point)
     }
 
-    fn query_ndrange(&'a self, boundary: &NDBoundary<D>, reference_point: Option<&NDPoint<D>>) -> Vec<&'a T> {
+    fn query_ndrange(
+        &'a self,
+        boundary: &NDBoundary<D>,
+        reference_point: Option<&NDPoint<D>>,
+    ) -> Vec<&'a T> {
         let candidates = self.query_range(boundary);
         if let Some(point) = reference_point {
             self.refine_query(point, candidates)

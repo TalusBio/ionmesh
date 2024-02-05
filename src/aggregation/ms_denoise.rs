@@ -111,8 +111,6 @@ fn _denoise_dia_frame(
         .split_frame(frame)
         .expect("Only DIA frames should be passed to this function");
 
-    
-
     frame_windows
         .into_iter()
         .map(|frame_window| {
@@ -279,18 +277,18 @@ pub fn read_all_ms1_denoising(
 ) -> Vec<DenseFrame> {
     let reader = timsrust::FileReader::new(path).unwrap();
 
-    let timer = utils::ContextTimer::new("Reading all MS1 frames", true, utils::LogLevel::INFO);
+    let mut timer = utils::ContextTimer::new("Reading all MS1 frames", true, utils::LogLevel::INFO);
 
     let mut frames = reader.read_all_ms1_frames();
-    timer.stop();
+    timer.stop(true);
 
     let ims_converter = reader.get_scan_converter().unwrap();
     let mz_converter = reader.get_tof_converter().unwrap();
 
     frames.retain(|frame| match frame.frame_type {
-            timsrust::FrameType::MS1 => true,
-            _ => false,
-        });
+        timsrust::FrameType::MS1 => true,
+        _ => false,
+    });
 
     // let min_intensity = 100u64;
     // let min_n: usize = 3;
@@ -304,9 +302,10 @@ pub fn read_all_ms1_denoising(
     };
 
     let converters = (ims_converter, mz_converter);
-    let timer = utils::ContextTimer::new("Denoising all MS1 frames", true, utils::LogLevel::INFO);
+    let mut timer =
+        utils::ContextTimer::new("Denoising all MS1 frames", true, utils::LogLevel::INFO);
     let out = ms1_denoiser.par_denoise_slice(frames, record_stream, (converters, None));
-    timer.stop();
+    timer.stop(true);
     out
 }
 
@@ -319,7 +318,7 @@ pub fn read_all_dia_denoising(
     ims_scaling: f32,
     record_stream: &mut Option<rerun::RecordingStream>,
 ) -> Vec<DenseFrameWindow> {
-    let timer = utils::ContextTimer::new("Reading all DIA frames", true, utils::LogLevel::INFO);
+    let mut timer = utils::ContextTimer::new("Reading all DIA frames", true, utils::LogLevel::INFO);
     let reader = timsrust::FileReader::new(path.clone()).unwrap();
 
     let dia_info = tdf::read_dia_frame_info(path.clone()).unwrap();
@@ -327,7 +326,7 @@ pub fn read_all_dia_denoising(
 
     let ims_converter = reader.get_scan_converter().unwrap();
     let mz_converter = reader.get_tof_converter().unwrap();
-    timer.stop();
+    timer.stop(true);
 
     // frames = frames
     //     .into_iter()
@@ -356,9 +355,10 @@ pub fn read_all_dia_denoising(
     };
     let converters = (ims_converter, mz_converter);
 
-    let timer = utils::ContextTimer::new("Denoising all MS2 frames", true, utils::LogLevel::INFO);
+    let mut timer =
+        utils::ContextTimer::new("Denoising all MS2 frames", true, utils::LogLevel::INFO);
     let split_frames = denoiser.par_denoise_slice(frames, record_stream, (converters, None));
     let out: Vec<DenseFrameWindow> = split_frames.into_iter().flatten().collect();
-    timer.stop();
+    timer.stop(true);
     out
 }

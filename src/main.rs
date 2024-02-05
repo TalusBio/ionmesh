@@ -22,11 +22,10 @@ extern crate pretty_env_logger;
 
 use clap::Parser;
 
+use crate::scoring::SageSearchConfig;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use crate::scoring::SageSearchConfig;
-
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -106,7 +105,6 @@ impl Default for PseudoscanGenerationConfig {
     }
 }
 
-
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 struct Config {
     denoise_config: DenoiseConfig,
@@ -165,7 +163,6 @@ fn main() {
     let out_path_scans = out_path_dir.join("pseudoscans_debug.json");
     let out_path_features = out_path_dir.join("features_debug.csv");
 
-
     if true {
         let dia_frames = aggregation::ms_denoise::read_all_dia_denoising(
             path_use.clone(),
@@ -176,7 +173,7 @@ fn main() {
             &mut rec,
         );
 
-        let traces = aggregation::tracing::combine_traces(
+        let mut traces = aggregation::tracing::combine_traces(
             dia_frames,
             config.tracing_config.mz_scaling.into(),
             config.tracing_config.rt_scaling.into(),
@@ -194,15 +191,17 @@ fn main() {
             }
         }
 
+        println!("traces: {:?}", traces.len());
+        traces.retain(|x| x.num_agg > 5);
+        println!("traces: {:?}", traces.len());
+
         // Maybe reparametrize as 1.1 cycle time
         let pseudoscans = aggregation::tracing::combine_pseudospectra(
             traces,
             config.pseudoscan_generation_config.rt_scaling.into(),
             config.pseudoscan_generation_config.ims_scaling.into(),
             config.pseudoscan_generation_config.quad_scaling.into(),
-            config
-                .pseudoscan_generation_config
-                .min_neighbor_intensity,
+            config.pseudoscan_generation_config.min_neighbor_intensity,
             config.pseudoscan_generation_config.min_n.into(),
             &mut rec,
         );
@@ -239,11 +238,8 @@ fn main() {
 
         println!("npeaks: {:?}", npeaks);
 
-
-        let out = aggregation::tracing::write_pseudoscans_json(
-            &pseudoscans,
-            out_path_scans.clone(),
-        );
+        let out =
+            aggregation::tracing::write_pseudoscans_json(&pseudoscans, out_path_scans.clone());
         match out {
             Ok(_) => {}
             Err(e) => {
@@ -252,12 +248,15 @@ fn main() {
         }
     }
 
-    let pseudoscans_read =
-        aggregation::tracing::read_pseudoscans_json(out_path_scans);
+    let pseudoscans_read = aggregation::tracing::read_pseudoscans_json(out_path_scans);
     let pseudoscans = pseudoscans_read.unwrap();
     println!("pseudoscans: {:?}", pseudoscans.len());
 
-    let score_out = scoring::score_pseudospectra(pseudoscans, config.sage_search_config, out_path_features.clone());
+    let score_out = scoring::score_pseudospectra(
+        pseudoscans,
+        config.sage_search_config,
+        out_path_features.clone(),
+    );
     match score_out {
         Ok(_) => {}
         Err(e) => {

@@ -1,6 +1,4 @@
-
 use crate::mod_types::Float;
-
 
 /// This is an attempt to use dbscan ... again to cluster the traces into  pseudo-spectra (or peptides)
 ///

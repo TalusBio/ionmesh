@@ -147,7 +147,7 @@ pub fn combine_traces(
 ) -> Vec<BaseTrace> {
     // Grouping by quad windows + group id
 
-    let timer = utils::ContextTimer::new("Tracing peaks in time", true, utils::LogLevel::INFO);
+    let mut timer = utils::ContextTimer::new("Tracing peaks in time", true, utils::LogLevel::INFO);
 
     let mut grouped_windows: Vec<Vec<Option<Vec<DenseFrameWindow>>>> = Vec::new();
     for dfw in denseframe_windows {
@@ -173,11 +173,8 @@ pub fn combine_traces(
     }
 
     // Flatten one level
-    let grouped_windows: Vec<Vec<DenseFrameWindow>> = grouped_windows
-        .into_iter()
-        .flatten()
-        .flatten()
-        .collect();
+    let grouped_windows: Vec<Vec<DenseFrameWindow>> =
+        grouped_windows.into_iter().flatten().flatten().collect();
 
     let grouped_windows: Vec<Vec<TimeTimsPeak>> = grouped_windows
         .into_iter()
@@ -201,7 +198,7 @@ pub fn combine_traces(
         .collect();
 
     info!("Total Combined traces: {}", out.len());
-    timer.stop();
+    timer.stop(true);
 
     if let Some(stream) = record_stream.as_mut() {
         let _ = out.plot(stream, String::from("points/combined"), None, None);
@@ -337,7 +334,6 @@ impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
         rt.merge(&other.rt);
         ims.merge(&other.ims);
 
-        
         TraceAggregator {
             mz,
             intensity: self.intensity + other.intensity,
@@ -528,7 +524,6 @@ impl<'a> ClusterAggregator<BaseTrace, PseudoSpectrum> for PseudoSpectrumAggregat
         quad_low.merge(&other.quad_low);
         quad_high.merge(&other.quad_high);
 
-        
         PseudoSpectrumAggregator {
             peaks,
             intensity: self.intensity + other.intensity,
@@ -565,13 +560,19 @@ impl NDPointConverter<BaseTrace, 6> for BaseTraceConverter {
         }
     }
 
-    fn convert_to_bounds_query<'a>(&self, point: &'a NDPoint<6>) -> (crate::space::space_generics::NDBoundary<6>, Option<&'a NDPoint<6>>) {
+    fn convert_to_bounds_query<'a>(
+        &self,
+        point: &'a NDPoint<6>,
+    ) -> (
+        crate::space::space_generics::NDBoundary<6>,
+        Option<&'a NDPoint<6>>,
+    ) {
         let range_center = (point.values[1] + point.values[2]) / 2.;
-        let mut starts = point.values.clone();
-        let mut ends = point.values.clone();
+        let mut starts = point.values;
+        let mut ends = point.values;
         for i in 0..6 {
-            starts[i] = starts[i] - 1.;
-            ends[i] = ends[i] + 1.;
+            starts[i] -= 1.;
+            ends[i] += 1.;
         }
 
         // KEY =                 [-------]
@@ -581,12 +582,8 @@ impl NDPointConverter<BaseTrace, 6> for BaseTraceConverter {
         ends[1] = range_center;
         starts[2] = range_center;
 
-        let bounds = crate::space::space_generics::NDBoundary::new(
-            starts,
-            ends
-        );
+        let bounds = crate::space::space_generics::NDBoundary::new(starts, ends);
         (bounds, Some(point))
-        
     }
 }
 
@@ -599,7 +596,8 @@ pub fn combine_pseudospectra(
     min_n: usize,
     record_stream: &mut Option<rerun::RecordingStream>,
 ) -> Vec<PseudoSpectrum> {
-    let timer = utils::ContextTimer::new("Combining pseudospectra", true, utils::LogLevel::INFO);
+    let mut timer =
+        utils::ContextTimer::new("Combining pseudospectra", true, utils::LogLevel::INFO);
 
     let converter = BaseTraceConverter {
         rt_scaling,
@@ -626,7 +624,7 @@ pub fn combine_pseudospectra(
     );
 
     info!("Combined pseudospectra: {}", foo.len());
-    timer.stop();
+    timer.stop(true);
 
     if let Some(_stream) = record_stream.as_mut() {
         warn!("Plotting pseudospectra is not implemented yet");
@@ -640,7 +638,10 @@ pub fn write_pseudoscans_json(
     pseudocscans: &[PseudoSpectrum],
     out_path: impl AsRef<Path>,
 ) -> Result<(), Box<dyn Error>> {
-    info!("Writting pseudoscans to json: {}", out_path.as_ref().display());
+    info!(
+        "Writting pseudoscans to json: {}",
+        out_path.as_ref().display()
+    );
     let mut file = std::fs::File::create(out_path)?;
     file.write("[".as_bytes())?;
     let mut is_first = true;
@@ -658,7 +659,9 @@ pub fn write_pseudoscans_json(
     Ok(())
 }
 
-pub fn read_pseudoscans_json(in_path: impl AsRef<Path>) -> Result<Vec<PseudoSpectrum>, Box<dyn Error>> {
+pub fn read_pseudoscans_json(
+    in_path: impl AsRef<Path>,
+) -> Result<Vec<PseudoSpectrum>, Box<dyn Error>> {
     info!("Reading pseudoscans from json");
     let file = std::fs::File::open(in_path)?;
     let reader = std::io::BufReader::new(file);

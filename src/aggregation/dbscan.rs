@@ -3,8 +3,8 @@ use std::ops::{Add, Div, Mul, Sub};
 
 use crate::ms::frames::TimsPeak;
 use crate::space::space_generics::NDPointConverter;
-use crate::utils::{self, RollingSDCalculator};
 use crate::utils::within_distance_apply;
+use crate::utils;
 
 /// Density-based spatial clustering of applications with noise (DBSCAN)
 ///
@@ -17,9 +17,9 @@ use crate::mod_types::Float;
 use crate::ms::frames;
 use crate::space::space_generics::{HasIntensity, IndexedPoints, NDPoint};
 use indicatif::ProgressIterator;
-use log::{info,debug};
+use log::{debug, info};
 
-use rayon::{prelude::*};
+use rayon::prelude::*;
 
 use crate::space::kdtree::RadiusKDTree;
 
@@ -175,6 +175,15 @@ fn _dbscan<
     let mut cluster_labels = vec![ClusterLabel::Unassigned; prefiltered_peaks.len()];
     let mut cluster_id = 0;
 
+    let mut timer = utils::ContextTimer::new("internal_dbscan", false, utils::LogLevel::DEBUG);
+
+    let mut filter_fun_cache_timer = timer.start_sub_timer("filter_fun_cache");
+    let mut outer_loop_nn_timer = timer.start_sub_timer("outer_loop_nn");
+    let mut inner_loop_nn_timer = timer.start_sub_timer("inner_loop_nn");
+    let mut local_neighbor_filter_timer = timer.start_sub_timer("local_neighbor_filter");
+    let mut outer_intensity_calculation = timer.start_sub_timer("outer_intensity_calculation");
+    let mut inner_intensity_calculation = timer.start_sub_timer("inner_intensity_calculation");
+
     let usize_filterfun = |a: &usize, b: &usize| {
         filter_fun.expect("filter_fun should be Some")(
             &prefiltered_peaks[*a],
@@ -184,8 +193,10 @@ fn _dbscan<
     let mut filterfun_cache =
         FilterFunCache::new(Box::new(&usize_filterfun), prefiltered_peaks.len());
     let mut filterfun_with_cache = |elem_idx: usize, reference_idx: usize| {
-        
-        filterfun_cache.get(elem_idx, reference_idx)
+        filter_fun_cache_timer.reset_start();
+        let out = filterfun_cache.get(elem_idx, reference_idx);
+        filter_fun_cache_timer.stop(false);
+        out
     };
 
     let my_progbar = if progress {
@@ -200,9 +211,10 @@ fn _dbscan<
             continue;
         }
 
+        outer_loop_nn_timer.reset_start();
         let query_elems = converter.convert_to_bounds_query(&quad_points[point_index]);
         let mut neighbors = indexed_points.query_ndrange(&query_elems.0, query_elems.1);
-
+        outer_loop_nn_timer.stop(false);
 
         if neighbors.len() < min_n {
             cluster_labels[point_index] = ClusterLabel::Noise;
@@ -211,11 +223,8 @@ fn _dbscan<
 
         if filter_fun.is_some() {
             let num_initial_candidates = neighbors.len();
-            neighbors = neighbors
-                .into_iter()
-                .filter(|i| filterfun_with_cache(**i, point_index))
-                // .filter(|i| filter_fun.unwrap()(&prefiltered_peaks[**i], &query_peak))
-                .collect::<Vec<_>>();
+            neighbors.retain(|i| filterfun_with_cache(**i, point_index));
+            // .filter(|i| filter_fun.unwrap()(&prefiltered_peaks[**i], &query_peak))
 
             let candidates_after_filter = neighbors.len();
             initial_candidates_counts.add(num_initial_candidates as f32, 1);
@@ -227,12 +236,13 @@ fn _dbscan<
             }
         }
 
-
         // Q: Do I need to care about overflows here? - Sebastian
+        outer_intensity_calculation.reset_start();
         let neighbor_intensity_total = neighbors
             .iter()
             .map(|i| prefiltered_peaks[**i].intensity().as_())
             .sum::<u64>();
+        outer_intensity_calculation.stop(false);
 
         if neighbor_intensity_total < min_intensity {
             cluster_labels[point_index] = ClusterLabel::Noise;
@@ -259,52 +269,50 @@ fn _dbscan<
 
             cluster_labels[neighbor_index] = ClusterLabel::Cluster(cluster_id);
 
+            inner_loop_nn_timer.reset_start();
             let inner_query_elems = converter.convert_to_bounds_query(&quad_points[*neighbor]);
-            let mut neighbors = indexed_points.query_ndrange(&inner_query_elems.0, inner_query_elems.1);
+            let mut local_neighbors =
+                indexed_points.query_ndrange(&inner_query_elems.0, inner_query_elems.1);
+            inner_loop_nn_timer.stop(false);
 
             if filter_fun.is_some() {
-                neighbors = neighbors
-                    .into_iter()
-                    .filter(|i| filterfun_with_cache(**i, point_index))
-                    // .filter(|i| filter_fun.unwrap()(&prefiltered_peaks[**i], &query_peak))
-                    .collect::<Vec<_>>();
+                local_neighbors.retain(|i| filterfun_with_cache(**i, point_index))
+                // .filter(|i| filter_fun.unwrap()(&prefiltered_peaks[**i], &query_peak))
             }
 
+            inner_intensity_calculation.reset_start();
             let query_intensity = prefiltered_peaks[neighbor_index].intensity();
-            let neighbor_intensity_total = neighbors
+            let neighbor_intensity_total = local_neighbors
                 .iter()
                 .map(|i| prefiltered_peaks[**i].intensity().as_())
                 .sum::<u64>();
+            inner_intensity_calculation.stop(false);
 
-            if neighbors.len() >= min_n && neighbor_intensity_total >= min_intensity {
+            if local_neighbors.len() >= min_n && neighbor_intensity_total >= min_intensity {
                 // Keep only the neighbors that are not already in a cluster
-                let local_neighbors = neighbors
-                    .into_iter()
-                    .filter(|i| match cluster_labels[**i] {
-                        ClusterLabel::Cluster(_) => false,
-                        _ => true,
-                    })
-                    .collect::<Vec<_>>();
+                local_neighbors.retain(|i| match cluster_labels[**i] {
+                    ClusterLabel::Cluster(_) => false,
+                    _ => true,
+                });
 
                 // Keep only the neighbors that are within the max extension distance
                 // It might be worth setting a different max extension distance for the mz and mobility dimensions.
-                let local_neighbors2 = local_neighbors
-                    .into_iter()
-                    .filter(|i| {
-                        let going_downhill = prefiltered_peaks[**i].intensity() <= query_intensity;
+                local_neighbor_filter_timer.reset_start();
+                local_neighbors.retain(|i| {
+                    let going_downhill = prefiltered_peaks[**i].intensity() <= query_intensity;
 
-                        let p = &quad_points[**i];
-                        let query_point = query_elems.1.unwrap();
-                        // Using minkowski distance with p = 1, manhattan distance.
-                        let dist = (p.values[0] - query_point.values[0]).abs()
-                            + (p.values[1] - query_point.values[1]).abs();
-                        let within_distance = dist <= MAX_EXTENSION_DISTANCE;
-                        going_downhill && within_distance
-                    })
-                    .collect::<Vec<_>>();
+                    let p = &quad_points[**i];
+                    let query_point = query_elems.1.unwrap();
+                    // Using minkowski distance with p = 1, manhattan distance.
+                    let dist = (p.values[0] - query_point.values[0]).abs()
+                        + (p.values[1] - query_point.values[1]).abs();
+                    let within_distance = dist <= MAX_EXTENSION_DISTANCE;
+                    going_downhill && within_distance
+                });
+                local_neighbor_filter_timer.stop(false);
 
-                internal_neighbor_additions += local_neighbors2.len();
-                seed_set.extend(local_neighbors2);
+                internal_neighbor_additions += local_neighbors.len();
+                seed_set.extend(local_neighbors);
             }
         }
     }
@@ -326,6 +334,16 @@ fn _dbscan<
         );
     }
 
+    timer.stop(false);
+    if timer.cumtime.as_micros() > 1000000 {
+        timer.report();
+        filter_fun_cache_timer.report();
+        outer_loop_nn_timer.report();
+        inner_loop_nn_timer.report();
+        local_neighbor_filter_timer.report();
+        outer_intensity_calculation.report();
+        inner_intensity_calculation.report();
+    }
 
     (cluster_id, cluster_labels)
 }
@@ -373,7 +391,6 @@ impl ClusterAggregator<TimsPeak, TimsPeak> for TimsPeakAggregator {
     }
 
     fn combine(self, other: Self) -> Self {
-        
         Self {
             cluster_intensity: self.cluster_intensity + other.cluster_intensity,
             cluster_mz: self.cluster_mz + other.cluster_mz,
@@ -422,15 +439,15 @@ pub fn aggregate_clusters<
     log_level: utils::LogLevel,
 ) -> Vec<R> {
     let cluster_vecs: Vec<G> = if cfg!(feature = "par_dataprep") {
-        let timer = utils::ContextTimer::new("dbscan_generic::par_aggregation", true, log_level);
+        let mut timer =
+            utils::ContextTimer::new("dbscan_generic::par_aggregation", true, log_level);
         let out: Vec<(usize, T)> = cluster_labels
             .iter()
             .enumerate()
             .filter_map(|(point_index, x)| match x {
                 ClusterLabel::Cluster(cluster_id) => {
                     let cluster_idx = *cluster_id as usize - 1;
-                    let tmp: Option<(usize, T)> =
-                        Some((cluster_idx, elements[point_index]));
+                    let tmp: Option<(usize, T)> = Some((cluster_idx, elements[point_index]));
                     tmp
                 }
                 _ => None,
@@ -445,32 +462,26 @@ pub fn aggregate_clusters<
             .into_par_iter()
             .chunks(chunk_size)
             .map(run_closure)
-            .reduce(
-                Vec::new,
-                |l, r| {
-                    if l.is_empty() {
-                        r
-                    } else {
-                        l.into_iter()
-                            .zip(r)
-                            .map(|(l, r)| match (l, r) {
-                                (Some(l), Some(r)) => {
-                                    let o = l.combine(r);
-                                    Some(o)
-                                }
-                                (Some(l), None) => Some(l),
-                                (None, Some(r)) => Some(r),
-                                (None, None) => None,
-                            })
-                            .collect::<Vec<_>>()
-                    }
-                },
-            );
+            .reduce(Vec::new, |l, r| {
+                if l.is_empty() {
+                    r
+                } else {
+                    l.into_iter()
+                        .zip(r)
+                        .map(|(l, r)| match (l, r) {
+                            (Some(l), Some(r)) => {
+                                let o = l.combine(r);
+                                Some(o)
+                            }
+                            (Some(l), None) => Some(l),
+                            (None, Some(r)) => Some(r),
+                            (None, None) => None,
+                        })
+                        .collect::<Vec<_>>()
+                }
+            });
 
-        let mut cluster_vecs = out2
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
+        let mut cluster_vecs = out2.into_iter().flatten().collect::<Vec<_>>();
 
         let unclustered_elems: Vec<usize> = cluster_labels
             .iter()
@@ -493,7 +504,7 @@ pub fn aggregate_clusters<
 
         cluster_vecs.extend(unclustered_elems);
 
-        timer.stop();
+        timer.stop(true);
         cluster_vecs
     } else {
         let mut cluster_vecs: Vec<G> = Vec::with_capacity(tot_clusters as usize);
@@ -512,13 +523,13 @@ pub fn aggregate_clusters<
         cluster_vecs
     };
 
-    let timer =
+    let mut timer =
         utils::ContextTimer::new("dbscan_generic::aggregation", true, utils::LogLevel::TRACE);
     let out = cluster_vecs
         .par_iter()
         .map(|cluster| cluster.aggregate())
         .collect::<Vec<_>>();
-    timer.stop();
+    timer.stop(true);
 
     out
 }
@@ -560,20 +571,20 @@ pub fn dbscan_generic<
     };
 
     let timer = utils::ContextTimer::new("dbscan_generic", true, log_level);
-    let i_timer = timer.start_sub_timer("conversion");
+    let mut i_timer = timer.start_sub_timer("conversion");
     let (ndpoints, boundary) = converter.convert_vec(&prefiltered_peaks);
-    i_timer.stop();
+    i_timer.stop(true);
 
-    let i_timer = timer.start_sub_timer("tree");
+    let mut i_timer = timer.start_sub_timer("tree");
     let mut tree = RadiusKDTree::new_empty(boundary, 500, 1.);
     let quad_indices = (0..ndpoints.len()).collect::<Vec<_>>();
 
     for (quad_point, i) in ndpoints.iter().zip(quad_indices.iter()) {
         tree.insert_ndpoint(quad_point.clone(), i);
     }
-    i_timer.stop();
+    i_timer.stop(true);
 
-    let i_timer = timer.start_sub_timer("pre-sort");
+    let mut i_timer = timer.start_sub_timer("pre-sort");
     let mut intensity_sorted_indices = prefiltered_peaks
         .iter()
         .enumerate()
@@ -582,9 +593,9 @@ pub fn dbscan_generic<
     // Q: Does ^^^^ need a clone? i and peak intensity ... - S
 
     intensity_sorted_indices.par_sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-    i_timer.stop();
+    i_timer.stop(true);
 
-    let i_timer = timer.start_sub_timer("dbscan");
+    let mut i_timer = timer.start_sub_timer("dbscan");
     let (tot_clusters, cluster_labels) = _dbscan(
         &tree,
         &prefiltered_peaks,
@@ -596,7 +607,7 @@ pub fn dbscan_generic<
         converter,
         show_progress,
     );
-    i_timer.stop();
+    i_timer.stop(true);
 
     aggregate_clusters(
         tot_clusters,
@@ -647,7 +658,6 @@ pub fn dbscan_denseframes(
         );
 
         // Filter the peaks and replace the raw peaks with the filtered peaks.
-        
 
         denseframe
             .raw_peaks

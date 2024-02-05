@@ -108,9 +108,8 @@ impl DenseFrameWindow {
         // NOTE: I am swapping here the 'scan start' to be the `ims_end` because
         // the first scans have lower 1/k0 values.
         let ims_end = ims_converter.convert(scan_start as u32) as f32;
-        let ims_start = ims_converter
-            .convert((frame_window.scan_offsets.len() + scan_start) as u32)
-            as f32;
+        let ims_start =
+            ims_converter.convert((frame_window.scan_offsets.len() + scan_start) as u32) as f32;
         let scan_range: &ScanRange = dia_info
             .get_quad_windows(group_id, quad_group_id)
             .expect("Quad group id should be valid");
@@ -333,7 +332,7 @@ impl RerunPlottable<Option<usize>> for DenseFrame {
             &rerun::Points2D::new(
                 quad_points
                     .iter()
-                    .map(|point| (point.values[0] as f32, point.values[1] as f32)),
+                    .map(|point| (point.values[0], point.values[1])),
             )
             .with_radii(radii),
         )?;

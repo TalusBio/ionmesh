@@ -14,9 +14,9 @@ use sage_core::scoring::Feature;
 use sage_core::scoring::Scorer;
 use sage_core::spectrum::{Precursor, RawSpectrum, Representation, SpectrumProcessor};
 use serde::ser::SerializeStruct;
+use serde::Deserialize;
 use serde::Serialize;
 use serde::Serializer;
-use serde::Deserialize;
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -135,15 +135,16 @@ fn pseudospectrum_to_spec(pseudo: PseudoSpectrum, scan_id: String) -> RawSpectru
         intensity: None,
         charge: None,
         spectrum_ref: None,
-        isolation_window: Some(Tolerance::Da(
-            -prec_width / 2.,
-            prec_width / 2.,
-        )),
+        isolation_window: Some(Tolerance::Da(-prec_width / 2., prec_width / 2.)),
     };
 
     let mut peaks = pseudo.peaks.clone();
     peaks.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-    let max_peak = peaks.iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap()).unwrap().1 as f64; 
+    let max_peak = peaks
+        .iter()
+        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+        .unwrap()
+        .1 as f64;
 
     let (mzs, ints): (Vec<f32>, Vec<f32>) = peaks
         .into_iter()

@@ -1,7 +1,3 @@
-use core::panic;
-
-
-
 pub trait RerunPlottable<T> {
     fn plot(
         &self,

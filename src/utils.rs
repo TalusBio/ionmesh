@@ -7,6 +7,7 @@ pub struct ContextTimer {
     name: String,
     level: LogLevel,
     report_start: bool,
+    pub cumtime: Duration,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -23,11 +24,16 @@ impl ContextTimer {
             name: name.to_string(),
             level,
             report_start,
+            cumtime: Duration::new(0, 0),
         };
         if report_start {
             out.start_msg();
         }
         out
+    }
+
+    pub fn reset_start(&mut self) {
+        self.start = Instant::now();
     }
 
     fn start_msg(&self) {
@@ -38,27 +44,35 @@ impl ContextTimer {
         }
     }
 
-    pub fn stop(&self) -> Duration {
+    pub fn stop(&mut self, report: bool) -> Duration {
         let duration = self.start.elapsed();
+        self.cumtime += duration;
+        if report {
+            self.report();
+        }
+        duration
+    }
+
+    pub fn report(&self) {
+        let duration_us = self.cumtime.as_micros() as f64;
         match self.level {
             // Time to get comfortable writting macros??
             LogLevel::INFO => info!(
                 "Time elapsed in '{}' is: {:.02}s",
                 self.name,
-                duration.as_millis() as f64 / 1000.
+                duration_us / 1000000.
             ),
             LogLevel::DEBUG => debug!(
                 "Time elapsed in '{}' is: {:.02}s",
                 self.name,
-                duration.as_millis() as f64 / 1000.
+                duration_us / 1000000.
             ),
             LogLevel::TRACE => trace!(
                 "Time elapsed in '{}' is: {:.02}s",
                 self.name,
-                duration.as_millis() as f64 / 1000.
+                duration_us / 1000000.
             ),
         }
-        duration
     }
 
     pub fn start_sub_timer(&self, name: &str) -> ContextTimer {

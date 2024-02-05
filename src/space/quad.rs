@@ -192,7 +192,11 @@ impl<'a, T> RadiusQuadTree<'a, T> {
         out
     }
 
-    fn refine_query(&'a self, point: &NDPoint<2>, candidates: Vec<(&'a NDPoint<2>, &'a T)>) -> Vec<(&NDPoint<2>, &T)> {
+    fn refine_query(
+        &'a self,
+        point: &NDPoint<2>,
+        candidates: Vec<(&'a NDPoint<2>, &'a T)>,
+    ) -> Vec<(&NDPoint<2>, &T)> {
         let mut result = Vec::new();
         let radius_squared = self.radius.powi(2);
 
@@ -248,15 +252,20 @@ impl<'a, T> IndexedPoints<'a, 2, T> for RadiusQuadTree<'a, T> {
             .collect::<Vec<_>>()
     }
 
-    fn query_ndrange(&'a self, boundary: &NDBoundary<2>, reference_point: Option<&NDPoint<2>>) -> Vec<&'a T> {
+    fn query_ndrange(
+        &'a self,
+        boundary: &NDBoundary<2>,
+        reference_point: Option<&NDPoint<2>>,
+    ) -> Vec<&'a T> {
         let mut result = Vec::new();
         self.query_range(boundary, &mut result);
 
         match reference_point {
-            Some(point) => {
-                self.refine_query(point, result)
-            }
+            Some(point) => self.refine_query(point, result),
             None => result,
-        }.into_iter().map(|x| x.1).collect::<Vec<_>>()
+        }
+        .into_iter()
+        .map(|x| x.1)
+        .collect::<Vec<_>>()
     }
 }
