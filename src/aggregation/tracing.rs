@@ -317,8 +317,6 @@ impl RerunPlottable<Option<usize>> for Vec<BaseTrace> {
 }
 
 
-// <----------- Make the chromatogram lazy so the offset is set with the first peak
-
 #[derive(Debug, Clone)]
 struct BTreeChromatogram {
     pub btree: BTreeMap<i32, u64>,
