@@ -317,7 +317,7 @@ pub fn read_all_dia_denoising(
     mz_scaling: f64,
     ims_scaling: f32,
     record_stream: &mut Option<rerun::RecordingStream>,
-) -> Vec<DenseFrameWindow> {
+) -> (Vec<DenseFrameWindow>, DIAFrameInfo) {
     let mut timer = utils::ContextTimer::new("Reading all DIA frames", true, utils::LogLevel::INFO);
     let reader = timsrust::FileReader::new(path.clone()).unwrap();
 
@@ -349,7 +349,7 @@ pub fn read_all_dia_denoising(
         min_intensity,
         mz_scaling,
         ims_scaling,
-        dia_frame_info: dia_info,
+        dia_frame_info: dia_info.clone(),
         ims_converter,
         mz_converter,
     };
@@ -360,5 +360,6 @@ pub fn read_all_dia_denoising(
     let split_frames = denoiser.par_denoise_slice(frames, record_stream, (converters, None));
     let out: Vec<DenseFrameWindow> = split_frames.into_iter().flatten().collect();
     timer.stop(true);
-    out
+
+    (out, dia_info)
 }

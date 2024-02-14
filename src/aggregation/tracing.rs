@@ -5,18 +5,28 @@ use crate::space::space_generics::{HasIntensity, NDPoint, NDPointConverter, Trac
 use crate::utils;
 use crate::utils::RollingSDCalculator;
 use crate::visualization::RerunPlottable;
+use crate::space::space_generics::NDBoundary;
 
 use log::{debug, error, info, warn};
 use rayon::iter::IntoParallelIterator;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use serde::ser::{Serializer, SerializeStruct};
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::io::Write;
+use std::ops::{AddAssign, Mul};
 use std::path::Path;
+use num_traits::AsPrimitive;
+
 
 type QuadLowHigh = (f64, f64);
 
-#[derive(Debug, Clone, Copy, Serialize)]
+// Needs to be odd
+const NUM_LOCAL_CHROMATOGRAM_BINS: usize = 21;
+
+// Serialize
+#[derive(Debug, Clone, Copy)]
 pub struct BaseTrace {
     pub mz: f64,
     pub mz_std: f64,
@@ -31,6 +41,36 @@ pub struct BaseTrace {
     pub num_agg: usize,
     pub quad_low: f32,
     pub quad_high: f32,
+    pub quad_center: f32,
+    pub chromatogram: ChromatogramArray<f32, NUM_LOCAL_CHROMATOGRAM_BINS>,
+    pub num_rt_points: usize,
+}
+
+impl Serialize for BaseTrace {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let chromatogram = self.chromatogram.chromatogram.to_vec();
+        let mut state = serializer.serialize_struct("BaseTrace", 15)?;
+        state.serialize_field("mz", &self.mz)?;
+        state.serialize_field("mz_std", &self.mz_std)?;
+        state.serialize_field("intensity", &self.intensity)?;
+        state.serialize_field("rt", &self.rt)?;
+        state.serialize_field("rt_std", &self.rt_std)?;
+        state.serialize_field("rt_kurtosis", &self.rt_kurtosis)?;
+        state.serialize_field("rt_skew", &self.rt_skew)?;
+        state.serialize_field("rt_start", &self.rt_start)?;
+        state.serialize_field("rt_end", &self.rt_end)?;
+        state.serialize_field("mobility", &self.mobility)?;
+        state.serialize_field("num_agg", &self.num_agg)?;
+        state.serialize_field("quad_low", &self.quad_low)?;
+        state.serialize_field("quad_high", &self.quad_high)?;
+        state.serialize_field("quad_center", &self.quad_center)?;
+        state.serialize_field("chromatogram", &format!("{:?}", chromatogram))?;
+        state.end()
+    }
+
 }
 
 pub fn write_trace_csv(traces: &Vec<BaseTrace>, path: &String) -> Result<(), Box<dyn Error>> {
@@ -143,6 +183,7 @@ pub fn combine_traces(
     ims_scaling: f64,
     min_n: usize,
     min_intensity: u32,
+    rt_binsize: f32,
     record_stream: &mut Option<rerun::RecordingStream>,
 ) -> Vec<BaseTrace> {
     // Grouping by quad windows + group id
@@ -192,6 +233,7 @@ pub fn combine_traces(
                 ims_scaling,
                 min_n,
                 min_intensity,
+                rt_binsize,
             )
         })
         .flatten()
@@ -274,6 +316,226 @@ impl RerunPlottable<Option<usize>> for Vec<BaseTrace> {
     }
 }
 
+
+// <----------- Make the chromatogram lazy so the offset is set with the first peak
+
+#[derive(Debug, Clone)]
+struct BTreeChromatogram {
+    pub btree: BTreeMap<i32, u64>,
+    pub rt_binsize: f32,
+    pub rt_bin_offset: Option<f32>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ChromatogramArray <T: Mul<Output = T> + AddAssign + Default + AsPrimitive<f32>, const NBINS: usize>{
+    pub chromatogram: [T; NBINS],
+    pub rt_binsize: f32,
+    pub rt_bin_offset: Option<f32>,
+}
+
+impl BTreeChromatogram {
+    fn new(rt_binsize: f32, rt_bin_offset: f32) -> Self {
+        BTreeChromatogram {
+            btree: BTreeMap::new(),
+            rt_binsize,
+            rt_bin_offset: Some(rt_bin_offset),
+        }
+    }
+
+    fn new_lazy(rt_binsize: f32) -> Self {
+        BTreeChromatogram {
+            btree: BTreeMap::new(),
+            rt_binsize,
+            rt_bin_offset: None,
+        }
+    }
+
+    fn add(&mut self, rt: f32, intensity: u64) {
+        if self.rt_bin_offset.is_none() {
+            self.rt_bin_offset = Some(rt - (self.rt_binsize / 2.));
+        }
+        let bin = ((rt - self.rt_bin_offset.unwrap()) / self.rt_binsize) as i32;
+        let entry = self.btree.entry(bin).or_insert(0);
+        *entry += intensity;
+    }
+
+    fn range(&self) -> Option<(f32, f32)> {
+        let (min, max) = self.int_range()?;
+        let bo = self.rt_bin_offset.expect("Bin offset not set");
+        Some((min as f32 * self.rt_binsize + bo, max as f32 * self.rt_binsize + bo))
+    }
+
+    fn int_range(&self) -> Option<(i32, i32)> {
+        let min = self.btree.keys().next();
+        match min {
+            Some(min) => {
+                let max = *self.btree.keys().last().unwrap();
+                Some((*min as i32, max as i32))
+            }
+            None => None,
+        }
+    }
+
+    fn adopt(&mut self, other: &Self) {
+        if self.rt_bin_offset.is_none() {
+            self.rt_bin_offset = other.rt_bin_offset;
+        }
+        // Iterate over the other elements, convert back to RT
+        // and add to self
+        for (bin, intensity) in &other.btree {
+            let rt = *bin as f32 * other.rt_binsize + other.rt_bin_offset.unwrap();
+            let entry = self.btree.entry(*bin).or_insert(0);
+            *entry += *intensity;
+        }
+    }
+
+    fn cosine_similarity(&self, other: &Self) -> Option<f32> {
+        // Check that the bin size is almost the same
+        let binsize_diff = (self.rt_binsize - other.rt_binsize).abs();
+        if binsize_diff > 0.01 {
+            return None
+        }
+
+        // This would be the offset needed to align the two chromatograms
+        // in terms of bins. In other words bin number 0 in self would
+        // be bin number `other_vs_self_offset` in other.
+        // This line will also return None if either of the chromatograms
+        // has no bin offset set.
+        let other_vs_self_offset = ((other.rt_bin_offset? - self.rt_bin_offset?) / self.rt_binsize) as i32;
+
+        let (min, max) = self.int_range()?;
+        let (min_o, max_o) = other.int_range()?;
+        let min = min.max(min_o - other_vs_self_offset);
+        let max = max.min(max_o - other_vs_self_offset);
+
+        debug_assert!(min <= max);
+
+        let mut dot = 0;
+        let mut mag_a = 0;
+        let mut mag_b = 0;
+        for i in min..max {
+            let a = *self.btree.get(&i).unwrap_or(&0);
+            let b = *other.btree.get(&(i + other_vs_self_offset)).unwrap_or(&0);
+            dot += a * b;
+            mag_a += a * a;
+            mag_b += b * b;
+        }
+
+        let mag_a = (mag_a as f32).sqrt();
+        let mag_b = (mag_b as f32).sqrt();
+        let cosine = dot as f32 / (mag_a * mag_b);
+        Some(cosine)
+    }
+}
+
+impl<T: Mul<Output = T> + AddAssign + Default + AsPrimitive<f32>, const NBINS:usize> ChromatogramArray<T, NBINS> {
+    pub fn cosine_similarity(&self, other: &Self) -> Option<f32> {
+        // Check that the bin size is almost the same
+        let binsize_diff = (self.rt_binsize - other.rt_binsize).abs();
+        if binsize_diff > 0.01 {
+            return None
+        }
+
+        // This would be the offset needed to align the two chromatograms
+        // in terms of bins. In other words bin number 0 in self would
+        // be bin number `other_vs_self_offset` in other.
+        // This line will also return None if either of the chromatograms
+        // has no bin offset set.
+        let other_vs_self_offset = ((other.rt_bin_offset? - self.rt_bin_offset?) / self.rt_binsize) as i32;
+
+        let mut dot = T::default();
+        let mut mag_a = T::default();
+        let mut mag_b = T::default();
+        for i in 0..NBINS {
+            let other_index = i + other_vs_self_offset as usize;
+            if other_index >= other.chromatogram.len() || other_index < 0 {
+                continue;
+            }
+
+            let a = self.chromatogram[i];
+            let b = other.chromatogram[other_index];
+            dot += a * b;
+            mag_a += a * a;
+            mag_b += b * b;
+        }
+
+        let mag_a: f32 = (mag_a.as_()).sqrt();
+        let mag_b: f32 = (mag_b.as_()).sqrt();
+        let cosine = dot.as_() / (mag_a * mag_b);
+        Some(cosine)
+    }
+}
+
+#[cfg(test)]
+mod chromatogram_tests {
+    use super::*;
+
+    #[test]
+    fn test_chromatogram() {
+        let mut c = BTreeChromatogram::new(1., 0.);
+        c.add(0., 1);
+        c.add(1., 1);
+        c.add(2., 1);
+        c.add(2., 1);
+        c.add(3., 1);
+
+        let mut c2 = BTreeChromatogram::new(1., 0.);
+        c2.add(0., 1);
+        c2.add(1., 1);
+        c2.add(2., 1);
+        c2.add(2., 1);
+        c2.add(3., 1);
+
+        let cosine = c.cosine_similarity(&c2).unwrap();
+        let cosine = (cosine * 1000.).round() / 1000.;
+        assert_eq!(cosine, 1.);
+
+        c.add(4., 1);
+        let cosine = c.cosine_similarity(&c2).unwrap();
+        let cosine = (cosine * 1000.).round() / 1000.;
+        assert_eq!(cosine, 1.);
+
+        c.add(2., 20);
+        let cosine = c.cosine_similarity(&c2).unwrap();
+        assert!(cosine <= 0.9, "Cosine: {}", cosine);
+    }
+
+    #[test]
+    fn test_chromatogram_array_cosine(){
+        let mut c = ChromatogramArray::<i32, 5> {
+            chromatogram: [0; 5],
+            rt_binsize: 1.,
+            rt_bin_offset: Some(0.),
+        };
+        c.chromatogram[0] = 1;
+        c.chromatogram[1] = 1;
+        c.chromatogram[2] = 1;
+        c.chromatogram[3] = 1;
+        c.chromatogram[4] = 1;
+
+        let mut c2 = ChromatogramArray::<i32, 5> {
+            chromatogram: [0; 5],
+            rt_binsize: 1.,
+            rt_bin_offset: Some(0.),
+        };
+        c2.chromatogram[0] = 1;
+        c2.chromatogram[1] = 1;
+        c2.chromatogram[2] = 1;
+        c2.chromatogram[3] = 1;
+        c2.chromatogram[4] = 1;
+
+        let cosine = c.cosine_similarity(&c2).unwrap();
+        let cosine = (cosine * 1000.).round() / 1000.;
+        assert_eq!(cosine, 1.);
+
+        c.chromatogram[4] = 20;
+        let cosine = c.cosine_similarity(&c2).unwrap();
+        assert!(cosine <= 0.9, "Cosine: {}", cosine);
+    
+    }
+}
+
+
 #[derive(Debug, Clone)]
 struct TraceAggregator {
     mz: RollingSDCalculator<f64, u64>,
@@ -282,6 +544,7 @@ struct TraceAggregator {
     ims: RollingSDCalculator<f64, u64>,
     num_peaks: usize,
     quad_low_high: QuadLowHigh,
+    btree_chromatogram: BTreeChromatogram,
 }
 
 impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
@@ -292,6 +555,7 @@ impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
         self.intensity += peak.intensity;
         self.rt.add(peak.rt as f64, peak.intensity);
         self.ims.add(peak.ims as f64, peak.intensity);
+        self.btree_chromatogram.add(peak.rt, peak.intensity);
         self.num_peaks += 1;
     }
 
@@ -308,6 +572,29 @@ impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
             None => rt,
         };
 
+
+        // TODO maybe move this logic to the chromatogram ... 
+        // something like btree_chromatogram.as_dense(center_rt, num_bins)
+        let mut chromatogram_arr = [0.; NUM_LOCAL_CHROMATOGRAM_BINS];
+        // The chromatogram uses the bin size of the chromatogram btree
+        // but re-centers it to the mean RT of the trace
+        if self.btree_chromatogram.btree.len() > 0 {
+            // Should I offset this by half a bin?
+            let int_center = ((rt - self.btree_chromatogram.rt_bin_offset.unwrap()) / self.btree_chromatogram.rt_binsize) as i32;
+            let left_start = int_center - (NUM_LOCAL_CHROMATOGRAM_BINS / 2) as i32;
+            
+            for i in 0..NUM_LOCAL_CHROMATOGRAM_BINS {
+                let bin = left_start + i as i32;
+                chromatogram_arr[i] = *self.btree_chromatogram.btree.get(&bin).unwrap_or(&0) as f32;
+            }
+        }
+        let num_rt_points = self.btree_chromatogram.btree.len();
+        let chromatogram = ChromatogramArray {
+            chromatogram: chromatogram_arr,
+            rt_binsize: self.btree_chromatogram.rt_binsize,
+            rt_bin_offset: self.btree_chromatogram.rt_bin_offset,
+        };
+
         BaseTrace {
             mz,
             mz_std: self.mz.get_sd(),
@@ -322,6 +609,9 @@ impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
             num_agg: self.num_peaks,
             quad_low: self.quad_low_high.0 as f32,
             quad_high: self.quad_low_high.1 as f32,
+            quad_center: (self.quad_low_high.0 + self.quad_low_high.1) as f32 / 2.,
+            chromatogram,
+            num_rt_points,
         }
     }
 
@@ -329,10 +619,12 @@ impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
         let mut mz = self.mz;
         let mut rt = self.rt;
         let mut ims = self.ims;
+        let mut btree_chromatogram = self.btree_chromatogram;
 
         mz.merge(&other.mz);
         rt.merge(&other.rt);
         ims.merge(&other.ims);
+        btree_chromatogram.adopt(&other.btree_chromatogram);
 
         TraceAggregator {
             mz,
@@ -341,6 +633,7 @@ impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
             ims,
             num_peaks: self.num_peaks + other.num_peaks,
             quad_low_high: self.quad_low_high,
+            btree_chromatogram,
         }
     }
 }
@@ -394,6 +687,7 @@ fn _combine_single_window_traces(
     ims_scaling: f64,
     min_n: usize,
     min_intensity: u32,
+    rt_binsize: f32,
 ) -> Vec<BaseTrace> {
     debug!("Prefiltered peaks: {}", prefiltered_peaks.len());
     let converter = TimeTimsPeakConverter {
@@ -420,6 +714,7 @@ fn _combine_single_window_traces(
             ims: RollingSDCalculator::default(),
             num_peaks: 0,
             quad_low_high: window_quad_low_high,
+            btree_chromatogram: BTreeChromatogram::new_lazy(rt_binsize.clone()),
         },
         None::<&FFTimeTimsPeak>,
         None,
@@ -543,46 +838,45 @@ struct BaseTraceConverter {
     peak_width_prior: f64,
 }
 
-impl NDPointConverter<BaseTrace, 6> for BaseTraceConverter {
-    fn convert(&self, elem: &BaseTrace) -> NDPoint<6> {
+impl NDPointConverter<BaseTrace, 3> for BaseTraceConverter {
+    fn convert(&self, elem: &BaseTrace) -> NDPoint<3> {
         let rt_start_use = (elem.rt - elem.rt_std).min(elem.rt - self.peak_width_prior as f32);
         let rt_end_use = (elem.rt + elem.rt_std).max(elem.rt + self.peak_width_prior as f32);
         let rt_start_end_scaling = self.rt_scaling * self.rt_start_end_ratio;
+        let quad_center = (elem.quad_low + elem.quad_high) / 2.;
         NDPoint {
             values: [
                 (elem.rt as f64 / self.rt_scaling) as Float,
-                (rt_start_use as f64 / rt_start_end_scaling) as Float,
-                (rt_end_use as f64 / rt_start_end_scaling) as Float,
                 (elem.mobility as f64 / self.ims_scaling) as Float,
-                (elem.quad_low as f64 / self.quad_scaling) as Float,
-                (elem.quad_high as f64 / self.quad_scaling) as Float,
+                (quad_center as f64 / self.quad_scaling) as Float,
             ],
         }
     }
 
     fn convert_to_bounds_query<'a>(
         &self,
-        point: &'a NDPoint<6>,
+        point: &'a NDPoint<3>,
     ) -> (
-        crate::space::space_generics::NDBoundary<6>,
-        Option<&'a NDPoint<6>>,
+        NDBoundary<3>,
+        Option<&'a NDPoint<3>>,
     ) {
+        const NUM_DIMENTIONS: usize = 3;
         let range_center = (point.values[1] + point.values[2]) / 2.;
         let mut starts = point.values;
         let mut ends = point.values;
-        for i in 0..6 {
+        for i in 0..NUM_DIMENTIONS {
             starts[i] -= 1.;
             ends[i] += 1.;
         }
 
-        // KEY =                 [-------]
-        // Allowed ends =            [------]
-        // Allowed starts =  [------]
+        // // KEY =                 [-------]
+        // // Allowed ends =            [------]
+        // // Allowed starts =  [------]
 
-        ends[1] = range_center;
-        starts[2] = range_center;
+        // ends[1] = range_center;
+        // starts[2] = range_center;
 
-        let bounds = crate::space::space_generics::NDBoundary::new(starts, ends);
+        let bounds = NDBoundary::new(starts, ends);
         (bounds, Some(point))
     }
 }
@@ -607,11 +901,21 @@ pub fn combine_pseudospectra(
         peak_width_prior: 0.75,
     };
 
-    const IOU_THRESH: f32 = 0.2;
+    const IOU_THRESH: f32 = 0.1;
+    const COSINE_THRESH: f32 = 0.8;
     let extra_filter_fun = |x: &BaseTrace, y: &BaseTrace| {
+        let close_in_quad = (x.quad_center - y.quad_center).abs() < 5.0;
+        if !close_in_quad {
+            return false;
+        }
+
         let iou = x.rt_iou(y);
-        // println!("iou: {}:{} vs {}:{} {}", x.rt, x.rt_std, y.rt, y.rt_std, iou);
-        iou > IOU_THRESH
+        let within_iou_tolerance = iou > IOU_THRESH;
+
+        let cosine = x.chromatogram.cosine_similarity(&y.chromatogram).unwrap();
+        let within_cosine_tolerance = cosine > COSINE_THRESH;
+
+        within_iou_tolerance && within_cosine_tolerance
     };
     let foo: Vec<PseudoSpectrum> = dbscan_generic(
         converter,
@@ -628,7 +932,6 @@ pub fn combine_pseudospectra(
 
     if let Some(_stream) = record_stream.as_mut() {
         warn!("Plotting pseudospectra is not implemented yet");
-        // let _ = foo.plot(stream, String::from("points/pseudospectra"), None, None);
     }
 
     foo

@@ -164,7 +164,7 @@ fn main() {
     let out_path_features = out_path_dir.join("features_debug.csv");
 
     if true {
-        let dia_frames = aggregation::ms_denoise::read_all_dia_denoising(
+        let (dia_frames, dia_info) = aggregation::ms_denoise::read_all_dia_denoising(
             path_use.clone(),
             config.denoise_config.ms2_min_n.into(),
             config.denoise_config.ms2_min_cluster_intensity.into(),
@@ -173,6 +173,8 @@ fn main() {
             &mut rec,
         );
 
+        let cycle_time = dia_info.calculate_cycle_time();
+
         let mut traces = aggregation::tracing::combine_traces(
             dia_frames,
             config.tracing_config.mz_scaling.into(),
@@ -180,6 +182,7 @@ fn main() {
             config.tracing_config.ims_scaling.into(),
             config.tracing_config.min_n.into(),
             config.tracing_config.min_neighbor_intensity,
+            cycle_time as f32,
             &mut rec,
         );
 
@@ -193,6 +196,7 @@ fn main() {
 
         println!("traces: {:?}", traces.len());
         traces.retain(|x| x.num_agg > 5);
+        traces.retain(|x| x.num_rt_points > 2);
         println!("traces: {:?}", traces.len());
 
         // Maybe reparametrize as 1.1 cycle time

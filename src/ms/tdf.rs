@@ -8,7 +8,7 @@ use crate::ms::frames::{DenseFrame, DenseFrameWindow, FrameWindow};
 // Diaframemsmsinfo = vec of frame_id -> windowgroup_id
 // diaframemsmswindows = vec[(windowgroup_id, scanstart, scanend, iso_mz, iso_with, nce)]
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ScanRange {
     pub scan_start: usize,
     pub scan_end: usize,
@@ -54,12 +54,13 @@ impl ScanRange {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DIAWindowGroup {
     pub id: usize,
     pub scan_ranges: Vec<ScanRange>,
 }
 
+#[derive(Debug, Clone)]
 pub struct DIAFrameInfo {
     pub groups: Vec<Option<DIAWindowGroup>>,
     /// Frame Groups is a vec of length equal to the number of frames.
@@ -503,7 +504,6 @@ pub fn read_dia_frame_info(dotd_file: String) -> Result<DIAFrameInfo> {
     };
 
     let rt = frame_info.calculate_cycle_time();
-    info!("Cycle time: {} .... not used anywhere RN ...", rt);
 
     Ok(frame_info)
 }
