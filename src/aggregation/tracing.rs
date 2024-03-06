@@ -6,24 +6,19 @@ use crate::utils;
 use crate::utils::RollingSDCalculator;
 use crate::visualization::RerunPlottable;
 use crate::space::space_generics::NDBoundary;
+use crate::aggregation::chromatograms::{BTreeChromatogram, ChromatogramArray, NUM_LOCAL_CHROMATOGRAM_BINS};
 
 use log::{debug, error, info, warn};
 use rayon::iter::IntoParallelIterator;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde::ser::{Serializer, SerializeStruct};
-use std::collections::BTreeMap;
 use std::error::Error;
 use std::io::Write;
-use std::ops::{AddAssign, Mul};
 use std::path::Path;
-use num_traits::AsPrimitive;
-
 
 type QuadLowHigh = (f64, f64);
 
-// Needs to be odd
-const NUM_LOCAL_CHROMATOGRAM_BINS: usize = 21;
 
 // Serialize
 #[derive(Debug, Clone, Copy)]
@@ -73,7 +68,7 @@ impl Serialize for BaseTrace {
 
 }
 
-pub fn write_trace_csv(traces: &Vec<BaseTrace>, path: &String) -> Result<(), Box<dyn Error>> {
+pub fn write_trace_csv(traces: &Vec<BaseTrace>, path: impl AsRef<Path>) -> Result<(), Box<dyn Error>> {
     let mut wtr = csv::Writer::from_path(path).unwrap();
     for trace in traces {
         wtr.serialize(trace)?;
@@ -318,223 +313,6 @@ impl RerunPlottable<Option<usize>> for Vec<BaseTrace> {
 
 
 #[derive(Debug, Clone)]
-struct BTreeChromatogram {
-    pub btree: BTreeMap<i32, u64>,
-    pub rt_binsize: f32,
-    pub rt_bin_offset: Option<f32>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ChromatogramArray <T: Mul<Output = T> + AddAssign + Default + AsPrimitive<f32>, const NBINS: usize>{
-    pub chromatogram: [T; NBINS],
-    pub rt_binsize: f32,
-    pub rt_bin_offset: Option<f32>,
-}
-
-impl BTreeChromatogram {
-    fn new(rt_binsize: f32, rt_bin_offset: f32) -> Self {
-        BTreeChromatogram {
-            btree: BTreeMap::new(),
-            rt_binsize,
-            rt_bin_offset: Some(rt_bin_offset),
-        }
-    }
-
-    fn new_lazy(rt_binsize: f32) -> Self {
-        BTreeChromatogram {
-            btree: BTreeMap::new(),
-            rt_binsize,
-            rt_bin_offset: None,
-        }
-    }
-
-    fn add(&mut self, rt: f32, intensity: u64) {
-        if self.rt_bin_offset.is_none() {
-            self.rt_bin_offset = Some(rt - (self.rt_binsize / 2.));
-        }
-        let bin = ((rt - self.rt_bin_offset.unwrap()) / self.rt_binsize) as i32;
-        let entry = self.btree.entry(bin).or_insert(0);
-        *entry += intensity;
-    }
-
-    fn range(&self) -> Option<(f32, f32)> {
-        let (min, max) = self.int_range()?;
-        let bo = self.rt_bin_offset.expect("Bin offset not set");
-        Some((min as f32 * self.rt_binsize + bo, max as f32 * self.rt_binsize + bo))
-    }
-
-    fn int_range(&self) -> Option<(i32, i32)> {
-        let min = self.btree.keys().next();
-        match min {
-            Some(min) => {
-                let max = *self.btree.keys().last().unwrap();
-                Some((*min as i32, max as i32))
-            }
-            None => None,
-        }
-    }
-
-    fn adopt(&mut self, other: &Self) {
-        if self.rt_bin_offset.is_none() {
-            self.rt_bin_offset = other.rt_bin_offset;
-        }
-        // Iterate over the other elements, convert back to RT
-        // and add to self
-        for (bin, intensity) in &other.btree {
-            let rt = *bin as f32 * other.rt_binsize + other.rt_bin_offset.unwrap();
-            let entry = self.btree.entry(*bin).or_insert(0);
-            *entry += *intensity;
-        }
-    }
-
-    fn cosine_similarity(&self, other: &Self) -> Option<f32> {
-        // Check that the bin size is almost the same
-        let binsize_diff = (self.rt_binsize - other.rt_binsize).abs();
-        if binsize_diff > 0.01 {
-            return None
-        }
-
-        // This would be the offset needed to align the two chromatograms
-        // in terms of bins. In other words bin number 0 in self would
-        // be bin number `other_vs_self_offset` in other.
-        // This line will also return None if either of the chromatograms
-        // has no bin offset set.
-        let other_vs_self_offset = ((other.rt_bin_offset? - self.rt_bin_offset?) / self.rt_binsize) as i32;
-
-        let (min, max) = self.int_range()?;
-        let (min_o, max_o) = other.int_range()?;
-        let min = min.max(min_o - other_vs_self_offset);
-        let max = max.min(max_o - other_vs_self_offset);
-
-        debug_assert!(min <= max);
-
-        let mut dot = 0;
-        let mut mag_a = 0;
-        let mut mag_b = 0;
-        for i in min..max {
-            let a = *self.btree.get(&i).unwrap_or(&0);
-            let b = *other.btree.get(&(i + other_vs_self_offset)).unwrap_or(&0);
-            dot += a * b;
-            mag_a += a * a;
-            mag_b += b * b;
-        }
-
-        let mag_a = (mag_a as f32).sqrt();
-        let mag_b = (mag_b as f32).sqrt();
-        let cosine = dot as f32 / (mag_a * mag_b);
-        Some(cosine)
-    }
-}
-
-impl<T: Mul<Output = T> + AddAssign + Default + AsPrimitive<f32>, const NBINS:usize> ChromatogramArray<T, NBINS> {
-    pub fn cosine_similarity(&self, other: &Self) -> Option<f32> {
-        // Check that the bin size is almost the same
-        let binsize_diff = (self.rt_binsize - other.rt_binsize).abs();
-        if binsize_diff > 0.01 {
-            return None
-        }
-
-        // This would be the offset needed to align the two chromatograms
-        // in terms of bins. In other words bin number 0 in self would
-        // be bin number `other_vs_self_offset` in other.
-        // This line will also return None if either of the chromatograms
-        // has no bin offset set.
-        let other_vs_self_offset = ((other.rt_bin_offset? - self.rt_bin_offset?) / self.rt_binsize) as i32;
-
-        let mut dot = T::default();
-        let mut mag_a = T::default();
-        let mut mag_b = T::default();
-        for i in 0..NBINS {
-            let other_index = i + other_vs_self_offset as usize;
-            if other_index >= other.chromatogram.len() || other_index < 0 {
-                continue;
-            }
-
-            let a = self.chromatogram[i];
-            let b = other.chromatogram[other_index];
-            dot += a * b;
-            mag_a += a * a;
-            mag_b += b * b;
-        }
-
-        let mag_a: f32 = (mag_a.as_()).sqrt();
-        let mag_b: f32 = (mag_b.as_()).sqrt();
-        let cosine = dot.as_() / (mag_a * mag_b);
-        Some(cosine)
-    }
-}
-
-#[cfg(test)]
-mod chromatogram_tests {
-    use super::*;
-
-    #[test]
-    fn test_chromatogram() {
-        let mut c = BTreeChromatogram::new(1., 0.);
-        c.add(0., 1);
-        c.add(1., 1);
-        c.add(2., 1);
-        c.add(2., 1);
-        c.add(3., 1);
-
-        let mut c2 = BTreeChromatogram::new(1., 0.);
-        c2.add(0., 1);
-        c2.add(1., 1);
-        c2.add(2., 1);
-        c2.add(2., 1);
-        c2.add(3., 1);
-
-        let cosine = c.cosine_similarity(&c2).unwrap();
-        let cosine = (cosine * 1000.).round() / 1000.;
-        assert_eq!(cosine, 1.);
-
-        c.add(4., 1);
-        let cosine = c.cosine_similarity(&c2).unwrap();
-        let cosine = (cosine * 1000.).round() / 1000.;
-        assert_eq!(cosine, 1.);
-
-        c.add(2., 20);
-        let cosine = c.cosine_similarity(&c2).unwrap();
-        assert!(cosine <= 0.9, "Cosine: {}", cosine);
-    }
-
-    #[test]
-    fn test_chromatogram_array_cosine(){
-        let mut c = ChromatogramArray::<i32, 5> {
-            chromatogram: [0; 5],
-            rt_binsize: 1.,
-            rt_bin_offset: Some(0.),
-        };
-        c.chromatogram[0] = 1;
-        c.chromatogram[1] = 1;
-        c.chromatogram[2] = 1;
-        c.chromatogram[3] = 1;
-        c.chromatogram[4] = 1;
-
-        let mut c2 = ChromatogramArray::<i32, 5> {
-            chromatogram: [0; 5],
-            rt_binsize: 1.,
-            rt_bin_offset: Some(0.),
-        };
-        c2.chromatogram[0] = 1;
-        c2.chromatogram[1] = 1;
-        c2.chromatogram[2] = 1;
-        c2.chromatogram[3] = 1;
-        c2.chromatogram[4] = 1;
-
-        let cosine = c.cosine_similarity(&c2).unwrap();
-        let cosine = (cosine * 1000.).round() / 1000.;
-        assert_eq!(cosine, 1.);
-
-        c.chromatogram[4] = 20;
-        let cosine = c.cosine_similarity(&c2).unwrap();
-        assert!(cosine <= 0.9, "Cosine: {}", cosine);
-    
-    }
-}
-
-
-#[derive(Debug, Clone)]
 struct TraceAggregator {
     mz: RollingSDCalculator<f64, u64>,
     intensity: u64,
@@ -570,28 +348,12 @@ impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
             None => rt,
         };
 
-
-        // TODO maybe move this logic to the chromatogram ... 
-        // something like btree_chromatogram.as_dense(center_rt, num_bins)
-        let mut chromatogram_arr = [0.; NUM_LOCAL_CHROMATOGRAM_BINS];
-        // The chromatogram uses the bin size of the chromatogram btree
-        // but re-centers it to the mean RT of the trace
-        if self.btree_chromatogram.btree.len() > 0 {
-            // Should I offset this by half a bin?
-            let int_center = ((rt - self.btree_chromatogram.rt_bin_offset.unwrap()) / self.btree_chromatogram.rt_binsize) as i32;
-            let left_start = int_center - (NUM_LOCAL_CHROMATOGRAM_BINS / 2) as i32;
-            
-            for i in 0..NUM_LOCAL_CHROMATOGRAM_BINS {
-                let bin = left_start + i as i32;
-                chromatogram_arr[i] = *self.btree_chromatogram.btree.get(&bin).unwrap_or(&0) as f32;
-            }
-        }
+        //  The chromatogram is an array centered on the retention time
         let num_rt_points = self.btree_chromatogram.btree.len();
-        let chromatogram = ChromatogramArray {
-            chromatogram: chromatogram_arr,
-            rt_binsize: self.btree_chromatogram.rt_binsize,
-            rt_bin_offset: self.btree_chromatogram.rt_bin_offset,
-        };
+        let chromatogram: ChromatogramArray<f32, NUM_LOCAL_CHROMATOGRAM_BINS> = self.btree_chromatogram.as_chromatogram_array(Some(rt));
+
+        // let apex = chromatogram.chromatogram.iter().enumerate().max_by_key(|x| (x.1 * 100.) as i32).unwrap().0;
+        // let apex_offset = (apex as f32 - (NUM_LOCAL_CHROMATOGRAM_BINS as f32 / 2.)) * self.btree_chromatogram.rt_binsize;
 
         BaseTrace {
             mz,

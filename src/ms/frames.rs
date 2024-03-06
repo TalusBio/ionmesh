@@ -38,7 +38,8 @@ pub enum SortingOrder {
     Intensity,
 }
 
-/// Unprocessed data from a 'Frame'.
+/// Unprocessed data from a 'Frame' after breaking by quad isolation_window + ims window.
+/// 
 ///
 /// 1. every tof-index + intensity represents a peak.
 /// 2. Scan offsets are monotonically increasing.
@@ -57,6 +58,10 @@ pub enum SortingOrder {
 ///    - intensities.     [123, 111, 12 ,  3,  4,  1 ...] len = len(tof indices)
 ///    - index            34
 ///    - rt               65.34
+/// Additions for FrameWindow:
+///    - scan_start       123  // The scan number of the first scan offset in the current window.
+///    - group_id         1    // The group id of the current window.
+///    - quad_group_id    2    // The quad group id of the current window within the current group.
 #[derive(Debug, Clone)]
 pub struct FrameWindow {
     /// A vector of length (s) where contiguous elements represent
@@ -332,7 +337,7 @@ impl RerunPlottable<Option<usize>> for DenseFrame {
             &rerun::Points2D::new(
                 quad_points
                     .iter()
-                    .map(|point| (point.values[0], point.values[1])),
+                    .map(|point| (point.values[0] as f32, point.values[1] as f32)),
             )
             .with_radii(radii),
         )?;

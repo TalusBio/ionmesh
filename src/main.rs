@@ -161,7 +161,8 @@ fn main() {
         fs::create_dir_all(out_path_dir).unwrap();
     }
     let out_path_scans = out_path_dir.join("pseudoscans_debug.json");
-    let out_path_features = out_path_dir.join("features_debug.csv");
+    let out_path_features = out_path_dir.join("sage_features_debug.csv");
+    let out_traces_path = out_path_dir.join("chr_traces_debug.csv");
 
     if true {
         let (dia_frames, dia_info) = aggregation::ms_denoise::read_all_dia_denoising(
@@ -186,7 +187,7 @@ fn main() {
             &mut rec,
         );
 
-        let out = aggregation::tracing::write_trace_csv(&traces, &"traces_debug.csv".into());
+        let out = aggregation::tracing::write_trace_csv(&traces, out_traces_path);
         match out {
             Ok(_) => {}
             Err(e) => {

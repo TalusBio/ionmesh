@@ -83,6 +83,7 @@ impl Serialize for SerializableFeature<'_> {
         S: Serializer,
     {
         let mut row = serializer.serialize_struct("SerializableFeature", 3)?;
+        // TODO: if you can call serialize on the feature
         row.serialize_field("peptide", &self.peptide)?;
         row.serialize_field("psm_id", &self.feature.psm_id)?;
         row.serialize_field("peptide_len", &self.feature.peptide_len)?;
