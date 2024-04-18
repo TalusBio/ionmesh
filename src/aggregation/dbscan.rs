@@ -387,6 +387,7 @@ impl ClusterAggregator<TimsPeak, TimsPeak> for TimsPeakAggregator {
             intensity: self.cluster_intensity as u32,
             mz: cluster_mz,
             mobility: cluster_mobility as f32,
+            npeaks: self.num_peaks as u32,
         }
     }
 

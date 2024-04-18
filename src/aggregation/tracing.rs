@@ -39,6 +39,7 @@ pub struct BaseTrace {
     pub quad_center: f32,
     pub chromatogram: ChromatogramArray<f32, NUM_LOCAL_CHROMATOGRAM_BINS>,
     pub num_rt_points: usize,
+    pub num_tot_points: usize,
 }
 
 impl Serialize for BaseTrace {
@@ -59,6 +60,7 @@ impl Serialize for BaseTrace {
         state.serialize_field("rt_end", &self.rt_end)?;
         state.serialize_field("mobility", &self.mobility)?;
         state.serialize_field("num_agg", &self.num_agg)?;
+        state.serialize_field("num_tot_points", &self.num_tot_points)?;
         state.serialize_field("quad_low", &self.quad_low)?;
         state.serialize_field("quad_high", &self.quad_high)?;
         state.serialize_field("quad_center", &self.quad_center)?;
@@ -84,6 +86,7 @@ pub struct TimeTimsPeak {
     pub rt: f32,
     pub ims: f32,
     pub quad_low_high: QuadLowHigh,
+    pub n_peaks: u32,
 }
 
 impl HasIntensity<u32> for TimeTimsPeak {
@@ -280,6 +283,7 @@ impl RerunPlottable<Option<usize>> for Vec<BaseTrace> {
                     mz: trace.mz,
                     intensity: trace.intensity.try_into().unwrap_or(u32::MAX),
                     mobility: trace.mobility,
+                    npeaks: trace.num_agg.try_into().unwrap_or(u32::MAX),
                 })
             }
 
@@ -287,7 +291,7 @@ impl RerunPlottable<Option<usize>> for Vec<BaseTrace> {
             let df = DenseFrame {
                 raw_peaks: peaks,
                 rt: last_second as f64,
-                index: 555,
+                index: 10 * last_second as usize, // I just need and index and back-calculating it is not worth my time.
                 frame_type: timsrust::FrameType::Unknown,
                 sorted: None,
             };
@@ -372,6 +376,7 @@ impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
             quad_center: (self.quad_low_high.0 + self.quad_low_high.1) as f32 / 2.,
             chromatogram,
             num_rt_points,
+            num_tot_points: self.num_peaks,
         }
     }
 
@@ -430,6 +435,7 @@ fn _flatten_denseframe_vec(denseframe_windows: Vec<DenseFrameWindow>) -> Vec<Tim
                     rt: dfw.frame.rt as f32,
                     ims: peak.mobility,
                     quad_low_high: (dfw.mz_start, dfw.mz_end),
+                    n_peaks: 1,
                 });
             }
             out
@@ -592,17 +598,17 @@ impl<'a> ClusterAggregator<BaseTrace, PseudoSpectrum> for PseudoSpectrumAggregat
 
 struct BaseTraceConverter {
     rt_scaling: f64,
-    rt_start_end_ratio: f64,
+    // rt_start_end_ratio: f64,
     ims_scaling: f64,
     quad_scaling: f64,
-    peak_width_prior: f64,
+    // peak_width_prior: f64,
 }
 
 impl NDPointConverter<BaseTrace, 3> for BaseTraceConverter {
     fn convert(&self, elem: &BaseTrace) -> NDPoint<3> {
-        let rt_start_use = (elem.rt - elem.rt_std).min(elem.rt - self.peak_width_prior as f32);
-        let rt_end_use = (elem.rt + elem.rt_std).max(elem.rt + self.peak_width_prior as f32);
-        let rt_start_end_scaling = self.rt_scaling * self.rt_start_end_ratio;
+        // let rt_start_use = (elem.rt - elem.rt_std).min(elem.rt - self.peak_width_prior as f32);
+        // let rt_end_use = (elem.rt + elem.rt_std).max(elem.rt + self.peak_width_prior as f32);
+        // let rt_start_end_scaling = self.rt_scaling * self.rt_start_end_ratio;
         let quad_center = (elem.quad_low + elem.quad_high) / 2.;
         NDPoint {
             values: [
@@ -621,7 +627,7 @@ impl NDPointConverter<BaseTrace, 3> for BaseTraceConverter {
         Option<&'a NDPoint<3>>,
     ) {
         const NUM_DIMENTIONS: usize = 3;
-        let range_center = (point.values[1] + point.values[2]) / 2.;
+        // let range_center = (point.values[1] + point.values[2]) / 2.;
         let mut starts = point.values;
         let mut ends = point.values;
         for i in 0..NUM_DIMENTIONS {
@@ -657,8 +663,8 @@ pub fn combine_pseudospectra(
         rt_scaling,
         ims_scaling,
         quad_scaling,
-        rt_start_end_ratio: 2.,
-        peak_width_prior: 0.75,
+        // rt_start_end_ratio: 2.,
+        // peak_width_prior: 0.75,
     };
 
     const IOU_THRESH: f32 = 0.1;

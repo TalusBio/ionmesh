@@ -1,3 +1,4 @@
+use serde::de;
 pub use timsrust::Frame;
 pub use timsrust::FrameType;
 pub use timsrust::{
@@ -16,6 +17,7 @@ pub struct TimsPeak {
     pub intensity: u32,
     pub mz: f64,
     pub mobility: f32,
+    pub npeaks: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -29,6 +31,7 @@ fn _check_peak_sanity(peak: &TimsPeak) {
     debug_assert!(peak.intensity > 0);
     debug_assert!(peak.mz > 0.);
     debug_assert!(peak.mobility > 0.);
+    debug_assert!(peak.npeaks > 0);
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -159,6 +162,7 @@ impl DenseFrame {
                 intensity: *intensity,
                 mz: mz_converter.convert(*tof_index),
                 mobility: *scan_index,
+                npeaks: 1,
             })
             .collect::<Vec<_>>();
 
@@ -213,6 +217,7 @@ impl DenseFrame {
                 intensity: *intensity,
                 mz: mz_converter.convert(*tof_index),
                 mobility: *scan_index,
+                npeaks: 1,
             })
             .collect::<Vec<_>>();
 
