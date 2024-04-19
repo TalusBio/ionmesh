@@ -322,6 +322,7 @@ struct TraceAggregator {
     intensity: u64,
     rt: RollingSDCalculator<f64, u64>,
     ims: RollingSDCalculator<f64, u64>,
+    num_rt_peaks: usize,
     num_peaks: usize,
     quad_low_high: QuadLowHigh,
     btree_chromatogram: BTreeChromatogram,
@@ -336,7 +337,8 @@ impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
         self.rt.add(peak.rt as f64, peak.intensity);
         self.ims.add(peak.ims as f64, peak.intensity);
         self.btree_chromatogram.add(peak.rt, peak.intensity);
-        self.num_peaks += 1;
+        self.num_rt_peaks += 1;
+        self.num_peaks += peak.n_peaks as usize;
     }
 
     fn aggregate(&self) -> BaseTrace {
@@ -397,6 +399,7 @@ impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
             rt,
             ims,
             num_peaks: self.num_peaks + other.num_peaks,
+            num_rt_peaks: self.num_rt_peaks + other.num_rt_peaks,
             quad_low_high: self.quad_low_high,
             btree_chromatogram,
         }
@@ -479,11 +482,13 @@ fn _combine_single_window_traces(
             rt: RollingSDCalculator::default(),
             ims: RollingSDCalculator::default(),
             num_peaks: 0,
+            num_rt_peaks: 0,
             quad_low_high: window_quad_low_high,
             btree_chromatogram: BTreeChromatogram::new_lazy(rt_binsize.clone()),
         },
         None::<&FFTimeTimsPeak>,
         None,
+        false,
     );
 
     debug!("Combined traces: {}", foo.len());
@@ -667,8 +672,8 @@ pub fn combine_pseudospectra(
         // peak_width_prior: 0.75,
     };
 
-    const IOU_THRESH: f32 = 0.1;
-    const COSINE_THRESH: f32 = 0.8;
+    const IOU_THRESH: f32 = 0.01;
+    const COSINE_THRESH: f32 = 0.7;
     let extra_filter_fun = |x: &BaseTrace, y: &BaseTrace| {
         let close_in_quad = (x.quad_center - y.quad_center).abs() < 5.0;
         if !close_in_quad {
@@ -691,6 +696,7 @@ pub fn combine_pseudospectra(
         PseudoSpectrumAggregator::default,
         Some(&extra_filter_fun),
         Some(utils::LogLevel::INFO),
+        false,
     );
 
     info!("Combined pseudospectra: {}", foo.len());

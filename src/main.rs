@@ -165,6 +165,7 @@ fn main() {
     let out_traces_path = out_path_dir.join("chr_traces_debug.csv");
 
     if true {
+        log::info!("Reading DIA data from: {}", path_use);
         let (dia_frames, dia_info) = aggregation::ms_denoise::read_all_dia_denoising(
             path_use.clone(),
             config.denoise_config.ms2_min_n.into(),
@@ -197,7 +198,8 @@ fn main() {
 
         println!("traces: {:?}", traces.len());
         traces.retain(|x| x.num_agg > 5);
-        traces.retain(|x| x.num_rt_points > 2);
+        traces.retain(|x| x.num_rt_points >= 2);
+        println!("traces: {:?}", traces[traces.len()-5]);
         println!("traces: {:?}", traces.len());
 
         // Maybe reparametrize as 1.1 cycle time

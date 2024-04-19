@@ -54,7 +54,7 @@ impl BTreeChromatogram {
     pub fn add(&mut self, rt: f32, intensity: u64) {
         let add_rt = rt + f32::EPSILON;
         if self.rt_bin_offset.is_none() {
-            self.rt_bin_offset = Some(rt);
+            self.rt_bin_offset = Some(rt - (self.rt_binsize / 2.));
         }
         let bin = self.rt_to_bin(add_rt);
         let entry = self.btree.entry(bin).or_insert(0);
@@ -72,7 +72,7 @@ impl BTreeChromatogram {
 
     fn rt_range(&self) -> Option<(f32, f32)> {
         let (min, max) = self.int_range()?;
-        let bo = self.rt_bin_offset.expect("Bin offset not set");
+        let _bo = self.rt_bin_offset.expect("Bin offset not set");
         Some((self.bin_to_rt(min), self.bin_to_rt(max)))
     }
 

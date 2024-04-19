@@ -177,9 +177,9 @@ pub fn score_pseudospectra(
     // 1. Buid raw spectra from the pseudospectra
 
     let take_top_n = 250;
-    let min_fragment_mz = 250.;
+    let min_fragment_mz = 150.;
     let max_fragment_mz = 2000.;
-    let deisotope = true;
+    let deisotope = false;
 
     let specs = elems
         .into_par_iter()
@@ -220,9 +220,9 @@ pub fn score_pseudospectra(
         fragment_min_mz: min_fragment_mz,
         fragment_max_mz: max_fragment_mz,
         peptide_min_mass: 500.,
-        peptide_max_mass: 3500.,
+        peptide_max_mass: 4000.,
         ion_kinds: vec![Kind::B, Kind::Y],
-        min_ion_index: 2,
+        min_ion_index: 1,
         static_mods: (static_mods),
         variable_mods: (variable_mods),
         max_variable_mods: 1,
@@ -240,27 +240,30 @@ pub fn score_pseudospectra(
 
     let db = parameters.clone().build(sage_fasta);
 
-    let precursor_tolerance = Tolerance::Ppm(-15., 15.);
+    // Right now the precursor toleranec should be ignored
+    // bc we are using wide window mode for the search.
+    let precursor_tolerance = Tolerance::Da(-15., 15.);
     let scorer = Scorer {
         db: &db,
         precursor_tol: precursor_tolerance,
-        fragment_tol: Tolerance::Ppm(-10., 10.),
+        fragment_tol: Tolerance::Da(-0.02, 0.02),
         min_matched_peaks: 3,
         min_isotope_err: 0,
         max_isotope_err: 0,
-        min_precursor_charge: 2,
+        min_precursor_charge: 1,
         max_precursor_charge: 4,
-        max_fragment_charge: Some(1),
+        max_fragment_charge: Some(2),
         min_fragment_mass: 200.,
         max_fragment_mass: 4000.,
-        chimera: true,
-        report_psms: 2,
+        chimera: false,
+        report_psms: 1,
         wide_window: true,
         annotate_matches: false,
     };
 
     let progbar = indicatif::ProgressBar::new(spectra.len() as u64);
 
+    log::info!("Scoring pseudospectra ...");
     let mut features = spectra
         .par_iter()
         .progress_with(progbar)

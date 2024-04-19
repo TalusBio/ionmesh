@@ -349,6 +349,8 @@ pub struct Stats {
     pub skew: f64,
     pub kurtosis: f64,
     pub n: u64,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
 }
 
 pub fn get_stats(data: &[f64]) -> Stats {
@@ -362,6 +364,8 @@ pub fn get_stats(data: &[f64]) -> Stats {
         skew: sd_calc.get_skew(),
         kurtosis: sd_calc.get_kurtosis(),
         n: sd_calc.n,
+        min: sd_calc.get_min(),
+        max: sd_calc.get_max(),
     }
 }
 

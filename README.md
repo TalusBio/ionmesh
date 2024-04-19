@@ -7,6 +7,8 @@
 ```
 cargo build --release  --features par_dataprep
 ./target/release/peakachu --help
+
+RUST_LOG=info ./target/release/peakachu ...
 ```
 
 ## Ideas

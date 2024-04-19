@@ -438,6 +438,7 @@ pub fn aggregate_clusters<
     elements: Vec<T>,
     def_aggregator: F,
     log_level: utils::LogLevel,
+    keep_unclustered: bool,
 ) -> Vec<R> {
     let cluster_vecs: Vec<G> = if cfg!(feature = "par_dataprep") {
         let mut timer =
@@ -489,10 +490,17 @@ pub fn aggregate_clusters<
             .enumerate()
             .filter(|(_, x)| match x {
                 ClusterLabel::Unassigned => true,
+                ClusterLabel::Noise => keep_unclustered,
                 _ => false,
             })
             .map(|(i, _elem)| i)
             .collect();
+
+        // if unclustered_elems.len() > 0 {
+        //     log::debug!("Total Orig elems: {}", cluster_labels.len());
+        //     log::debug!("Unclustered elems: {}", unclustered_elems.len());
+        //     log::debug!("Clustered elems: {}", cluster_vecs.len());
+        // }
 
         let unclustered_elems = unclustered_elems
             .iter()
@@ -509,6 +517,7 @@ pub fn aggregate_clusters<
         cluster_vecs
     } else {
         let mut cluster_vecs: Vec<G> = Vec::with_capacity(tot_clusters as usize);
+        let mut unclustered_points: Vec<G> = Vec::new();
         for _ in 0..tot_clusters {
             cluster_vecs.push(def_aggregator());
         }
@@ -518,9 +527,17 @@ pub fn aggregate_clusters<
                     let cluster_idx = *cluster_id as usize - 1;
                     cluster_vecs[cluster_idx].add(&(elements[point_index]));
                 }
+                ClusterLabel::Noise => {
+                    if keep_unclustered {
+                        let mut oe = def_aggregator();
+                        oe.add(&elements[point_index]);
+                        unclustered_points.push(oe);
+                    }
+                }
                 _ => {}
             }
         }
+        cluster_vecs.extend(unclustered_points);
         cluster_vecs
     };
 
@@ -564,6 +581,7 @@ pub fn dbscan_generic<
     def_aggregator: F,
     extra_filter_fun: Option<&FF>,
     log_level: Option<utils::LogLevel>,
+    keep_unclustered: bool,
 ) -> Vec<R> {
     let show_progress = log_level.is_some();
     let log_level = match log_level {
@@ -616,6 +634,7 @@ pub fn dbscan_generic<
         prefiltered_peaks,
         def_aggregator,
         log_level,
+        keep_unclustered,
     )
 }
 
@@ -682,6 +701,7 @@ pub fn dbscan_denseframes(
         TimsPeakAggregator::default,
         None::<&FFTimsPeak>,
         None,
+        true,
     );
 
     frames::DenseFrame {
