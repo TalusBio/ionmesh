@@ -1,47 +1,92 @@
 
 # Peakachu
 
+## General functioning
+
+![IMS centroiding](assets/img/imscentroiding.svg)
+![Path Tracing](assets/img/pathtracing.svg)
+
+In the simplest of forms this tool uses a variant of DBSCAN to
+cluster peaks. Initially in the mz-ims dimensions along each frame.
+Then in the mz-rt dimensions across the frames. Finally in the rt-ims
+dimensions across the frames.
+
+Then these clusters are used to generate pseudo-spectra. These pseudo-spectra are searched with Sage internally.
+
 ## Usage
 
-
 ```
-cargo build --release  --features par_dataprep
+cargo build --release
 ./target/release/peakachu --help
 
 RUST_LOG=info ./target/release/peakachu ...
 ```
 
-## 
+### Config
+
+Its a toml file ...
+
+```
+[denoise_config]
+mz_scaling = 0.015
+ims_scaling = 0.03
+ms2_min_n = 2
+ms1_min_n = 3
+ms1_min_cluster_intensity = 100
+ms2_min_cluster_intensity = 50
+
+[tracing_config]
+mz_scaling = 0.019999999552965164
+rt_scaling = 2.200000047683716
+ims_scaling = 0.02
+min_n = 2
+min_neighbor_intensity = 200
+
+[pseudoscan_generation_config]
+rt_scaling = 0.7
+quad_scaling = 5.0
+ims_scaling = 0.02
+min_n = 4
+min_neighbor_intensity = 500
+
+[output_config] # These options can be missing, if missing will not output the files.
+out_features_csv = "features.csv"
+debug_traces_csv = "debug_traces.csv"
+debug_scans_json = "debug_scans.json"
+
+```
+
+## Dev Usage
+
+There are a couple of features for development.
+
+### Env variables
+```
+RUST_LOG=info # will change the log level ... levels are standard (info, debug, warn, error, trace)
+DEBUG_TRACES_FROM_CACHE=1 # If set and non empty will load the traces from the cache.
+# It will skip the generation of the traces and will read the file specified on the config. (handy when optimizing the pseudospectra generation)
+```
 
 ## Roadmap
 
 1. Use aggregation metrics to re-score sage search.
 2. Do a two pass speudospec generation, where the first pass finds the centroids and the second pass aggregates around a radius. (this will prevent the issue where common ions, like b2's are assigned only to the most intense spectrum in a window....)
-  - RN I believe 
+  - RN I believe it is over-aggregating peaks and leading to a lot of straggler peaks.
 3. Re-define rt parmeters in the config as a function of the cycle time and not raw seconds.
 4. Add targeted extraction.
 5. Add detection of MS1 features + notched search instead of wide window search.
-6. Change pseudo-spectrum aggregation
+6. Clean up some of the features and decide what aggregation steps use interal paralellism. (in some steps making multiple aggregations in paralle is better than doing parallel operations within the aggregation).
+
+## Maybe in the roadmap
+
+1. Change pseudo-spectrum aggregation
   - I am happy with the trace aggregation (It can maybe be generalized to handle synchro or midia).
 
 
-## Ideas
- 
-- Add offset 
-- add 1% filter
+## Where are we at?
 
-# Added sage ...
-Number of psms at 0.01 FDR: 7700
-Number of peptides at 0.01 FDR: 6633
-Number of proteins at 0.01 FDR: 1662
-        11m52.60s real          21m55.41s user          3m56.36s sys
-          4890738688  maximum resident set size
-            15480303  page reclaims
-                  10  page faults
-               38742  voluntary context switches
-             4289816  involuntary context switches
-      11995716585083  instructions retired
-       4702159480351  cycles elapsed
-         10057480832  peak memory footprint
+- Ids are not great ... They do seem good via manual inspection but the number of ids is low.
+ 
+
 
 
