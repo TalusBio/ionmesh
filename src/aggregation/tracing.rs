@@ -672,8 +672,8 @@ pub fn combine_pseudospectra(
         // peak_width_prior: 0.75,
     };
 
-    const IOU_THRESH: f32 = 0.01;
-    const COSINE_THRESH: f32 = 0.7;
+    const IOU_THRESH: f32 = 0.1;
+    const COSINE_THRESH: f32 = 0.8;
     let extra_filter_fun = |x: &BaseTrace, y: &BaseTrace| {
         let close_in_quad = (x.quad_center - y.quad_center).abs() < 5.0;
         if !close_in_quad {
@@ -737,7 +737,7 @@ pub fn write_pseudoscans_json(
 pub fn read_pseudoscans_json(
     in_path: impl AsRef<Path>,
 ) -> Result<Vec<PseudoSpectrum>, Box<dyn Error>> {
-    info!("Reading pseudoscans from json");
+    info!("Reading pseudoscans from json {}", in_path.as_ref().display());
     let file = std::fs::File::open(in_path)?;
     let reader = std::io::BufReader::new(file);
     let out: Vec<PseudoSpectrum> = serde_json::from_reader(reader)?;

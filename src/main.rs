@@ -26,6 +26,7 @@ use crate::scoring::SageSearchConfig;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+use std::env;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -105,13 +106,34 @@ impl Default for PseudoscanGenerationConfig {
     }
 }
 
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct OutputConfig {
+    // 
+    debug_scans_json: Option<String>,
+    debug_traces_csv: Option<String>,
+    out_features_csv: Option<String>,
+}
+
+impl Default for OutputConfig {
+    fn default() -> Self {
+        OutputConfig {
+            debug_scans_json: None,
+            debug_traces_csv: None,
+            out_features_csv: Some("".into()),
+        }
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 struct Config {
     denoise_config: DenoiseConfig,
     tracing_config: TracingConfig,
     pseudoscan_generation_config: PseudoscanGenerationConfig,
     sage_search_config: SageSearchConfig,
+    output_config: OutputConfig,
 }
+
 
 impl Config {
     fn from_toml(path: String) -> Result<Self, Box<dyn std::error::Error>> {
@@ -160,11 +182,31 @@ fn main() {
     if !out_path_dir.exists() {
         fs::create_dir_all(out_path_dir).unwrap();
     }
-    let out_path_scans = out_path_dir.join("pseudoscans_debug.json");
-    let out_path_features = out_path_dir.join("sage_features_debug.csv");
-    let out_traces_path = out_path_dir.join("chr_traces_debug.csv");
 
-    if true {
+    // TODO: consier moving this to the config struct as an implementation.
+    let out_path_scans = match config.output_config.debug_scans_json {
+        Some(ref path) => Some(Path::new(path).to_path_buf()),
+        None => None,
+    };
+    let out_traces_path = match config.output_config.debug_traces_csv {
+        Some(ref path) => Some(Path::new(path).to_path_buf()),
+        None => None,
+    };
+    let out_path_features = match config.output_config.out_features_csv {
+        Some(ref path) => Some(Path::new(path).to_path_buf()),
+        None => None,
+    };
+
+    let mut traces_from_cache = env::var("DEBUG_TRACES_FROM_CACHE").is_ok();
+    if traces_from_cache && out_path_scans.is_none() {
+        log::warn!("DEBUG_TRACES_FROM_CACHE is set but no output path is set, will fall back to generating traces.");
+        traces_from_cache = false;
+    }
+
+    let mut pseudoscans = if traces_from_cache {
+        let pseudoscans_read = aggregation::tracing::read_pseudoscans_json(out_path_scans.unwrap());
+        pseudoscans_read.unwrap()
+    } else {
         log::info!("Reading DIA data from: {}", path_use);
         let (dia_frames, dia_info) = aggregation::ms_denoise::read_all_dia_denoising(
             path_use.clone(),
@@ -188,7 +230,12 @@ fn main() {
             &mut rec,
         );
 
-        let out = aggregation::tracing::write_trace_csv(&traces, out_traces_path);
+        let out = match out_traces_path {
+            Some(out_path) => {
+                aggregation::tracing::write_trace_csv(&traces, out_path)
+            }
+            None => Ok(()),
+        };
         match out {
             Ok(_) => {}
             Err(e) => {
@@ -245,19 +292,24 @@ fn main() {
 
         println!("npeaks: {:?}", npeaks);
 
-        let out =
-            aggregation::tracing::write_pseudoscans_json(&pseudoscans, out_path_scans.clone());
+        let out = match out_path_scans {
+            Some(out_path) => {
+                aggregation::tracing::write_pseudoscans_json(&pseudoscans, out_path)
+            }
+            None => Ok(()),
+        };
+
         match out {
             Ok(_) => {}
             Err(e) => {
                 log::warn!("Error writing pseudoscans: {:?}", e);
             }
         }
-    }
+        pseudoscans
+    };
 
-    let pseudoscans_read = aggregation::tracing::read_pseudoscans_json(out_path_scans);
-    let pseudoscans = pseudoscans_read.unwrap();
     println!("pseudoscans: {:?}", pseudoscans.len());
+    pseudoscans.retain(|x| x.peaks.len() > 5);
 
     let score_out = scoring::score_pseudospectra(
         pseudoscans,

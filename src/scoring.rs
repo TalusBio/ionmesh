@@ -25,7 +25,7 @@ use std::path::PathBuf;
 
 use rayon::prelude::*;
 
-const PCT_BP_KEEP: f64 = 0.01;
+const PCT_BP_KEEP: f64 = 0.001;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SageSearchConfig {
@@ -125,7 +125,7 @@ impl Serialize for SerializableFeature<'_> {
 //
 
 fn pseudospectrum_to_spec(pseudo: PseudoSpectrum, scan_id: String) -> RawSpectrum {
-    let file_id = 1;
+    let file_id = 0;
     let ms_level = 2;
 
     let prec_center = (pseudo.quad_low + pseudo.quad_high) / 2.;
@@ -137,6 +137,7 @@ fn pseudospectrum_to_spec(pseudo: PseudoSpectrum, scan_id: String) -> RawSpectru
         charge: None,
         spectrum_ref: None,
         isolation_window: Some(Tolerance::Da(-prec_width / 2., prec_width / 2.)),
+        inverse_ion_mobility: Some(pseudo.ims),
     };
 
     let mut peaks = pseudo.peaks.clone();
@@ -172,14 +173,14 @@ fn pseudospectrum_to_spec(pseudo: PseudoSpectrum, scan_id: String) -> RawSpectru
 pub fn score_pseudospectra(
     elems: Vec<PseudoSpectrum>,
     config: SageSearchConfig,
-    out_path_features: PathBuf,
-) -> Result<(), Box<dyn Error>> {
+    out_path_features: Option<PathBuf>,
+) -> Result<Vec<Feature>, Box<dyn Error>> {
     // 1. Buid raw spectra from the pseudospectra
 
     let take_top_n = 250;
     let min_fragment_mz = 150.;
     let max_fragment_mz = 2000.;
-    let deisotope = false;
+    let deisotope = true;
 
     let specs = elems
         .into_par_iter()
@@ -246,14 +247,14 @@ pub fn score_pseudospectra(
     let scorer = Scorer {
         db: &db,
         precursor_tol: precursor_tolerance,
-        fragment_tol: Tolerance::Da(-0.02, 0.02),
-        min_matched_peaks: 3,
+        fragment_tol: Tolerance::Ppm(-20., 20.),
+        min_matched_peaks: 2,
         min_isotope_err: 0,
         max_isotope_err: 0,
-        min_precursor_charge: 1,
-        max_precursor_charge: 4,
-        max_fragment_charge: Some(2),
-        min_fragment_mass: 200.,
+        min_precursor_charge: 2,
+        max_precursor_charge: 3,
+        max_fragment_charge: Some(3),
+        min_fragment_mass: 100.,
         max_fragment_mass: 4000.,
         chimera: false,
         report_psms: 1,
@@ -270,6 +271,14 @@ pub fn score_pseudospectra(
         .flat_map(|spec| scorer.score(spec))
         .collect::<Vec<_>>();
 
+    features.sort_unstable_by(|a, b| a.poisson.total_cmp(&b.poisson));
+    sage_core::ml::qvalue::spectrum_q_value(&mut features);
+
+    let n_files = 1;
+    let _alignments = sage_core::ml::retention_alignment::global_alignment(&mut features, n_files);
+    let _ = sage_core::ml::retention_model::predict(&db, &mut features);
+    let _ = sage_core::ml::mobility_model::predict(&db, &mut features);
+
     let discriminant = score_psms(&mut features, precursor_tolerance);
     if discriminant.is_none() {
         // Stolen from sage ...
@@ -285,18 +294,23 @@ pub fn score_pseudospectra(
     let q_protein = sage_core::fdr::picked_protein(&db, &mut features);
 
     // Serialize to a csv for debugging
-    warn!("Writing features to features.csv ... and sebastian should delete this b4 publishing...");
-    let mut wtr = csv::Writer::from_path(out_path_features)?;
-    for feat in &features {
-        let s_feat = SerializableFeature::from_feature(feat, &db);
-        wtr.serialize(s_feat)?;
+    match out_path_features {
+        None => {}
+        Some(out_path_features) => {
+            warn!("Writing features to features.csv ... and sebastian should delete this b4 publishing...");
+            let mut wtr = csv::Writer::from_path(out_path_features)?;
+            for feat in &features {
+                let s_feat = SerializableFeature::from_feature(feat, &db);
+                wtr.serialize(s_feat)?;
+            }
+            wtr.flush()?;
+            drop(wtr);
+        }
     }
-    wtr.flush()?;
-    drop(wtr);
 
     println!("Number of psms at 0.01 FDR: {}", num_q_001);
     println!("Number of peptides at 0.01 FDR: {}", q_peptide);
     println!("Number of proteins at 0.01 FDR: {}", q_protein);
 
-    Ok(())
+    Ok(features)
 }

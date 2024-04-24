@@ -178,7 +178,7 @@ impl DIAFrameInfo {
             let frame_window = FrameWindow {
                 scan_offsets: scan_offsets_use
                     .iter()
-                    .map(|x| x - scan_start)
+                    .map(|x| (x - scan_start) as u64)
                     .collect::<Vec<_>>(),
                 tof_indices: tof_indices_keep,
                 intensities: intensities_keep,
