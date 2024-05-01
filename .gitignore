@@ -1,2 +1,7 @@
 /target
 /venv
+/tmp
+/run_1k
+traces_debug.csv
+pseudoscans_debug.json
+

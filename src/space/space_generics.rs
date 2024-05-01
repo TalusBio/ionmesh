@@ -43,7 +43,7 @@ impl<const D: usize> NDBoundary<D> {
                 return false;
             }
         }
-        return true;
+        true
     }
 
     pub fn intersects(&self, other: &NDBoundary<D>) -> bool {
@@ -52,7 +52,7 @@ impl<const D: usize> NDBoundary<D> {
                 return false;
             }
         }
-        return true;
+        true
     }
 
     pub fn from_ndpoints(points: &[NDPoint<D>]) -> NDBoundary<D> {
@@ -83,7 +83,11 @@ pub struct NDPoint<const DIMENSIONALITY: usize> {
 
 pub trait IndexedPoints<'a, const N: usize, T> {
     fn query_ndpoint(&'a self, point: &NDPoint<N>) -> Vec<&'a T>;
-    fn query_ndrange(&'a self, boundary: &NDBoundary<N>) -> Vec<&'a T>;
+    fn query_ndrange(
+        &'a self,
+        boundary: &NDBoundary<N>,
+        reference_point: Option<&NDPoint<N>>,
+    ) -> Vec<&'a T>;
 }
 
 pub trait HasIntensity<T>
@@ -116,5 +120,28 @@ pub trait NDPointConverter<T, const D: usize> {
             .collect::<Vec<_>>();
         let boundary = NDBoundary::from_ndpoints(&points);
         (points, boundary)
+    }
+    fn convert_to_bounds_query<'a>(
+        &self,
+        point: &'a NDPoint<D>,
+    ) -> (NDBoundary<D>, Option<&'a NDPoint<D>>) {
+        let bounds = NDBoundary::new(
+            point
+                .values
+                .iter()
+                .map(|x| *x - 1.)
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
+            point
+                .values
+                .iter()
+                .map(|x| *x + 1.)
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
+        );
+
+        (bounds, Some(point))
     }
 }

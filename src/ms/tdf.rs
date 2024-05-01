@@ -1,4 +1,4 @@
-use log::{error, info, trace};
+use log::{debug, error, info, trace};
 use rusqlite::{Connection, Result};
 use std::path::Path;
 use timsrust::{ConvertableIndex, Frame};
@@ -8,7 +8,7 @@ use crate::ms::frames::{DenseFrame, DenseFrameWindow, FrameWindow};
 // Diaframemsmsinfo = vec of frame_id -> windowgroup_id
 // diaframemsmswindows = vec[(windowgroup_id, scanstart, scanend, iso_mz, iso_with, nce)]
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ScanRange {
     pub scan_start: usize,
     pub scan_end: usize,
@@ -54,15 +54,20 @@ impl ScanRange {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DIAWindowGroup {
     pub id: usize,
     pub scan_ranges: Vec<ScanRange>,
 }
 
+#[derive(Debug, Clone)]
 pub struct DIAFrameInfo {
     pub groups: Vec<Option<DIAWindowGroup>>,
+    /// Frame Groups is a vec of length equal to the number of frames.
+    /// Each element is an Option<usize> that is the index of the group
+    /// that the frame belongs to.
     pub frame_groups: Vec<Option<usize>>,
+    pub retention_times: Vec<Option<f32>>,
 }
 
 // TODO rename or split this ... since it is becoming more
@@ -73,9 +78,80 @@ impl DIAFrameInfo {
         let group_id = self.frame_groups[frame_id];
 
         match group_id {
-            None => return None,
+            None => None,
             Some(group_id) => self.groups[group_id].as_ref(),
         }
+    }
+
+    fn rts_from_tdf_connection(conn: &Connection) -> Result<Vec<Option<f32>>> {
+        // To calculate cycle time ->
+        // DiaFrameMsMsInfo -> Get the frames that match a specific id (one for each ...)
+        // Frames -> SELECT id, time FROM Frames -> make a Vec<Option<f32>>, map the former
+        // framer id list (no value should be None).
+        // Scan diff the new vec!
+        let mut stmt = conn.prepare("SELECT Id, Time FROM Frames")?;
+        let mut times = Vec::new();
+        let res = stmt.query_map([], |row| {
+            let id: usize = row.get(0)?;
+            let time: f32 = row.get(1)?;
+            Ok((id, time))
+        });
+
+        match res {
+            Ok(x) => {
+                for y in x {
+                    let (id, time) = y.unwrap();
+                    times.resize(id + 1, None);
+                    times[id] = Some(time);
+                }
+            }
+            Err(e) => {
+                error!("Error reading Frames: {}", e);
+            }
+        }
+
+        Ok(times)
+    }
+
+    pub fn calculate_cycle_time(&self) -> f32 {
+        let mut group_cycle_times = Vec::new();
+
+        for (i, group) in self.groups.iter().enumerate() {
+            if group.is_none() {
+                continue;
+            }
+
+            let mapping_frames: Vec<usize> = self
+                .frame_groups
+                .iter()
+                .enumerate()
+                .filter(|(_, group_id)| {
+                    if group_id.is_none() {
+                        return false;
+                    }
+                    let group_id = group_id.unwrap();
+                    group_id == i
+                })
+                .map(|(frame_id, _group_id)| frame_id)
+                .collect();
+
+            let local_times = mapping_frames
+                .iter()
+                .map(|frame_id| self.retention_times[*frame_id].unwrap())
+                .scan(0.0, |acc, x| {
+                    let out = x - *acc;
+                    *acc = x;
+                    Some(out)
+                })
+                .collect::<Vec<_>>();
+
+            let cycle_time = local_times.iter().sum::<f32>() / local_times.len() as f32;
+            group_cycle_times.push(cycle_time);
+        }
+
+        debug!("Group cycle times: {:?}", group_cycle_times);
+        let avg_cycle_time = group_cycle_times.iter().sum::<f32>() / group_cycle_times.len() as f32;
+        avg_cycle_time
     }
 
     pub fn split_frame(&self, frame: Frame) -> Result<Vec<FrameWindow>, &'static str> {
@@ -102,14 +178,14 @@ impl DIAFrameInfo {
             let frame_window = FrameWindow {
                 scan_offsets: scan_offsets_use
                     .iter()
-                    .map(|x| x - scan_start)
+                    .map(|x| (x - scan_start) as u64)
                     .collect::<Vec<_>>(),
                 tof_indices: tof_indices_keep,
                 intensities: intensities_keep,
                 index: frame.index,
                 rt: frame.rt,
                 frame_type: frame.frame_type,
-                scan_start: scan_range.scan_start as usize,
+                scan_start: scan_range.scan_start,
                 group_id: group.id,
                 quad_group_id: i,
             };
@@ -162,10 +238,10 @@ impl DIAFrameInfo {
 
             let frame = DenseFrame {
                 raw_peaks: denseframe.raw_peaks[start..end].to_vec(),
-                index: denseframe.index.clone(),
-                rt: denseframe.rt.clone(),
-                frame_type: denseframe.frame_type.clone(),
-                sorted: denseframe.sorted.clone(),
+                index: denseframe.index,
+                rt: denseframe.rt,
+                frame_type: denseframe.frame_type,
+                sorted: denseframe.sorted,
             };
 
             let frame_window = DenseFrameWindow {
@@ -307,6 +383,7 @@ impl DIAFrameInfo {
 //     FOREIGN KEY (WindowGroup) REFERENCES DiaFrameMsMsWindowGroups (Id)
 //  ) WITHOUT ROWID
 
+// TODO refactor this to make it a constructor method ...
 pub fn read_dia_frame_info(dotd_file: String) -> Result<DIAFrameInfo> {
     let reader = timsrust::FileReader::new(dotd_file.clone()).unwrap();
     let scan_converter = reader.get_scan_converter().unwrap();
@@ -378,7 +455,7 @@ pub fn read_dia_frame_info(dotd_file: String) -> Result<DIAFrameInfo> {
 
     let max_window_id = groups_vec
         .iter()
-        .map(|(id, _, _, _, _, _)| id.clone())
+        .map(|(id, _, _, _, _, _)| *id)
         .max()
         .unwrap();
 
@@ -413,7 +490,7 @@ pub fn read_dia_frame_info(dotd_file: String) -> Result<DIAFrameInfo> {
             None => continue,
             Some(scan_ranges) => scan_ranges,
         };
-        if scan_ranges.len() == 0 {
+        if scan_ranges.is_empty() {
             continue;
         } else {
             groups_vec_o[i] = Some(DIAWindowGroup { id: i, scan_ranges });
@@ -423,6 +500,10 @@ pub fn read_dia_frame_info(dotd_file: String) -> Result<DIAFrameInfo> {
     let frame_info = DIAFrameInfo {
         groups: groups_vec_o,
         frame_groups: ids_map_vec,
+        retention_times: DIAFrameInfo::rts_from_tdf_connection(&conn)?,
     };
+
+    let rt = frame_info.calculate_cycle_time();
+
     Ok(frame_info)
 }

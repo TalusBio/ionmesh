@@ -6,8 +6,11 @@ pub struct ContextTimer {
     start: Instant,
     name: String,
     level: LogLevel,
+    report_start: bool,
+    pub cumtime: Duration,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum LogLevel {
     INFO,
     DEBUG,
@@ -20,11 +23,17 @@ impl ContextTimer {
             start: Instant::now(),
             name: name.to_string(),
             level,
+            report_start,
+            cumtime: Duration::new(0, 0),
         };
         if report_start {
             out.start_msg();
         }
         out
+    }
+
+    pub fn reset_start(&mut self) {
+        self.start = Instant::now();
     }
 
     fn start_msg(&self) {
@@ -35,34 +44,50 @@ impl ContextTimer {
         }
     }
 
-    pub fn stop(&self) -> Duration {
+    pub fn stop(&mut self, report: bool) -> Duration {
         let duration = self.start.elapsed();
+        self.cumtime += duration;
+        if report {
+            self.report();
+        }
+        duration
+    }
+
+    pub fn report(&self) {
+        let duration_us = self.cumtime.as_micros() as f64;
         match self.level {
             // Time to get comfortable writting macros??
             LogLevel::INFO => info!(
                 "Time elapsed in '{}' is: {:.02}s",
                 self.name,
-                duration.as_millis() as f64 / 1000.
+                duration_us / 1000000.
             ),
             LogLevel::DEBUG => debug!(
                 "Time elapsed in '{}' is: {:.02}s",
                 self.name,
-                duration.as_millis() as f64 / 1000.
+                duration_us / 1000000.
             ),
             LogLevel::TRACE => trace!(
                 "Time elapsed in '{}' is: {:.02}s",
                 self.name,
-                duration.as_millis() as f64 / 1000.
+                duration_us / 1000000.
             ),
         }
-        duration
+    }
+
+    pub fn start_sub_timer(&self, name: &str) -> ContextTimer {
+        ContextTimer::new(
+            &format!("{}::{}", self.name, name),
+            self.report_start,
+            self.level,
+        )
     }
 }
 
-pub fn within_distance_apply<T, R, W>(
+pub fn within_distance_apply<T, R: Clone, W>(
     elems: &[T],
     key: &dyn Fn(&T) -> R,
-    max_dist: R,
+    max_dist: &R,
     out_func: &dyn Fn(&usize, &usize) -> W,
 ) -> Vec<W>
 where
@@ -86,6 +111,7 @@ where
     // 2. Slide the right index until the mz difference while sliding is greater than the mz tolerance.
     // 3. If the number of points between the left and right index is greater than the minimum number of points, add them to the prefiltered peaks.
 
+    let max_dist = *max_dist;
     let elems_len = elems.len();
     let elems_len_minus_one = elems_len - 1;
     for (curr_i, elem) in elems.iter().enumerate() {
@@ -129,7 +155,7 @@ mod test_count_neigh {
         let elems = vec![0.0, 1.0, 2.0, 3.0, 4.0];
 
         let prefiltered_peaks_bool =
-            within_distance_apply(&elems, &|x| *x, 1.1, &|i_right, i_left| {
+            within_distance_apply(&elems, &|x| *x, &1.1, &|i_right, i_left| {
                 (i_right - i_left) >= 3
             });
 
@@ -164,6 +190,8 @@ pub struct RollingSDCalculator<T, W> {
     m2: T,
     m3: T,
     m4: T,
+    min: Option<T>,
+    max: Option<T>,
 }
 
 // TODO evaluate the numeric accuracy of this implementation.
@@ -205,6 +233,8 @@ where
             m2: 0.as_(),
             m3: 0.as_(),
             m4: 0.as_(),
+            min: Some(x),
+            max: Some(x),
         });
     }
 
@@ -233,6 +263,9 @@ where
     }
 
     pub fn get_skew(&self) -> T {
+        if self.m2 == 0.as_() {
+            return 0.as_();
+        }
         self.w_sum.as_().into().sqrt().as_() * self.m3 / (self.m2.into().powf(1.5).as_())
     }
 
@@ -240,10 +273,18 @@ where
         self.w_sum.as_() * self.m4 / (self.m2 * self.m2)
     }
 
+    pub fn get_min(&self) -> Option<T> {
+        self.min
+    }
+
+    pub fn get_max(&self) -> Option<T> {
+        self.max
+    }
+
     pub fn merge(&mut self, other: &Self) {
         // There is for sure some optimization to be done here.
         // But right now the math is the hard part ...  would definitely pay off
-        let a = self.clone();
+        let a = *self;
         let b = other;
 
         let combined_n = a.n + b.n;
@@ -279,6 +320,18 @@ where
                 / (combined_weight_as * combined_weight_as)
                 + 4.0.as_() * delta * (a_weight * b.m3 - b_weight * a.m3) / combined_weight_as;
 
+        let mut min_use = a.min;
+        if b.min < min_use || min_use.is_none() {
+            min_use = b.min;
+        }
+
+        let mut max_use = a.max;
+        if b.max > max_use || max_use.is_none() {
+            max_use = b.max;
+        }
+
+        self.min = min_use;
+        self.max = max_use;
         self.n = combined_n;
         self.w_sum = combined_weight;
         self.sqare_w_sum = a.sqare_w_sum + b.sqare_w_sum;
@@ -296,6 +349,8 @@ pub struct Stats {
     pub skew: f64,
     pub kurtosis: f64,
     pub n: u64,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
 }
 
 pub fn get_stats(data: &[f64]) -> Stats {
@@ -309,6 +364,8 @@ pub fn get_stats(data: &[f64]) -> Stats {
         skew: sd_calc.get_skew(),
         kurtosis: sd_calc.get_kurtosis(),
         n: sd_calc.n,
+        min: sd_calc.get_min(),
+        max: sd_calc.get_max(),
     }
 }
 
@@ -399,6 +456,9 @@ mod test_rolling_sd {
         sd_calc.add(19.0, 100);
         assert_close(sd_calc.get_mean(), 9.0);
         assert_close(sd_calc.get_variance(), 10.0);
+
+        assert_close(sd_calc.max.unwrap(), 19.0);
+        assert_close(sd_calc.min.unwrap(), 8.0);
 
         // Now using ascombes QY to check for weighted values
         // With respect to last, the weight type should not influence the result

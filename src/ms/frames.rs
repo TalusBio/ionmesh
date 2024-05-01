@@ -1,3 +1,4 @@
+use serde::de;
 pub use timsrust::Frame;
 pub use timsrust::FrameType;
 pub use timsrust::{
@@ -5,8 +6,8 @@ pub use timsrust::{
 };
 
 use crate::mod_types::Float;
-use crate::space_generics::NDPoint;
-use crate::tdf::{DIAFrameInfo, ScanRange};
+use crate::ms::tdf::{DIAFrameInfo, ScanRange};
+use crate::space::space_generics::NDPoint;
 use crate::visualization::RerunPlottable;
 
 use log::info;
@@ -16,6 +17,7 @@ pub struct TimsPeak {
     pub intensity: u32,
     pub mz: f64,
     pub mobility: f32,
+    pub npeaks: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -29,6 +31,7 @@ fn _check_peak_sanity(peak: &TimsPeak) {
     debug_assert!(peak.intensity > 0);
     debug_assert!(peak.mz > 0.);
     debug_assert!(peak.mobility > 0.);
+    debug_assert!(peak.npeaks > 0);
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -38,7 +41,8 @@ pub enum SortingOrder {
     Intensity,
 }
 
-/// Unprocessed data from a 'Frame'.
+/// Unprocessed data from a 'Frame' after breaking by quad isolation_window + ims window.
+/// 
 ///
 /// 1. every tof-index + intensity represents a peak.
 /// 2. Scan offsets are monotonically increasing.
@@ -57,6 +61,10 @@ pub enum SortingOrder {
 ///    - intensities.     [123, 111, 12 ,  3,  4,  1 ...] len = len(tof indices)
 ///    - index            34
 ///    - rt               65.34
+/// Additions for FrameWindow:
+///    - scan_start       123  // The scan number of the first scan offset in the current window.
+///    - group_id         1    // The group id of the current window.
+///    - quad_group_id    2    // The quad group id of the current window within the current group.
 #[derive(Debug, Clone)]
 pub struct FrameWindow {
     /// A vector of length (s) where contiguous elements represent
@@ -101,16 +109,15 @@ impl DenseFrameWindow {
         mz_converter: &Tof2MzConverter,
         dia_info: &DIAFrameInfo,
     ) -> DenseFrameWindow {
-        let group_id = frame_window.group_id.clone();
-        let quad_group_id = frame_window.quad_group_id.clone();
-        let scan_start = frame_window.scan_start.clone();
+        let group_id = frame_window.group_id;
+        let quad_group_id = frame_window.quad_group_id;
+        let scan_start = frame_window.scan_start;
 
         // NOTE: I am swapping here the 'scan start' to be the `ims_end` because
         // the first scans have lower 1/k0 values.
-        let ims_end = ims_converter.convert(scan_start.clone() as u32) as f32;
-        let ims_start = ims_converter
-            .convert((frame_window.scan_offsets.len() + scan_start.clone()) as u32)
-            as f32;
+        let ims_end = ims_converter.convert(scan_start as u32) as f32;
+        let ims_start =
+            ims_converter.convert((frame_window.scan_offsets.len() + scan_start) as u32) as f32;
         let scan_range: &ScanRange = dia_info
             .get_quad_windows(group_id, quad_group_id)
             .expect("Quad group id should be valid");
@@ -125,8 +132,8 @@ impl DenseFrameWindow {
             ims_end,
             mz_start: scan_range.iso_low as f64,
             mz_end: scan_range.iso_high as f64,
-            group_id: group_id,
-            quad_group_id: quad_group_id,
+            group_id,
+            quad_group_id,
         }
     }
 }
@@ -138,13 +145,13 @@ impl DenseFrame {
         mz_converter: &Tof2MzConverter,
     ) -> DenseFrame {
         let mut expanded_scan_indices = Vec::with_capacity(frame.tof_indices.len());
-        let mut last_scan_offset = frame.scan_offsets[0].clone();
+        let mut last_scan_offset = frame.scan_offsets[0];
         for (scan_index, index_offset) in frame.scan_offsets[1..].iter().enumerate() {
             let num_tofs = index_offset - last_scan_offset;
 
             let ims = ims_converter.convert(scan_index as u32) as f32;
             expanded_scan_indices.extend(vec![ims; num_tofs as usize]);
-            last_scan_offset = index_offset.clone();
+            last_scan_offset = *index_offset;
         }
 
         let peaks = expanded_scan_indices
@@ -155,6 +162,7 @@ impl DenseFrame {
                 intensity: *intensity,
                 mz: mz_converter.convert(*tof_index),
                 mobility: *scan_index,
+                npeaks: 1,
             })
             .collect::<Vec<_>>();
 
@@ -183,7 +191,7 @@ impl DenseFrame {
         mz_converter: &Tof2MzConverter,
     ) -> DenseFrame {
         let mut expanded_scan_indices = Vec::with_capacity(frame_window.tof_indices.len());
-        let mut last_scan_offset = frame_window.scan_offsets[0].clone();
+        let mut last_scan_offset = frame_window.scan_offsets[0];
         for (scan_index, index_offset) in frame_window.scan_offsets[1..].iter().enumerate() {
             let num_tofs = index_offset - last_scan_offset;
             let scan_index_use = (scan_index + frame_window.scan_start) as u32;
@@ -197,7 +205,7 @@ impl DenseFrame {
             }
             debug_assert!(ims >= 0.0);
             expanded_scan_indices.extend(vec![ims; num_tofs as usize]);
-            last_scan_offset = index_offset.clone();
+            last_scan_offset = *index_offset;
         }
         debug_assert!(last_scan_offset == frame_window.tof_indices.len() as u64);
 
@@ -209,6 +217,7 @@ impl DenseFrame {
                 intensity: *intensity,
                 mz: mz_converter.convert(*tof_index),
                 mobility: *scan_index,
+                npeaks: 1,
             })
             .collect::<Vec<_>>();
 
@@ -239,24 +248,22 @@ impl DenseFrame {
 
     pub fn sort_by_mz(&mut self) {
         match self.sorted {
-            Some(SortingOrder::Mz) => return,
+            Some(SortingOrder::Mz) => (),
             _ => {
                 self.raw_peaks
                     .sort_unstable_by(|a, b| a.mz.partial_cmp(&b.mz).unwrap());
                 self.sorted = Some(SortingOrder::Mz);
-                return;
             }
         }
     }
 
     pub fn sort_by_mobility(&mut self) {
         match self.sorted {
-            Some(SortingOrder::Mobility) => return,
+            Some(SortingOrder::Mobility) => (),
             _ => {
                 self.raw_peaks
                     .sort_unstable_by(|a, b| a.mobility.partial_cmp(&b.mobility).unwrap());
                 self.sorted = Some(SortingOrder::Mobility);
-                return;
             }
         }
     }
@@ -270,10 +277,10 @@ impl RerunPlottable<Option<usize>> for DenseFrame {
         rec: &mut rerun::RecordingStream,
         entry_path: String,
         log_time_in_seconds: Option<f32>,
-        required_extras: Option<usize>,
+        _required_extras: Option<usize>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let rt = match log_time_in_seconds {
-            None => self.rt as f64,
+            None => self.rt,
             Some(log_time_in_seconds) => log_time_in_seconds as f64,
         };
         rec.set_time_seconds("rt_seconds", rt);
@@ -282,12 +289,12 @@ impl RerunPlottable<Option<usize>> for DenseFrame {
         let min_mz = self
             .raw_peaks
             .iter()
-            .map(|peak| peak.mz as f64)
+            .map(|peak| peak.mz)
             .fold(f64::INFINITY, |a, b| a.min(b));
         let max_mz = self
             .raw_peaks
             .iter()
-            .map(|peak| peak.mz as f64)
+            .map(|peak| peak.mz)
             .fold(f64::NEG_INFINITY, |a, b| a.max(b));
         let min_mobility = self
             .raw_peaks

@@ -1,0 +1,9 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  cargo-deny:
+    # https://embarkstudios.github.io/cargo-deny/index.html
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: EmbarkStudios/cargo-deny-action@v1
