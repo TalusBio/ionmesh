@@ -1,5 +1,5 @@
 
-# Peakachu
+# Ionmesh
 
 ## General functioning
 
@@ -17,9 +17,9 @@ Then these clusters are used to generate pseudo-spectra. These pseudo-spectra ar
 
 ```
 cargo build --release
-./target/release/peakachu --help
+./target/release/ionmesh --help
 
-RUST_LOG=info ./target/release/peakachu ...
+RUST_LOG=info ./target/release/ionmesh ...
 ```
 
 ### Config
