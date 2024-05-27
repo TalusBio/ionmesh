@@ -168,6 +168,7 @@ fn _dbscan<
     filter_fun: Option<FF>,
     converter: C,
     progress: bool,
+    max_extension_distance: Float,
 ) -> (u64, Vec<ClusterLabel<u64>>) {
     let mut initial_candidates_counts = utils::RollingSDCalculator::default();
     let mut final_candidates_counts = utils::RollingSDCalculator::default();
@@ -254,7 +255,6 @@ fn _dbscan<
         let mut seed_set: Vec<&usize> = Vec::new();
         seed_set.extend(neighbors);
 
-        const MAX_EXTENSION_DISTANCE: Float = 5.;
         let mut internal_neighbor_additions = 0;
 
         while let Some(neighbor) = seed_set.pop() {
@@ -306,7 +306,7 @@ fn _dbscan<
                     // Using minkowski distance with p = 1, manhattan distance.
                     let dist = (p.values[0] - query_point.values[0]).abs()
                         + (p.values[1] - query_point.values[1]).abs();
-                    let within_distance = dist <= MAX_EXTENSION_DISTANCE;
+                    let within_distance = dist <= max_extension_distance;
                     going_downhill && within_distance
                 });
                 local_neighbor_filter_timer.stop(false);
@@ -582,6 +582,7 @@ pub fn dbscan_generic<
     extra_filter_fun: Option<&FF>,
     log_level: Option<utils::LogLevel>,
     keep_unclustered: bool,
+    max_extension_distance: Float,
 ) -> Vec<R> {
     let show_progress = log_level.is_some();
     let log_level = match log_level {
@@ -625,6 +626,7 @@ pub fn dbscan_generic<
         extra_filter_fun,
         converter,
         show_progress,
+        max_extension_distance,
     );
     i_timer.stop(true);
 
@@ -702,6 +704,7 @@ pub fn dbscan_denseframes(
         None::<&FFTimsPeak>,
         None,
         true,
+        5.0,
     );
 
     frames::DenseFrame {

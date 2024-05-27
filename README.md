@@ -1,5 +1,5 @@
 
-# Ionmesh
+# IonMesh
 
 ## General functioning
 
@@ -48,6 +48,17 @@ quad_scaling = 5.0
 ims_scaling = 0.02
 min_n = 4
 min_neighbor_intensity = 500
+
+[sage_search_config]
+static_mods = [[
+    "C",
+    57.0215,
+]]
+variable_mods = [[
+    "M",
+    [15.9949],
+]]
+fasta_path = "./tmp/UP000005640_9606.fasta"
 
 [output_config] # These options can be missing, if missing will not output the files.
 out_features_csv = "features.csv"

@@ -33,7 +33,7 @@ use std::env;
 struct Args {
     #[arg(short, long)]
     config: String,
-    #[arg(short, long, default_value = "peakachu_output")]
+    #[arg(short, long, default_value = "ionmesh_output")]
     output_dir: String,
     #[arg(long, action)]
     write_template: bool,
@@ -261,6 +261,7 @@ fn main() {
         );
 
         // Report min/max/average/std and skew for ims and rt
+        // This can probably be a macro ...
         let ims_stats =
             utils::get_stats(&pseudoscans.iter().map(|x| x.ims as f64).collect::<Vec<_>>());
         let ims_sd_stats = utils::get_stats(

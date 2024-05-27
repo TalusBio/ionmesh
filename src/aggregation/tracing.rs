@@ -489,6 +489,7 @@ fn _combine_single_window_traces(
         None::<&FFTimeTimsPeak>,
         None,
         false,
+        5.0,
     );
 
     debug!("Combined traces: {}", foo.len());
@@ -697,6 +698,7 @@ pub fn combine_pseudospectra(
         Some(&extra_filter_fun),
         Some(utils::LogLevel::INFO),
         false,
+        2.0,
     );
 
     info!("Combined pseudospectra: {}", foo.len());
