@@ -185,15 +185,15 @@ fn main() {
 
     // TODO: consier moving this to the config struct as an implementation.
     let out_path_scans = match config.output_config.debug_scans_json {
-        Some(ref path) => Some(Path::new(path).to_path_buf()),
+        Some(ref path) => Some(out_path_dir.join(path).to_path_buf()),
         None => None,
     };
     let out_traces_path = match config.output_config.debug_traces_csv {
-        Some(ref path) => Some(Path::new(path).to_path_buf()),
+        Some(ref path) => Some(out_path_dir.join(path).to_path_buf()),
         None => None,
     };
     let out_path_features = match config.output_config.out_features_csv {
-        Some(ref path) => Some(Path::new(path).to_path_buf()),
+        Some(ref path) => Some(out_path_dir.join(path).to_path_buf()),
         None => None,
     };
 
@@ -245,8 +245,6 @@ fn main() {
 
         println!("traces: {:?}", traces.len());
         traces.retain(|x| x.num_agg > 5);
-        traces.retain(|x| x.num_rt_points >= 2);
-        println!("traces: {:?}", traces[traces.len()-5]);
         println!("traces: {:?}", traces.len());
 
         // Maybe reparametrize as 1.1 cycle time

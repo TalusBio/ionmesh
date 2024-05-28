@@ -17,9 +17,10 @@ use crate::mod_types::Float;
 use crate::ms::frames;
 use crate::space::space_generics::{HasIntensity, IndexedPoints, NDPoint};
 use indicatif::ProgressIterator;
-use log::{debug, info};
+use log::{debug, info, trace};
 
 use rayon::prelude::*;
+use rayon::slice::Windows;
 
 use crate::space::kdtree::RadiusKDTree;
 
@@ -168,7 +169,7 @@ fn _dbscan<
     filter_fun: Option<FF>,
     converter: C,
     progress: bool,
-    max_extension_distance: Float,
+    max_extension_distances: &[Float;N],
 ) -> (u64, Vec<ClusterLabel<u64>>) {
     let mut initial_candidates_counts = utils::RollingSDCalculator::default();
     let mut final_candidates_counts = utils::RollingSDCalculator::default();
@@ -304,9 +305,15 @@ fn _dbscan<
                     let p = &quad_points[**i];
                     let query_point = query_elems.1.unwrap();
                     // Using minkowski distance with p = 1, manhattan distance.
-                    let dist = (p.values[0] - query_point.values[0]).abs()
-                        + (p.values[1] - query_point.values[1]).abs();
-                    let within_distance = dist <= max_extension_distance;
+                    let mut within_distance = true;
+                    for ((p, q), max_dist) in p.values.iter().zip(query_point.values).zip(max_extension_distances.iter()) {
+                        let dist = (p - q).abs();
+                        within_distance = within_distance && dist <= *max_dist;
+                        if !within_distance {
+                            break;
+                        }
+                    }
+
                     going_downhill && within_distance
                 });
                 local_neighbor_filter_timer.stop(false);
@@ -435,8 +442,8 @@ pub fn aggregate_clusters<
 >(
     tot_clusters: u64,
     cluster_labels: Vec<ClusterLabel<u64>>,
-    elements: Vec<T>,
-    def_aggregator: F,
+    elements: &[T],
+    def_aggregator: &F,
     log_level: utils::LogLevel,
     keep_unclustered: bool,
 ) -> Vec<R> {
@@ -552,11 +559,67 @@ pub fn aggregate_clusters<
     out
 }
 
+// Pretty simple function ... it uses every passed centroid, converts it to a point
+// and generates a new centroid that aggregates all the points in its range.
+// In contrast with the dbscan method, the elements in each cluster are not necessarily
+// mutually exclusive.
+fn reassign_centroid<
+    'a,
+    const N: usize,
+    T: HasIntensity<Z> + Send + Clone + Copy,
+    C: NDPointConverter<R, N>,
+    I: IndexedPoints<'a, N, usize> + std::marker::Sync,
+    G: Sync + Send + ClusterAggregator<T, R>,
+    R: Send,
+    F: Fn() -> G + Send + Sync,
+    Z: AsPrimitive<u64>
+        + Send
+        + Sync
+        + Add<Output = Z>
+        + PartialOrd
+        + Div<Output = Z>
+        + Mul<Output = Z>
+        + Default
+        + Sub<Output = Z>,
+>(
+    centroids: Vec<R>,
+    indexed_points: &'a I,
+    centroid_converter: C,
+    elements: &Vec<T>,
+    def_aggregator: F,
+    log_level: utils::LogLevel,
+) -> Vec<R> {
+    let mut timer = utils::ContextTimer::new("reassign_centroid", true, log_level);
+    let mut out = Vec::with_capacity(centroids.len());
+
+    for centroid in centroids {
+        let query_point = centroid_converter.convert(&centroid);
+        let mut query_elems = centroid_converter.convert_to_bounds_query(&query_point);
+        query_elems.0.expand([3.;N]);
+
+        // trace!("Querying for Centroid: {:?}", query_elems.1);
+        // trace!("Querying for Boundary: {:?}", query_elems.0);
+        let neighbors = indexed_points.query_ndrange(&query_elems.0, query_elems.1);
+        // trace!("Found {} neighbors", neighbors.len());
+        let mut aggregator = def_aggregator();
+        let mut num_agg = 0;
+        for neighbor in neighbors {
+            aggregator.add(&elements[*neighbor]);
+            num_agg += 1;
+        }
+        trace!("Aggregated {} elements", num_agg);
+        out.push(aggregator.aggregate());
+    }
+
+    timer.stop(true);
+    out
+}
 // TODO: rename prefiltered peaks argument!
 // TODO implement a version that takes a sparse distance matrix.
 
 pub fn dbscan_generic<
     C: NDPointConverter<T, N>,
+    C2: NDPointConverter<R, N>,
     R: Send,
     G: Sync + Send + ClusterAggregator<T, R>,
     T: HasIntensity<Z> + Send + Clone + Copy + Sync,
@@ -582,7 +645,8 @@ pub fn dbscan_generic<
     extra_filter_fun: Option<&FF>,
     log_level: Option<utils::LogLevel>,
     keep_unclustered: bool,
-    max_extension_distance: Float,
+    max_extension_distances: &[Float;N],
+    back_converter: Option<C2>,
 ) -> Vec<R> {
     let show_progress = log_level.is_some();
     let log_level = match log_level {
@@ -626,18 +690,45 @@ pub fn dbscan_generic<
         extra_filter_fun,
         converter,
         show_progress,
-        max_extension_distance,
+        max_extension_distances,
     );
     i_timer.stop(true);
 
-    aggregate_clusters(
+    let centroids = aggregate_clusters(
         tot_clusters,
         cluster_labels,
-        prefiltered_peaks,
-        def_aggregator,
+        &prefiltered_peaks,
+        &def_aggregator,
         log_level,
         keep_unclustered,
-    )
+    );
+
+    match back_converter {
+        Some(bc) => {
+            let out = reassign_centroid(
+                centroids,
+                &tree,
+                bc,
+                &prefiltered_peaks,
+                &def_aggregator,
+                log_level,
+            );
+            out
+        }
+        None => {
+            centroids
+        }
+    }
+}
+
+// https://github.com/rust-lang/rust/issues/35121
+// The never type is not stable yet....
+struct BypassDenseFrameBackConverter {}
+
+impl NDPointConverter<frames::TimsPeak, 2> for BypassDenseFrameBackConverter {
+    fn convert(&self, elem: &frames::TimsPeak) -> NDPoint<2> {
+        panic!("This should never be called")
+    }
 }
 
 struct DenseFrameConverter {
@@ -704,7 +795,8 @@ pub fn dbscan_denseframes(
         None::<&FFTimsPeak>,
         None,
         true,
-        5.0,
+        &[1.5, 3.],
+        None::<BypassDenseFrameBackConverter>,
     );
 
     frames::DenseFrame {

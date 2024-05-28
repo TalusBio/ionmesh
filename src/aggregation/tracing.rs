@@ -13,6 +13,7 @@ use rayon::iter::IntoParallelIterator;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde::ser::{Serializer, SerializeStruct};
+use core::panic;
 use std::error::Error;
 use std::io::Write;
 use std::path::Path;
@@ -426,6 +427,15 @@ impl NDPointConverter<TimeTimsPeak, 3> for TimeTimsPeakConverter {
     }
 }
 
+struct BypassBaseTraceBackConverter {}
+
+impl NDPointConverter<BaseTrace, 3> for BypassBaseTraceBackConverter {
+    fn convert(&self, elem: &BaseTrace) -> NDPoint<3> {
+        panic!("This should never be called");
+    }
+}
+
+
 fn _flatten_denseframe_vec(denseframe_windows: Vec<DenseFrameWindow>) -> Vec<TimeTimsPeak> {
     denseframe_windows
         .into_iter()
@@ -489,7 +499,8 @@ fn _combine_single_window_traces(
         None::<&FFTimeTimsPeak>,
         None,
         false,
-        5.0,
+        &[1.0, 3.0, 3.0],
+        None::<BypassBaseTraceBackConverter>,
     );
 
     debug!("Combined traces: {}", foo.len());
@@ -653,6 +664,26 @@ impl NDPointConverter<BaseTrace, 3> for BaseTraceConverter {
     }
 }
 
+struct PseudoScanBackConverter {
+    rt_scaling: f64,
+    ims_scaling: f64,
+    quad_scaling: f64,
+}
+
+impl NDPointConverter<PseudoSpectrum, 3> for PseudoScanBackConverter {
+    fn convert(&self, elem: &PseudoSpectrum) -> NDPoint<3> {
+        let quad_mid = (elem.quad_low + elem.quad_high) / 2.;
+        NDPoint {
+            values: [
+                (elem.rt as f64 / self.rt_scaling) as Float,
+                (elem.ims as f64 / self.ims_scaling) as Float,
+                (quad_mid as f64 / self.quad_scaling) as Float,
+            ],
+        }
+    }
+}
+
+
 pub fn combine_pseudospectra(
     traces: Vec<BaseTrace>,
     rt_scaling: f64,
@@ -689,6 +720,13 @@ pub fn combine_pseudospectra(
 
         within_iou_tolerance && within_cosine_tolerance
     };
+
+    let back_converter = PseudoScanBackConverter {
+        rt_scaling,
+        ims_scaling,
+        quad_scaling,
+    };
+
     let foo: Vec<PseudoSpectrum> = dbscan_generic(
         converter,
         traces,
@@ -698,7 +736,8 @@ pub fn combine_pseudospectra(
         Some(&extra_filter_fun),
         Some(utils::LogLevel::INFO),
         false,
-        2.0,
+        &[3.0, 2.0, 1.0],
+        Some(back_converter),
     );
 
     info!("Combined pseudospectra: {}", foo.len());

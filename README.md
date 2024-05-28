@@ -81,12 +81,14 @@ DEBUG_TRACES_FROM_CACHE=1 # If set and non empty will load the traces from the c
 ## Roadmap
 
 1. Use aggregation metrics to re-score sage search.
-2. Do a two pass speudospec generation, where the first pass finds the centroids and the second pass aggregates around a radius. (this will prevent the issue where common ions, like b2's are assigned only to the most intense spectrum in a window....)
+2. [In progress] Do a two pass speudospec generation, where the first pass finds the centroids and the second pass aggregates around a radius. (this will prevent the issue where common ions, like b2's are assigned only to the most intense spectrum in a window....)
   - RN I believe it is over-aggregating peaks and leading to a lot of straggler peaks.
 3. Re-define rt parmeters in the config as a function of the cycle time and not raw seconds.
 4. Add targeted extraction.
 5. Add detection of MS1 features + notched search instead of wide window search.
 6. Clean up some of the features and decide what aggregation steps use interal paralellism. (in some steps making multiple aggregations in paralle is better than doing parallel operations within the aggregation).
+  - Fix nomenclature ... I dont like how it is not consistent (indexed, indexer, index are using interchangeably ...).
+7. Compilation warning cleanup.
 
 ## Maybe in the roadmap
 
