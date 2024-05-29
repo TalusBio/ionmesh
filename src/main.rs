@@ -41,87 +41,6 @@ struct Args {
     files: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
-struct DenoiseConfig {
-    mz_scaling: f32,
-    ims_scaling: f32,
-    max_mz_expansion_ratio: f32,
-    max_ims_expansion_ratio: f32,
-    ms2_min_n: u8,
-    ms1_min_n: u8,
-    ms1_min_cluster_intensity: u32,
-    ms2_min_cluster_intensity: u32,
-}
-
-impl Default for DenoiseConfig {
-    fn default() -> Self {
-        DenoiseConfig {
-            mz_scaling: 0.015,
-            ims_scaling: 0.015,
-            max_mz_expansion_ratio: 1.,
-            max_ims_expansion_ratio: 4.,
-            ms2_min_n: 5,
-            ms1_min_n: 10,
-            ms1_min_cluster_intensity: 100,
-            ms2_min_cluster_intensity: 100,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
-struct TracingConfig {
-    mz_scaling: f32,
-    rt_scaling: f32,
-    ims_scaling: f32,
-    max_mz_expansion_ratio: f32,
-    max_rt_expansion_ratio: f32,
-    max_ims_expansion_ratio: f32,
-    min_n: u8,
-    min_neighbor_intensity: u32,
-}
-
-impl Default for TracingConfig {
-    fn default() -> Self {
-        TracingConfig {
-            mz_scaling: 0.015,
-            rt_scaling: 2.4,
-            ims_scaling: 0.02,
-            max_mz_expansion_ratio: 1.,
-            max_rt_expansion_ratio: 1.5,
-            max_ims_expansion_ratio: 4.,
-            min_n: 3,
-            min_neighbor_intensity: 450,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
-struct PseudoscanGenerationConfig {
-    rt_scaling: f32,
-    quad_scaling: f32,
-    ims_scaling: f32,
-    max_rt_expansion_ratio: f32,
-    max_quad_expansion_ratio: f32,
-    max_ims_expansion_ratio: f32,
-    min_n: u8,
-    min_neighbor_intensity: u32,
-}
-
-impl Default for PseudoscanGenerationConfig {
-    fn default() -> Self {
-        PseudoscanGenerationConfig {
-            rt_scaling: 2.4,
-            quad_scaling: 5.,
-            ims_scaling: 0.015,
-            max_rt_expansion_ratio: 5.,
-            max_quad_expansion_ratio: 1.,
-            max_ims_expansion_ratio: 2.,
-            min_n: 6,
-            min_neighbor_intensity: 6000,
-        }
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct OutputConfig {
     //
@@ -142,9 +61,9 @@ impl Default for OutputConfig {
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 struct Config {
-    denoise_config: DenoiseConfig,
-    tracing_config: TracingConfig,
-    pseudoscan_generation_config: PseudoscanGenerationConfig,
+    denoise_config: aggregation::ms_denoise::DenoiseConfig,
+    tracing_config: aggregation::tracing::TracingConfig,
+    pseudoscan_generation_config: aggregation::tracing::PseudoscanGenerationConfig,
     sage_search_config: SageSearchConfig,
     output_config: OutputConfig,
 }
@@ -198,18 +117,9 @@ fn main() {
     }
 
     // TODO: consier moving this to the config struct as an implementation.
-    let out_path_scans = match config.output_config.debug_scans_json {
-        Some(ref path) => Some(out_path_dir.join(path).to_path_buf()),
-        None => None,
-    };
-    let out_traces_path = match config.output_config.debug_traces_csv {
-        Some(ref path) => Some(out_path_dir.join(path).to_path_buf()),
-        None => None,
-    };
-    let out_path_features = match config.output_config.out_features_csv {
-        Some(ref path) => Some(out_path_dir.join(path).to_path_buf()),
-        None => None,
-    };
+    let out_path_scans = config.output_config.debug_scans_json.as_ref().map(|path| out_path_dir.join(path).to_path_buf());
+    let out_traces_path = config.output_config.debug_traces_csv.as_ref().map(|path| out_path_dir.join(path).to_path_buf());
+    let out_path_features = config.output_config.out_features_csv.as_ref().map(|path| out_path_dir.join(path).to_path_buf());
 
     let mut traces_from_cache = env::var("DEBUG_TRACES_FROM_CACHE").is_ok();
     if traces_from_cache && out_path_scans.is_none() {
@@ -224,12 +134,7 @@ fn main() {
         log::info!("Reading DIA data from: {}", path_use);
         let (dia_frames, dia_info) = aggregation::ms_denoise::read_all_dia_denoising(
             path_use.clone(),
-            config.denoise_config.ms2_min_n.into(),
-            config.denoise_config.ms2_min_cluster_intensity.into(),
-            config.denoise_config.mz_scaling.into(),
-            config.denoise_config.max_mz_expansion_ratio.into(),
-            config.denoise_config.ims_scaling,
-            config.denoise_config.max_ims_expansion_ratio,
+            config.denoise_config,
             &mut rec,
         );
 
@@ -238,12 +143,8 @@ fn main() {
         // TODO add here expansion limits
         let mut traces = aggregation::tracing::combine_traces(
             dia_frames,
-            config.tracing_config.mz_scaling.into(),
-            config.tracing_config.rt_scaling.into(),
-            config.tracing_config.ims_scaling.into(),
-            config.tracing_config.min_n.into(),
-            config.tracing_config.min_neighbor_intensity,
-            cycle_time as f32,
+            config.tracing_config,
+            cycle_time,
             &mut rec,
         );
 
@@ -269,11 +170,7 @@ fn main() {
         // TODO add here expansion limits
         let pseudoscans = aggregation::tracing::combine_pseudospectra(
             traces,
-            config.pseudoscan_generation_config.rt_scaling.into(),
-            config.pseudoscan_generation_config.ims_scaling.into(),
-            config.pseudoscan_generation_config.quad_scaling.into(),
-            config.pseudoscan_generation_config.min_neighbor_intensity,
-            config.pseudoscan_generation_config.min_n.into(),
+            config.pseudoscan_generation_config,
             &mut rec,
         );
 

@@ -13,6 +13,35 @@ use indicatif::ParallelProgressIterator;
 use log::{info, trace, warn};
 use rayon::prelude::*;
 use timsrust::Frame;
+use serde::{Deserialize, Serialize};
+
+// TODO I can probably split the ms1 and ms2 ...
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub struct DenoiseConfig {
+    pub mz_scaling: f32,
+    pub ims_scaling: f32,
+    pub max_mz_expansion_ratio: f32,
+    pub max_ims_expansion_ratio: f32,
+    pub ms2_min_n: u8,
+    pub ms1_min_n: u8,
+    pub ms1_min_cluster_intensity: u32,
+    pub ms2_min_cluster_intensity: u32,
+}
+
+impl Default for DenoiseConfig {
+    fn default() -> Self {
+        DenoiseConfig {
+            mz_scaling: 0.015,
+            ims_scaling: 0.015,
+            max_mz_expansion_ratio: 1.,
+            max_ims_expansion_ratio: 4.,
+            ms2_min_n: 5,
+            ms1_min_n: 10,
+            ms1_min_cluster_intensity: 100,
+            ms2_min_cluster_intensity: 100,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 struct FrameStats {
@@ -288,6 +317,8 @@ impl<'a> Denoiser<'a, Frame, Vec<DenseFrameWindow>, Converters, Option<usize>>
     }
 }
 
+
+// RN this is dead but will be resurrected soon ...
 pub fn read_all_ms1_denoising(
     path: String,
     min_intensity: u64,
@@ -338,12 +369,7 @@ pub fn read_all_ms1_denoising(
 // Maybe I should just pass the config ... instead of the elements
 pub fn read_all_dia_denoising(
     path: String,
-    min_n: usize,
-    min_intensity: u64,
-    mz_scaling: f64,
-    max_mz_extension: f64,
-    ims_scaling: f32,
-    max_ims_extension: f32,
+    config: DenoiseConfig,
     record_stream: &mut Option<rerun::RecordingStream>,
 ) -> (Vec<DenseFrameWindow>, DIAFrameInfo) {
     let mut timer = utils::ContextTimer::new("Reading all DIA frames", true, utils::LogLevel::INFO);
@@ -356,29 +382,18 @@ pub fn read_all_dia_denoising(
     let mz_converter = reader.get_tof_converter().unwrap();
     timer.stop(true);
 
-    // frames = frames
-    //     .into_iter()
-    //     .filter(|frame| match frame.frame_type {
-    //         timsrust::FrameType::MS2(timsrust::AcquisitionType::DIAPASEF) => true,
-    //         _ => false,
-    //     })
-    //     .collect();
-
     frames.retain(|frame| match frame.frame_type {
         timsrust::FrameType::MS2(timsrust::AcquisitionType::DIAPASEF) => true,
         _ => false,
     });
 
-    // let min_intensity = 50u64;
-    // let min_n: usize = 2;
-
     let denoiser = DIAFrameDenoiser {
-        min_n,
-        min_intensity,
-        mz_scaling,
-        max_mz_extension,
-        ims_scaling,
-        max_ims_extension,
+        min_n: config.ms2_min_n.into(),
+        min_intensity: config.ms2_min_cluster_intensity.into(),
+        mz_scaling: config.mz_scaling.into(),
+        max_mz_extension: config.max_mz_expansion_ratio.into(),
+        ims_scaling: config.ims_scaling,
+        max_ims_extension: config.max_ims_expansion_ratio,
         dia_frame_info: dia_info.clone(),
         ims_converter,
         mz_converter,

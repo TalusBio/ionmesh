@@ -169,8 +169,8 @@ impl DIAFrameInfo {
             let scan_offsets_use =
                 &frame.scan_offsets[scan_range.scan_start..(scan_range.scan_end - 1)];
             let scan_start = scan_offsets_use[0];
-            let mz_indptr_start = scan_offsets_use[0] as usize;
-            let mz_indptr_end = *scan_offsets_use.last().unwrap() as usize;
+            let mz_indptr_start = scan_offsets_use[0];
+            let mz_indptr_end = *scan_offsets_use.last().unwrap();
 
             let tof_indices_keep = frame.tof_indices[mz_indptr_start..mz_indptr_end].to_vec();
             let intensities_keep = frame.intensities[mz_indptr_start..mz_indptr_end].to_vec();
@@ -502,8 +502,6 @@ pub fn read_dia_frame_info(dotd_file: String) -> Result<DIAFrameInfo> {
         frame_groups: ids_map_vec,
         retention_times: DIAFrameInfo::rts_from_tdf_connection(&conn)?,
     };
-
-    let rt = frame_info.calculate_cycle_time();
 
     Ok(frame_info)
 }

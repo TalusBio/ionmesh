@@ -20,7 +20,6 @@ use indicatif::ProgressIterator;
 use log::{debug, info, trace};
 
 use rayon::prelude::*;
-use rayon::slice::Windows;
 
 use crate::space::kdtree::RadiusKDTree;
 
@@ -706,7 +705,8 @@ pub fn dbscan_generic<
 
     match back_converter {
         Some(bc) => {
-            let out = reassign_centroid(
+
+            reassign_centroid(
                 centroids,
                 &tree,
                 bc,
@@ -714,8 +714,7 @@ pub fn dbscan_generic<
                 &def_aggregator,
                 log_level,
                 max_extension_distances,
-            );
-            out
+            )
         }
         None => {
             centroids
@@ -728,7 +727,7 @@ pub fn dbscan_generic<
 struct BypassDenseFrameBackConverter {}
 
 impl NDPointConverter<frames::TimsPeak, 2> for BypassDenseFrameBackConverter {
-    fn convert(&self, elem: &frames::TimsPeak) -> NDPoint<2> {
+    fn convert(&self, _elem: &frames::TimsPeak) -> NDPoint<2> {
         panic!("This should never be called")
     }
 }
@@ -787,8 +786,8 @@ pub fn dbscan_denseframes(
     };
 
     let converter = DenseFrameConverter {
-        mz_scaling: mz_scaling,
-        ims_scaling: ims_scaling,
+        mz_scaling,
+        ims_scaling,
     };
     let peak_vec: Vec<TimsPeak> = dbscan_generic(
         converter,

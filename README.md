@@ -89,6 +89,9 @@ DEBUG_TRACES_FROM_CACHE=1 # If set and non empty will load the traces from the c
 6. Clean up some of the features and decide what aggregation steps use interal paralellism. (in some steps making multiple aggregations in paralle is better than doing parallel operations within the aggregation).
   - Fix nomenclature ... I dont like how it is not consistent (indexed, indexer, index are using interchangeably ...).
 7. Compilation warning cleanup.
+8. Clean up dead/commented out code.
+9. Refactor `max_extension_distances` argument in the generic dbscan implementation to prevent the errors that might arise from mixing up the dimensions.
+    - Should that be a propoerty of the converter?
 
 ## Maybe in the roadmap
 
@@ -98,8 +101,4 @@ DEBUG_TRACES_FROM_CACHE=1 # If set and non empty will load the traces from the c
 
 ## Where are we at?
 
-- Ids are not great ... They do seem good via manual inspection but the number of ids is low.
- 
-
-
-
+- Ids are pretty close to the equivalent DDA runs with the correct parameters ... They do seem good via manual inspection but the number of ids is low compared to peptide-centric searches.

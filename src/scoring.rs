@@ -262,7 +262,7 @@ pub fn score_pseudospectra(
         max_fragment_charge: Some(3),
         min_fragment_mass: 100.,
         max_fragment_mass: 4000.,
-        chimera: chimera,
+        chimera,
         report_psms: num_report_psms,
         wide_window: true,
         annotate_matches: false,

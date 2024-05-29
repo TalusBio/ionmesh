@@ -1,7 +1,7 @@
 
 use log::warn;
 use num_traits::AsPrimitive;
-use rerun::external::arrow2::io::print;
+
 use std::collections::BTreeMap;
 use std::ops::{AddAssign, Mul};
 
@@ -24,9 +24,9 @@ pub struct ChromatogramArray <T: Mul<Output = T> + AddAssign + Default + AsPrimi
 
 impl BTreeChromatogram {
     /// Create a new BTreeChromatogram with the given RT binsize and bin offset.
-    /// 
+    ///
     /// The values in bin = 0 will be in the range [bin_offset, bin_offset + binsize)
-    /// 
+    ///
     pub fn new(rt_binsize: f32, rt_bin_offset: f32) -> Self {
         BTreeChromatogram {
             btree: BTreeMap::new(),
@@ -81,7 +81,7 @@ impl BTreeChromatogram {
         match min {
             Some(min) => {
                 let max = *self.btree.keys().last().unwrap();
-                Some((*min as i32, max as i32))
+                Some((*min, max))
             }
             None => None,
         }
@@ -150,10 +150,10 @@ impl BTreeChromatogram {
 
         // The chromatogram uses the bin size of the chromatogram btree
         // but re-centers it to the mean RT of the trace
-        if self.btree.len() > 0 {
+        if !self.btree.is_empty() {
             let int_center = ((center_rt.unwrap_or(0.) - self.rt_bin_offset.unwrap()) / self.rt_binsize) as i32;
             let left_start = int_center - (NUM_LOCAL_CHROMATOGRAM_BINS / 2) as i32;
-            
+
             for i in 0..NUM_LOCAL_CHROMATOGRAM_BINS {
                 let bin = left_start + i as i32;
                 chromatogram_arr[i] = *self.btree.get(&bin).unwrap_or(&0) as f32;
@@ -223,7 +223,7 @@ mod chromatogram_tests {
         assert_eq!(c.get_bin(&0), Some(&1));
         assert!(c.get_bin(&-1).is_none());
         let neg_one_rt = c.bin_to_rt(-1);
-        assert!(neg_one_rt >= -1.01 && neg_one_rt <= -0.99);
+        assert!((-1.01..=-0.99).contains(&neg_one_rt));
 
         let mut c2 = BTreeChromatogram::new(1., 0.);
         c2.add(0., 1);
@@ -277,7 +277,7 @@ mod chromatogram_tests {
         c.chromatogram[4] = 20;
         let cosine = c.cosine_similarity(&c2).unwrap();
         assert!(cosine <= 0.9, "Cosine: {}", cosine);
-    
+
     }
 
     #[test]

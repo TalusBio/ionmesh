@@ -74,11 +74,11 @@ impl<const D: usize> NDBoundary<D> {
     }
 
     pub fn expand(&mut self, factors: &[Float; D]) {
-        for i in 0..D {
+        for (i, ef) in factors.iter().enumerate() {
             let mut half_width = self.widths[i] / 2.0;
             let center = self.centers[i];
 
-            half_width *= factors[i];
+            half_width *= ef;
 
             self.starts[i] = center - half_width;
             self.ends[i] = center + half_width;

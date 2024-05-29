@@ -1,4 +1,4 @@
-use serde::de;
+
 pub use timsrust::Frame;
 pub use timsrust::FrameType;
 pub use timsrust::{
@@ -42,7 +42,7 @@ pub enum SortingOrder {
 }
 
 /// Unprocessed data from a 'Frame' after breaking by quad isolation_window + ims window.
-/// 
+///
 ///
 /// 1. every tof-index + intensity represents a peak.
 /// 2. Scan offsets are monotonically increasing.
@@ -150,7 +150,7 @@ impl DenseFrame {
             let num_tofs = index_offset - last_scan_offset;
 
             let ims = ims_converter.convert(scan_index as u32) as f32;
-            expanded_scan_indices.extend(vec![ims; num_tofs as usize]);
+            expanded_scan_indices.extend(vec![ims; num_tofs]);
             last_scan_offset = *index_offset;
         }
 
@@ -342,7 +342,7 @@ impl RerunPlottable<Option<usize>> for DenseFrame {
             &rerun::Points2D::new(
                 quad_points
                     .iter()
-                    .map(|point| (point.values[0] as f32, point.values[1] as f32)),
+                    .map(|point| (point.values[0], point.values[1])),
             )
             .with_radii(radii),
         )?;
