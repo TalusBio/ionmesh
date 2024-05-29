@@ -36,28 +36,34 @@ class IonMeshTuner:
 
         tempdir.mkdir(exist_ok=True, parents=True)
 
-        denoise_mz_scale = trial.suggest_float("dn_mz", 0.005, 0.03)
-        denoise_ims_scale = trial.suggest_float("dn_ims", 0.005, 0.03)
-        base_toml["denoise_config"]["mz_scaling"] = denoise_mz_scale
-        base_toml["denoise_config"]["ims_scaling"] = denoise_ims_scale
+        # denoise_mz_scale = trial.suggest_float("dn_mz", 0.005, 0.03)
+        # denoise_ims_scale = trial.suggest_float("dn_ims", 0.005, 0.03)
+        denoise_min_n = trial.suggest_int("dn_min_n", 2, 10)
+        # base_toml["denoise_config"]["mz_scaling"] = denoise_mz_scale
+        # base_toml["denoise_config"]["ims_scaling"] = denoise_ims_scale
+        base_toml["denoise_config"]["ms2_min_n"] = denoise_min_n
 
-        tracing_mz_scale = trial.suggest_float("t_mz", 0.01, 0.02)
-        tracing_ims_scale = trial.suggest_float("t_ims", 0.01, 0.03)
+        # tracing_mz_scale = trial.suggest_float("t_mz", 0.01, 0.02)
+        # tracing_ims_scale = trial.suggest_float("t_ims", 0.01, 0.03)
         tracing_rt_scale = trial.suggest_float("t_rt", 0.5, 2.5)
         tracing_min_intensity = trial.suggest_int("t_min", 50, 5000)
-        base_toml["tracing_config"]["mz_scaling"] = tracing_mz_scale
-        base_toml["tracing_config"]["ims_scaling"] = tracing_ims_scale
+        tracing_min_n = trial.suggest_int("t_min_n", 2, 10)
+        # base_toml["tracing_config"]["mz_scaling"] = tracing_mz_scale
+        # base_toml["tracing_config"]["ims_scaling"] = tracing_ims_scale
         base_toml["tracing_config"]["rt_scaling"] = tracing_rt_scale
         base_toml["tracing_config"]["min_neighbor_intensity"] = tracing_min_intensity
+        base_toml["tracing_config"]["min_n"] = tracing_min_n
 
         pseudoscan_rt_scale = trial.suggest_float("ps_rt", 0.5, 2.5)
-        pseudoscan_ims_scale = trial.suggest_float("ps_ims", 0.01, 0.03)
+        # pseudoscan_ims_scale = trial.suggest_float("ps_ims", 0.01, 0.03)
         pseudoscan_min_intensity = trial.suggest_int("ps_min", 50, 10000)
+        pseudoscan_min_n = trial.suggest_int("ps_min_n", 2, 10)
         base_toml["pseudoscan_generation_config"]["rt_scaling"] = pseudoscan_rt_scale
-        base_toml["pseudoscan_generation_config"]["ims_scaling"] = pseudoscan_ims_scale
+        # base_toml["pseudoscan_generation_config"]["ims_scaling"] = pseudoscan_ims_scale
         base_toml["pseudoscan_generation_config"]["min_neighbor_intensity"] = (
             pseudoscan_min_intensity
         )
+        base_toml["pseudoscan_generation_config"]["min_n"] = pseudoscan_min_n
 
         base_toml["sage_search_config"]["fasta_path"] = str(self.fasta)
 
@@ -86,7 +92,12 @@ class IonMeshTuner:
         run_end = time.time()
         logger.info(f"Run time: {run_end - run_start}")
 
-        delta_discriminant = self.read_results_dir(tempdir)
+        try:
+            delta_discriminant = self.read_results_dir(tempdir)
+        except pl.exceptions.NoDataError:
+            logger.error("No data found")
+            return float("nan")
+
         return delta_discriminant
 
     def read_results_dir(self, results_dir):
@@ -125,8 +136,8 @@ class IonMeshTuner:
         sage_features = sage_features.sort(TARTGET_SCORE, descending=True)
         sage_features = sage_features.group_by("peptide").head(1)
 
-        targets = sage_features.filter(pl.col("rank") == 1, pl.col("label") == 1)
-        decoys = sage_features.filter(pl.col("rank") == 1, pl.col("label") < 0)
+        targets = sage_features.filter(pl.col("label") == 1)
+        decoys = sage_features.filter(pl.col("label") < 0)
 
         target_discriminant = targets.select(TARTGET_SCORE).collect()
         target_discriminant_sum = target_discriminant[TARTGET_SCORE].sum()
@@ -177,6 +188,7 @@ def build_parser():
     parser.add_argument("--target_file", type=Path)
     parser.add_argument("--ionmesh_executable", type=Path)
     parser.add_argument("--output", type=Path, default=Path("tune_out"))
+    parser.add_argument("--name", type=str, default="tune")
     return parser
 
 
@@ -195,8 +207,8 @@ def main():
     )
 
     study = optuna.create_study(
-        storage="sqlite:///tune.db",
-        study_name="ionmesh",
+        storage=f"sqlite:///{args.name}.db",
+        study_name=args.name,
         load_if_exists=True,
         direction="maximize",
     )

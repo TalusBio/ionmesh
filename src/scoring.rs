@@ -174,6 +174,7 @@ pub fn score_pseudospectra(
     elems: Vec<PseudoSpectrum>,
     config: SageSearchConfig,
     out_path_features: Option<PathBuf>,
+    num_report_psms: usize,
 ) -> Result<Vec<Feature>, Box<dyn Error>> {
     // 1. Buid raw spectra from the pseudospectra
 
@@ -243,6 +244,11 @@ pub fn score_pseudospectra(
 
     // Right now the precursor toleranec should be ignored
     // bc we are using wide window mode for the search.
+    let mut chimera = true;
+    if num_report_psms == 1 {
+        chimera = false;
+    }
+
     let precursor_tolerance = Tolerance::Da(-15., 15.);
     let scorer = Scorer {
         db: &db,
@@ -256,8 +262,8 @@ pub fn score_pseudospectra(
         max_fragment_charge: Some(3),
         min_fragment_mass: 100.,
         max_fragment_mass: 4000.,
-        chimera: false,
-        report_psms: 1,
+        chimera: chimera,
+        report_psms: num_report_psms,
         wide_window: true,
         annotate_matches: false,
     };

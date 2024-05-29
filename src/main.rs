@@ -24,9 +24,9 @@ use clap::Parser;
 
 use crate::scoring::SageSearchConfig;
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::fs;
 use std::path::Path;
-use std::env;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -42,30 +42,11 @@ struct Args {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
-struct TracingConfig {
-    mz_scaling: f32,
-    rt_scaling: f32,
-    ims_scaling: f32,
-    min_n: u8,
-    min_neighbor_intensity: u32,
-}
-
-impl Default for TracingConfig {
-    fn default() -> Self {
-        TracingConfig {
-            mz_scaling: 0.02,
-            rt_scaling: 2.2,
-            ims_scaling: 0.02,
-            min_n: 2,
-            min_neighbor_intensity: 200,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 struct DenoiseConfig {
     mz_scaling: f32,
     ims_scaling: f32,
+    max_mz_expansion_ratio: f32,
+    max_ims_expansion_ratio: f32,
     ms2_min_n: u8,
     ms1_min_n: u8,
     ms1_min_cluster_intensity: u32,
@@ -75,12 +56,41 @@ struct DenoiseConfig {
 impl Default for DenoiseConfig {
     fn default() -> Self {
         DenoiseConfig {
-            mz_scaling: 0.02,
-            ims_scaling: 0.02,
-            ms2_min_n: 2,
-            ms1_min_n: 3,
+            mz_scaling: 0.015,
+            ims_scaling: 0.015,
+            max_mz_expansion_ratio: 1.,
+            max_ims_expansion_ratio: 4.,
+            ms2_min_n: 5,
+            ms1_min_n: 10,
             ms1_min_cluster_intensity: 100,
             ms2_min_cluster_intensity: 100,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+struct TracingConfig {
+    mz_scaling: f32,
+    rt_scaling: f32,
+    ims_scaling: f32,
+    max_mz_expansion_ratio: f32,
+    max_rt_expansion_ratio: f32,
+    max_ims_expansion_ratio: f32,
+    min_n: u8,
+    min_neighbor_intensity: u32,
+}
+
+impl Default for TracingConfig {
+    fn default() -> Self {
+        TracingConfig {
+            mz_scaling: 0.015,
+            rt_scaling: 2.4,
+            ims_scaling: 0.02,
+            max_mz_expansion_ratio: 1.,
+            max_rt_expansion_ratio: 1.5,
+            max_ims_expansion_ratio: 4.,
+            min_n: 3,
+            min_neighbor_intensity: 450,
         }
     }
 }
@@ -90,6 +100,9 @@ struct PseudoscanGenerationConfig {
     rt_scaling: f32,
     quad_scaling: f32,
     ims_scaling: f32,
+    max_rt_expansion_ratio: f32,
+    max_quad_expansion_ratio: f32,
+    max_ims_expansion_ratio: f32,
     min_n: u8,
     min_neighbor_intensity: u32,
 }
@@ -97,19 +110,21 @@ struct PseudoscanGenerationConfig {
 impl Default for PseudoscanGenerationConfig {
     fn default() -> Self {
         PseudoscanGenerationConfig {
-            rt_scaling: 2.2,
+            rt_scaling: 2.4,
             quad_scaling: 5.,
-            ims_scaling: 0.02,
-            min_n: 5,
-            min_neighbor_intensity: 200,
+            ims_scaling: 0.015,
+            max_rt_expansion_ratio: 5.,
+            max_quad_expansion_ratio: 1.,
+            max_ims_expansion_ratio: 2.,
+            min_n: 6,
+            min_neighbor_intensity: 6000,
         }
     }
 }
 
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct OutputConfig {
-    // 
+    //
     debug_scans_json: Option<String>,
     debug_traces_csv: Option<String>,
     out_features_csv: Option<String>,
@@ -133,7 +148,6 @@ struct Config {
     sage_search_config: SageSearchConfig,
     output_config: OutputConfig,
 }
-
 
 impl Config {
     fn from_toml(path: String) -> Result<Self, Box<dyn std::error::Error>> {
@@ -213,12 +227,15 @@ fn main() {
             config.denoise_config.ms2_min_n.into(),
             config.denoise_config.ms2_min_cluster_intensity.into(),
             config.denoise_config.mz_scaling.into(),
+            config.denoise_config.max_mz_expansion_ratio.into(),
             config.denoise_config.ims_scaling,
+            config.denoise_config.max_ims_expansion_ratio,
             &mut rec,
         );
 
         let cycle_time = dia_info.calculate_cycle_time();
 
+        // TODO add here expansion limits
         let mut traces = aggregation::tracing::combine_traces(
             dia_frames,
             config.tracing_config.mz_scaling.into(),
@@ -231,9 +248,7 @@ fn main() {
         );
 
         let out = match out_traces_path {
-            Some(out_path) => {
-                aggregation::tracing::write_trace_csv(&traces, out_path)
-            }
+            Some(out_path) => aggregation::tracing::write_trace_csv(&traces, out_path),
             None => Ok(()),
         };
         match out {
@@ -246,8 +261,12 @@ fn main() {
         println!("traces: {:?}", traces.len());
         traces.retain(|x| x.num_agg > 5);
         println!("traces: {:?}", traces.len());
+        if traces.len() > 5 {
+            println!("sample_trace: {:?}", traces[traces.len() - 4])
+        }
 
         // Maybe reparametrize as 1.1 cycle time
+        // TODO add here expansion limits
         let pseudoscans = aggregation::tracing::combine_pseudospectra(
             traces,
             config.pseudoscan_generation_config.rt_scaling.into(),
@@ -292,9 +311,7 @@ fn main() {
         println!("npeaks: {:?}", npeaks);
 
         let out = match out_path_scans {
-            Some(out_path) => {
-                aggregation::tracing::write_pseudoscans_json(&pseudoscans, out_path)
-            }
+            Some(out_path) => aggregation::tracing::write_pseudoscans_json(&pseudoscans, out_path),
             None => Ok(()),
         };
 
@@ -314,6 +331,7 @@ fn main() {
         pseudoscans,
         config.sage_search_config,
         out_path_features.clone(),
+        2,
     );
     match score_out {
         Ok(_) => {}

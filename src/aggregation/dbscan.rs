@@ -588,6 +588,7 @@ fn reassign_centroid<
     elements: &Vec<T>,
     def_aggregator: F,
     log_level: utils::LogLevel,
+    expansion_factors: &[Float;N],
 ) -> Vec<R> {
     let mut timer = utils::ContextTimer::new("reassign_centroid", true, log_level);
     let mut out = Vec::with_capacity(centroids.len());
@@ -595,7 +596,7 @@ fn reassign_centroid<
     for centroid in centroids {
         let query_point = centroid_converter.convert(&centroid);
         let mut query_elems = centroid_converter.convert_to_bounds_query(&query_point);
-        query_elems.0.expand([3.;N]);
+        query_elems.0.expand(expansion_factors);
 
         // trace!("Querying for Centroid: {:?}", query_elems.1);
         // trace!("Querying for Boundary: {:?}", query_elems.0);
@@ -712,6 +713,7 @@ pub fn dbscan_generic<
                 &prefiltered_peaks,
                 &def_aggregator,
                 log_level,
+                max_extension_distances,
             );
             out
         }
@@ -751,8 +753,10 @@ type FFTimsPeak = fn(&TimsPeak, &TimsPeak) -> bool;
 // <FF: Send + Sync + Fn(&TimsPeak, &TimsPeak) -> bool>
 pub fn dbscan_denseframes(
     mut denseframe: frames::DenseFrame,
-    mz_scaling: &f64,
-    ims_scaling: &f32,
+    mz_scaling: f64,
+    max_mz_extension: f64,
+    ims_scaling: f32,
+    max_ims_extension: f32,
     min_n: usize,
     min_intensity: u64,
 ) -> frames::DenseFrame {
@@ -766,7 +770,7 @@ pub fn dbscan_denseframes(
         let keep_vector = within_distance_apply(
             &denseframe.raw_peaks,
             &|peak| peak.mz,
-            mz_scaling,
+            &mz_scaling,
             &|i_right, i_left| (i_right - i_left) >= min_n,
         );
 
@@ -783,8 +787,8 @@ pub fn dbscan_denseframes(
     };
 
     let converter = DenseFrameConverter {
-        mz_scaling: *mz_scaling,
-        ims_scaling: *ims_scaling,
+        mz_scaling: mz_scaling,
+        ims_scaling: ims_scaling,
     };
     let peak_vec: Vec<TimsPeak> = dbscan_generic(
         converter,
@@ -795,7 +799,7 @@ pub fn dbscan_denseframes(
         None::<&FFTimsPeak>,
         None,
         true,
-        &[1.5, 3.],
+        &[max_mz_extension as Float, max_ims_extension as Float],
         None::<BypassDenseFrameBackConverter>,
     );
 

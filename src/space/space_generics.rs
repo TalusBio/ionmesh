@@ -73,7 +73,7 @@ impl<const D: usize> NDBoundary<D> {
         NDBoundary::new(starts, ends)
     }
 
-    pub fn expand(&mut self, factors: [Float; D]) {
+    pub fn expand(&mut self, factors: &[Float; D]) {
         for i in 0..D {
             let mut half_width = self.widths[i] / 2.0;
             let center = self.centers[i];
