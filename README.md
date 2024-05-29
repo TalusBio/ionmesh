@@ -92,6 +92,7 @@ DEBUG_TRACES_FROM_CACHE=1 # If set and non empty will load the traces from the c
 8. Clean up dead/commented out code.
 9. Refactor `max_extension_distances` argument in the generic dbscan implementation to prevent the errors that might arise from mixing up the dimensions.
     - Should that be a propoerty of the converter?
+10. Commit to f32/f64 in specific places ... instead of the harder to maintain generic types.
 
 ## Maybe in the roadmap
 

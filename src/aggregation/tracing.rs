@@ -255,8 +255,11 @@ pub fn combine_traces(
             _combine_single_window_traces(
                 x,
                 config.mz_scaling.into(),
+                config.max_mz_expansion_ratio,
                 config.rt_scaling.into(),
+                config.max_rt_expansion_ratio,
                 config.ims_scaling.into(),
+                config.max_ims_expansion_ratio,
                 config.min_n.into(),
                 config.min_neighbor_intensity,
                 rt_binsize,
@@ -486,17 +489,22 @@ fn _flatten_denseframe_vec(denseframe_windows: Vec<DenseFrameWindow>) -> Vec<Tim
 // Needed to specify the generic in dbscan_generic
 type FFTimeTimsPeak = fn(&TimeTimsPeak, &TimeTimsPeak) -> bool;
 
+
+// TODO maybe this can be a builder-> executor pattern
 fn _combine_single_window_traces(
     prefiltered_peaks: Vec<TimeTimsPeak>,
     mz_scaling: f64,
+    max_mz_expansion_ratio: f32,
     rt_scaling: f64,
+    max_rt_expansion_ratio: f32,
     ims_scaling: f64,
+    max_ims_expansion_ratio: f32,
     min_n: usize,
     min_intensity: u32,
     rt_binsize: f32,
 ) -> Vec<BaseTrace> {
     debug!("Prefiltered peaks: {}", prefiltered_peaks.len());
-    let converter = TimeTimsPeakConverter {
+    let converter: TimeTimsPeakConverter = TimeTimsPeakConverter {
         mz_scaling,
         rt_scaling,
         ims_scaling,
@@ -505,10 +513,15 @@ fn _combine_single_window_traces(
         prefiltered_peaks[0].quad_low_high.0,
         prefiltered_peaks[0].quad_low_high.1,
     );
+    let max_extension_distances: [f32; 3] = [
+        max_mz_expansion_ratio,
+        max_rt_expansion_ratio,
+        max_ims_expansion_ratio,
+    ];
     warn!("Assuming all quad windows are the same!!! (fine for diaPASEF)");
 
     // TODO make dbscan_generic a runner-class
-    let foo: Vec<BaseTrace> = dbscan_generic(
+    let out_traces: Vec<BaseTrace> = dbscan_generic(
         converter,
         prefiltered_peaks,
         min_n,
@@ -526,12 +539,12 @@ fn _combine_single_window_traces(
         None::<&FFTimeTimsPeak>,
         None,
         false,
-        &[1.0, 3.0, 3.0],
+        &max_extension_distances,
         None::<BypassBaseTraceBackConverter>,
     );
 
-    debug!("Combined traces: {}", foo.len());
-    foo
+    debug!("Combined traces: {}", out_traces.len());
+    out_traces
 }
 
 // NOW ... combine traces into pseudospectra
@@ -779,9 +792,9 @@ pub fn combine_pseudospectra(
         quad_scaling: config.quad_scaling.into(),
     };
     let max_extension_distances: [Float; 3] = [
-        config.max_rt_expansion_ratio,
-        config.max_ims_expansion_ratio,
-        config.max_quad_expansion_ratio,
+        config.max_rt_expansion_ratio as Float,
+        config.max_ims_expansion_ratio as Float,
+        config.max_quad_expansion_ratio as Float,
     ];
 
     let foo: Vec<PseudoSpectrum> = dbscan_generic(
