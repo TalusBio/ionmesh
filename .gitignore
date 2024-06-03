@@ -2,6 +2,7 @@
 /venv
 /tmp
 /run_1k
+/benchmark
 traces_debug.csv
 pseudoscans_debug.json
 

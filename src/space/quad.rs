@@ -75,9 +75,7 @@ impl<'a, T> RadiusQuadTree<'a, T> {
 
             // This means any sub-division will be smaller than the radius
             let query_contained = radius_squared > distance_squared;
-            if self.points.len() < self.capacity {
-                self.points.push((point, data));
-            } else if query_contained {
+            if (self.points.len() < self.capacity) || query_contained  {
                 self.points.push((point, data));
             } else {
                 self.subdivide();

@@ -13,12 +13,39 @@ use rayon::iter::IntoParallelIterator;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde::ser::{Serializer, SerializeStruct};
+use core::panic;
 use std::error::Error;
 use std::io::Write;
 use std::path::Path;
 
 type QuadLowHigh = (f64, f64);
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub struct TracingConfig {
+    pub mz_scaling: f32,
+    pub rt_scaling: f32,
+    pub ims_scaling: f32,
+    pub max_mz_expansion_ratio: f32,
+    pub max_rt_expansion_ratio: f32,
+    pub max_ims_expansion_ratio: f32,
+    pub min_n: u8,
+    pub min_neighbor_intensity: u32,
+}
+
+impl Default for TracingConfig {
+    fn default() -> Self {
+        TracingConfig {
+            mz_scaling: 0.015,
+            rt_scaling: 2.4,
+            ims_scaling: 0.02,
+            max_mz_expansion_ratio: 1.,
+            max_rt_expansion_ratio: 1.5,
+            max_ims_expansion_ratio: 4.,
+            min_n: 3,
+            min_neighbor_intensity: 450,
+        }
+    }
+}
 
 // Serialize
 #[derive(Debug, Clone, Copy)]
@@ -176,14 +203,15 @@ impl TraceLike<f32> for BaseTrace {
 
 pub fn combine_traces(
     denseframe_windows: Vec<DenseFrameWindow>,
-    mz_scaling: f64,
-    rt_scaling: f64,
-    ims_scaling: f64,
-    min_n: usize,
-    min_intensity: u32,
+    config: TracingConfig,
     rt_binsize: f32,
     record_stream: &mut Option<rerun::RecordingStream>,
 ) -> Vec<BaseTrace> {
+    // mz_scaling: f64,
+    // rt_scaling: f64,
+    // ims_scaling: f64,
+    // min_n: usize,
+    // min_intensity: u32,
     // Grouping by quad windows + group id
 
     let mut timer = utils::ContextTimer::new("Tracing peaks in time", true, utils::LogLevel::INFO);
@@ -226,11 +254,14 @@ pub fn combine_traces(
         .map(|x| {
             _combine_single_window_traces(
                 x,
-                mz_scaling,
-                rt_scaling,
-                ims_scaling,
-                min_n,
-                min_intensity,
+                config.mz_scaling.into(),
+                config.max_mz_expansion_ratio,
+                config.rt_scaling.into(),
+                config.max_rt_expansion_ratio,
+                config.ims_scaling.into(),
+                config.max_ims_expansion_ratio,
+                config.min_n.into(),
+                config.min_neighbor_intensity,
                 rt_binsize,
             )
         })
@@ -426,6 +457,15 @@ impl NDPointConverter<TimeTimsPeak, 3> for TimeTimsPeakConverter {
     }
 }
 
+struct BypassBaseTraceBackConverter {}
+
+impl NDPointConverter<BaseTrace, 3> for BypassBaseTraceBackConverter {
+    fn convert(&self, _elem: &BaseTrace) -> NDPoint<3> {
+        panic!("This should never be called");
+    }
+}
+
+
 fn _flatten_denseframe_vec(denseframe_windows: Vec<DenseFrameWindow>) -> Vec<TimeTimsPeak> {
     denseframe_windows
         .into_iter()
@@ -449,17 +489,22 @@ fn _flatten_denseframe_vec(denseframe_windows: Vec<DenseFrameWindow>) -> Vec<Tim
 // Needed to specify the generic in dbscan_generic
 type FFTimeTimsPeak = fn(&TimeTimsPeak, &TimeTimsPeak) -> bool;
 
+
+// TODO maybe this can be a builder-> executor pattern
 fn _combine_single_window_traces(
     prefiltered_peaks: Vec<TimeTimsPeak>,
     mz_scaling: f64,
+    max_mz_expansion_ratio: f32,
     rt_scaling: f64,
+    max_rt_expansion_ratio: f32,
     ims_scaling: f64,
+    max_ims_expansion_ratio: f32,
     min_n: usize,
     min_intensity: u32,
     rt_binsize: f32,
 ) -> Vec<BaseTrace> {
     debug!("Prefiltered peaks: {}", prefiltered_peaks.len());
-    let converter = TimeTimsPeakConverter {
+    let converter: TimeTimsPeakConverter = TimeTimsPeakConverter {
         mz_scaling,
         rt_scaling,
         ims_scaling,
@@ -468,10 +513,15 @@ fn _combine_single_window_traces(
         prefiltered_peaks[0].quad_low_high.0,
         prefiltered_peaks[0].quad_low_high.1,
     );
+    let max_extension_distances: [f32; 3] = [
+        max_mz_expansion_ratio,
+        max_rt_expansion_ratio,
+        max_ims_expansion_ratio,
+    ];
     warn!("Assuming all quad windows are the same!!! (fine for diaPASEF)");
 
     // TODO make dbscan_generic a runner-class
-    let foo: Vec<BaseTrace> = dbscan_generic(
+    let out_traces: Vec<BaseTrace> = dbscan_generic(
         converter,
         prefiltered_peaks,
         min_n,
@@ -484,15 +534,17 @@ fn _combine_single_window_traces(
             num_peaks: 0,
             num_rt_peaks: 0,
             quad_low_high: window_quad_low_high,
-            btree_chromatogram: BTreeChromatogram::new_lazy(rt_binsize.clone()),
+            btree_chromatogram: BTreeChromatogram::new_lazy(rt_binsize),
         },
         None::<&FFTimeTimsPeak>,
         None,
         false,
+        &max_extension_distances,
+        None::<BypassBaseTraceBackConverter>,
     );
 
-    debug!("Combined traces: {}", foo.len());
-    foo
+    debug!("Combined traces: {}", out_traces.len());
+    out_traces
 }
 
 // NOW ... combine traces into pseudospectra
@@ -603,10 +655,8 @@ impl<'a> ClusterAggregator<BaseTrace, PseudoSpectrum> for PseudoSpectrumAggregat
 
 struct BaseTraceConverter {
     rt_scaling: f64,
-    // rt_start_end_ratio: f64,
     ims_scaling: f64,
     quad_scaling: f64,
-    // peak_width_prior: f64,
 }
 
 impl NDPointConverter<BaseTrace, 3> for BaseTraceConverter {
@@ -652,22 +702,69 @@ impl NDPointConverter<BaseTrace, 3> for BaseTraceConverter {
     }
 }
 
-pub fn combine_pseudospectra(
-    traces: Vec<BaseTrace>,
+struct PseudoScanBackConverter {
     rt_scaling: f64,
     ims_scaling: f64,
     quad_scaling: f64,
-    min_intensity: u32,
-    min_n: usize,
+}
+
+impl NDPointConverter<PseudoSpectrum, 3> for PseudoScanBackConverter {
+    fn convert(&self, elem: &PseudoSpectrum) -> NDPoint<3> {
+        let quad_mid = (elem.quad_low + elem.quad_high) / 2.;
+        NDPoint {
+            values: [
+                (elem.rt as f64 / self.rt_scaling) as Float,
+                (elem.ims as f64 / self.ims_scaling) as Float,
+                (quad_mid as f64 / self.quad_scaling) as Float,
+            ],
+        }
+    }
+}
+
+
+
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub struct PseudoscanGenerationConfig {
+    pub rt_scaling: f32,
+    pub quad_scaling: f32,
+    pub ims_scaling: f32,
+    pub max_rt_expansion_ratio: f32,
+    pub max_quad_expansion_ratio: f32,
+    pub max_ims_expansion_ratio: f32,
+    pub min_n: u8,
+    pub min_neighbor_intensity: u32,
+}
+
+impl Default for PseudoscanGenerationConfig {
+    fn default() -> Self {
+        PseudoscanGenerationConfig {
+            rt_scaling: 2.4,
+            quad_scaling: 5.,
+            ims_scaling: 0.015,
+            max_rt_expansion_ratio: 5.,
+            max_quad_expansion_ratio: 1.,
+            max_ims_expansion_ratio: 2.,
+            min_n: 6,
+            min_neighbor_intensity: 6000,
+        }
+    }
+}
+
+
+pub fn combine_pseudospectra(
+    traces: Vec<BaseTrace>,
+    config: PseudoscanGenerationConfig,
     record_stream: &mut Option<rerun::RecordingStream>,
 ) -> Vec<PseudoSpectrum> {
     let mut timer =
         utils::ContextTimer::new("Combining pseudospectra", true, utils::LogLevel::INFO);
 
     let converter = BaseTraceConverter {
-        rt_scaling,
-        ims_scaling,
-        quad_scaling,
+        rt_scaling: config.rt_scaling.into(),
+        ims_scaling: config.ims_scaling.into(),
+        quad_scaling: config.quad_scaling.into(),
+
         // rt_start_end_ratio: 2.,
         // peak_width_prior: 0.75,
     };
@@ -688,15 +785,29 @@ pub fn combine_pseudospectra(
 
         within_iou_tolerance && within_cosine_tolerance
     };
+
+    let back_converter = PseudoScanBackConverter {
+        rt_scaling: config.rt_scaling.into(),
+        ims_scaling: config.ims_scaling.into(),
+        quad_scaling: config.quad_scaling.into(),
+    };
+    let max_extension_distances: [Float; 3] = [
+        config.max_rt_expansion_ratio as Float,
+        config.max_ims_expansion_ratio as Float,
+        config.max_quad_expansion_ratio as Float,
+    ];
+
     let foo: Vec<PseudoSpectrum> = dbscan_generic(
         converter,
         traces,
-        min_n,
-        min_intensity.into(),
+        config.min_n.into(),
+        config.min_neighbor_intensity.into(),
         PseudoSpectrumAggregator::default,
         Some(&extra_filter_fun),
         Some(utils::LogLevel::INFO),
         false,
+        &max_extension_distances,
+        Some(back_converter),
     );
 
     info!("Combined pseudospectra: {}", foo.len());

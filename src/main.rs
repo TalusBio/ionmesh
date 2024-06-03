@@ -24,16 +24,16 @@ use clap::Parser;
 
 use crate::scoring::SageSearchConfig;
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::fs;
 use std::path::Path;
-use std::env;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     #[arg(short, long)]
     config: String,
-    #[arg(short, long, default_value = "peakachu_output")]
+    #[arg(short, long, default_value = "ionmesh_output")]
     output_dir: String,
     #[arg(long, action)]
     write_template: bool,
@@ -41,75 +41,9 @@ struct Args {
     files: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
-struct TracingConfig {
-    mz_scaling: f32,
-    rt_scaling: f32,
-    ims_scaling: f32,
-    min_n: u8,
-    min_neighbor_intensity: u32,
-}
-
-impl Default for TracingConfig {
-    fn default() -> Self {
-        TracingConfig {
-            mz_scaling: 0.02,
-            rt_scaling: 2.2,
-            ims_scaling: 0.02,
-            min_n: 2,
-            min_neighbor_intensity: 200,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
-struct DenoiseConfig {
-    mz_scaling: f32,
-    ims_scaling: f32,
-    ms2_min_n: u8,
-    ms1_min_n: u8,
-    ms1_min_cluster_intensity: u32,
-    ms2_min_cluster_intensity: u32,
-}
-
-impl Default for DenoiseConfig {
-    fn default() -> Self {
-        DenoiseConfig {
-            mz_scaling: 0.02,
-            ims_scaling: 0.02,
-            ms2_min_n: 2,
-            ms1_min_n: 3,
-            ms1_min_cluster_intensity: 100,
-            ms2_min_cluster_intensity: 100,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
-struct PseudoscanGenerationConfig {
-    rt_scaling: f32,
-    quad_scaling: f32,
-    ims_scaling: f32,
-    min_n: u8,
-    min_neighbor_intensity: u32,
-}
-
-impl Default for PseudoscanGenerationConfig {
-    fn default() -> Self {
-        PseudoscanGenerationConfig {
-            rt_scaling: 2.2,
-            quad_scaling: 5.,
-            ims_scaling: 0.02,
-            min_n: 5,
-            min_neighbor_intensity: 200,
-        }
-    }
-}
-
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct OutputConfig {
-    // 
+    //
     debug_scans_json: Option<String>,
     debug_traces_csv: Option<String>,
     out_features_csv: Option<String>,
@@ -127,13 +61,12 @@ impl Default for OutputConfig {
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 struct Config {
-    denoise_config: DenoiseConfig,
-    tracing_config: TracingConfig,
-    pseudoscan_generation_config: PseudoscanGenerationConfig,
+    denoise_config: aggregation::ms_denoise::DenoiseConfig,
+    tracing_config: aggregation::tracing::TracingConfig,
+    pseudoscan_generation_config: aggregation::tracing::PseudoscanGenerationConfig,
     sage_search_config: SageSearchConfig,
     output_config: OutputConfig,
 }
-
 
 impl Config {
     fn from_toml(path: String) -> Result<Self, Box<dyn std::error::Error>> {
@@ -184,18 +117,9 @@ fn main() {
     }
 
     // TODO: consier moving this to the config struct as an implementation.
-    let out_path_scans = match config.output_config.debug_scans_json {
-        Some(ref path) => Some(Path::new(path).to_path_buf()),
-        None => None,
-    };
-    let out_traces_path = match config.output_config.debug_traces_csv {
-        Some(ref path) => Some(Path::new(path).to_path_buf()),
-        None => None,
-    };
-    let out_path_features = match config.output_config.out_features_csv {
-        Some(ref path) => Some(Path::new(path).to_path_buf()),
-        None => None,
-    };
+    let out_path_scans = config.output_config.debug_scans_json.as_ref().map(|path| out_path_dir.join(path).to_path_buf());
+    let out_traces_path = config.output_config.debug_traces_csv.as_ref().map(|path| out_path_dir.join(path).to_path_buf());
+    let out_path_features = config.output_config.out_features_csv.as_ref().map(|path| out_path_dir.join(path).to_path_buf());
 
     let mut traces_from_cache = env::var("DEBUG_TRACES_FROM_CACHE").is_ok();
     if traces_from_cache && out_path_scans.is_none() {
@@ -210,30 +134,22 @@ fn main() {
         log::info!("Reading DIA data from: {}", path_use);
         let (dia_frames, dia_info) = aggregation::ms_denoise::read_all_dia_denoising(
             path_use.clone(),
-            config.denoise_config.ms2_min_n.into(),
-            config.denoise_config.ms2_min_cluster_intensity.into(),
-            config.denoise_config.mz_scaling.into(),
-            config.denoise_config.ims_scaling,
+            config.denoise_config,
             &mut rec,
         );
 
         let cycle_time = dia_info.calculate_cycle_time();
 
+        // TODO add here expansion limits
         let mut traces = aggregation::tracing::combine_traces(
             dia_frames,
-            config.tracing_config.mz_scaling.into(),
-            config.tracing_config.rt_scaling.into(),
-            config.tracing_config.ims_scaling.into(),
-            config.tracing_config.min_n.into(),
-            config.tracing_config.min_neighbor_intensity,
-            cycle_time as f32,
+            config.tracing_config,
+            cycle_time,
             &mut rec,
         );
 
         let out = match out_traces_path {
-            Some(out_path) => {
-                aggregation::tracing::write_trace_csv(&traces, out_path)
-            }
+            Some(out_path) => aggregation::tracing::write_trace_csv(&traces, out_path),
             None => Ok(()),
         };
         match out {
@@ -245,22 +161,21 @@ fn main() {
 
         println!("traces: {:?}", traces.len());
         traces.retain(|x| x.num_agg > 5);
-        traces.retain(|x| x.num_rt_points >= 2);
-        println!("traces: {:?}", traces[traces.len()-5]);
         println!("traces: {:?}", traces.len());
+        if traces.len() > 5 {
+            println!("sample_trace: {:?}", traces[traces.len() - 4])
+        }
 
         // Maybe reparametrize as 1.1 cycle time
+        // TODO add here expansion limits
         let pseudoscans = aggregation::tracing::combine_pseudospectra(
             traces,
-            config.pseudoscan_generation_config.rt_scaling.into(),
-            config.pseudoscan_generation_config.ims_scaling.into(),
-            config.pseudoscan_generation_config.quad_scaling.into(),
-            config.pseudoscan_generation_config.min_neighbor_intensity,
-            config.pseudoscan_generation_config.min_n.into(),
+            config.pseudoscan_generation_config,
             &mut rec,
         );
 
         // Report min/max/average/std and skew for ims and rt
+        // This can probably be a macro ...
         let ims_stats =
             utils::get_stats(&pseudoscans.iter().map(|x| x.ims as f64).collect::<Vec<_>>());
         let ims_sd_stats = utils::get_stats(
@@ -293,9 +208,7 @@ fn main() {
         println!("npeaks: {:?}", npeaks);
 
         let out = match out_path_scans {
-            Some(out_path) => {
-                aggregation::tracing::write_pseudoscans_json(&pseudoscans, out_path)
-            }
+            Some(out_path) => aggregation::tracing::write_pseudoscans_json(&pseudoscans, out_path),
             None => Ok(()),
         };
 
@@ -315,6 +228,7 @@ fn main() {
         pseudoscans,
         config.sage_search_config,
         out_path_features.clone(),
+        1,
     );
     match score_out {
         Ok(_) => {}

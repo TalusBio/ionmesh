@@ -72,6 +72,20 @@ impl<const D: usize> NDBoundary<D> {
 
         NDBoundary::new(starts, ends)
     }
+
+    pub fn expand(&mut self, factors: &[Float; D]) {
+        for (i, ef) in factors.iter().enumerate() {
+            let mut half_width = self.widths[i] / 2.0;
+            let center = self.centers[i];
+
+            half_width *= ef;
+
+            self.starts[i] = center - half_width;
+            self.ends[i] = center + half_width;
+            self.widths[i] = self.ends[i];
+            self.centers[i] = (self.ends[i] + self.starts[i]) / 2.0;
+        }
+    }
 }
 
 // #[derive(Debug, Clone, Copy)]
@@ -81,6 +95,7 @@ pub struct NDPoint<const DIMENSIONALITY: usize> {
     pub values: [Float; DIMENSIONALITY],
 }
 
+// Q: is there any instance where T is not usize?
 pub trait IndexedPoints<'a, const N: usize, T> {
     fn query_ndpoint(&'a self, point: &NDPoint<N>) -> Vec<&'a T>;
     fn query_ndrange(
