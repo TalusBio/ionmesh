@@ -228,7 +228,7 @@ fn main() {
         pseudoscans,
         config.sage_search_config,
         out_path_features.clone(),
-        2,
+        1,
     );
     match score_out {
         Ok(_) => {}

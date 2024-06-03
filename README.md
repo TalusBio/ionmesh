@@ -84,6 +84,8 @@ DEBUG_TRACES_FROM_CACHE=1 # If set and non empty will load the traces from the c
 2. [In progress] Do a two pass speudospec generation, where the first pass finds the centroids and the second pass aggregates around a radius. (this will prevent the issue where common ions, like b2's are assigned only to the most intense spectrum in a window....)
   - RN I believe it is over-aggregating peaks and leading to a lot of straggler peaks.
 3. Re-define rt parmeters in the config as a function of the cycle time and not raw seconds.
+  - This can help with the observed fact that params perform very differently on instrument/method variants. (Some reparametrization could be % of frame intensity vs absolute intensity... Number of cycles instead of retention time...
+    Use more actively the intensity of the cluster rather than the number of neighbors...)
 4. Add targeted extraction.
 5. Add detection of MS1 features + notched search instead of wide window search.
 6. Clean up some of the features and decide what aggregation steps use interal paralellism. (in some steps making multiple aggregations in paralle is better than doing parallel operations within the aggregation).
@@ -93,6 +95,9 @@ DEBUG_TRACES_FROM_CACHE=1 # If set and non empty will load the traces from the c
 9. Refactor `max_extension_distances` argument in the generic dbscan implementation to prevent the errors that might arise from mixing up the dimensions.
     - Should that be a propoerty of the converter?
 10. Commit to f32/f64 in specific places ... instead of the harder to maintain generic types.
+11. Add CICD to distribute the pre-compiled binaries.
+12. Add semver checks to the CICD pipeline.
+13. Add IMS output to the sage report.
 
 ## Maybe in the roadmap
 
