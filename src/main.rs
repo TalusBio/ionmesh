@@ -114,102 +114,90 @@ fn main() {
     let out_traces_path = config.output_config.debug_traces_csv.as_ref().map(|path| out_path_dir.join(path).to_path_buf());
     let out_path_features = config.output_config.out_features_csv.as_ref().map(|path| out_path_dir.join(path).to_path_buf());
 
-    let mut traces_from_cache = env::var("DEBUG_TRACES_FROM_CACHE").is_ok();
-    if traces_from_cache && out_path_scans.is_none() {
-        log::warn!("DEBUG_TRACES_FROM_CACHE is set but no output path is set, will fall back to generating traces.");
-        traces_from_cache = false;
+    log::info!("Reading DIA data from: {}", path_use);
+    let (dia_frames, dia_info) = aggregation::ms_denoise::read_all_dia_denoising(
+        path_use.clone(),
+        config.denoise_config,
+    );
+
+    let cycle_time = dia_info.calculate_cycle_time();
+
+    // TODO add here expansion limits
+    let mut traces = aggregation::tracing::combine_traces(
+        dia_frames,
+        config.tracing_config,
+        cycle_time,
+    );
+
+    let out = match out_traces_path {
+        Some(out_path) => aggregation::tracing::write_trace_csv(&traces, out_path),
+        None => Ok(()),
+    };
+    match out {
+        Ok(_) => {}
+        Err(e) => {
+            log::warn!("Error writing traces: {:?}", e);
+        }
     }
 
-    let mut pseudoscans = if traces_from_cache {
-        let pseudoscans_read = aggregation::tracing::read_pseudoscans_json(out_path_scans.unwrap());
-        pseudoscans_read.unwrap()
-    } else {
-        log::info!("Reading DIA data from: {}", path_use);
-        let (dia_frames, dia_info) = aggregation::ms_denoise::read_all_dia_denoising(
-            path_use.clone(),
-            config.denoise_config,
-        );
+    println!("traces: {:?}", traces.len());
+    traces.retain(|x| x.num_agg > 5);
+    println!("traces: {:?}", traces.len());
+    if traces.len() > 5 {
+        println!("sample_trace: {:?}", traces[traces.len() - 4])
+    }
 
-        let cycle_time = dia_info.calculate_cycle_time();
+    // Maybe reparametrize as 1.1 cycle time
+    // TODO add here expansion limits
+    let mut pseudoscans = aggregation::tracing::combine_pseudospectra(
+        traces,
+        config.pseudoscan_generation_config,
+    );
 
-        // TODO add here expansion limits
-        let mut traces = aggregation::tracing::combine_traces(
-            dia_frames,
-            config.tracing_config,
-            cycle_time,
-        );
+    // Report min/max/average/std and skew for ims and rt
+    // This can probably be a macro ...
+    let ims_stats =
+        utils::get_stats(&pseudoscans.iter().map(|x| x.ims as f64).collect::<Vec<_>>());
+    let ims_sd_stats = utils::get_stats(
+        &pseudoscans
+            .iter()
+            .map(|x| x.ims_std as f64)
+            .collect::<Vec<_>>(),
+    );
+    let rt_stats =
+        utils::get_stats(&pseudoscans.iter().map(|x| x.rt as f64).collect::<Vec<_>>());
+    let rt_sd_stats = utils::get_stats(
+        &pseudoscans
+            .iter()
+            .map(|x| x.rt_std as f64)
+            .collect::<Vec<_>>(),
+    );
+    let npeaks = utils::get_stats(
+        &pseudoscans
+            .iter()
+            .map(|x| x.peaks.len() as f64)
+            .collect::<Vec<_>>(),
+    );
 
-        let out = match out_traces_path {
-            Some(out_path) => aggregation::tracing::write_trace_csv(&traces, out_path),
-            None => Ok(()),
-        };
-        match out {
-            Ok(_) => {}
-            Err(e) => {
-                log::warn!("Error writing traces: {:?}", e);
-            }
-        }
+    println!("ims_stats: {:?}", ims_stats);
+    println!("rt_stats: {:?}", rt_stats);
 
-        println!("traces: {:?}", traces.len());
-        traces.retain(|x| x.num_agg > 5);
-        println!("traces: {:?}", traces.len());
-        if traces.len() > 5 {
-            println!("sample_trace: {:?}", traces[traces.len() - 4])
-        }
+    println!("ims_sd_stats: {:?}", ims_sd_stats);
+    println!("rt_sd_stats: {:?}", rt_sd_stats);
 
-        // Maybe reparametrize as 1.1 cycle time
-        // TODO add here expansion limits
-        let pseudoscans = aggregation::tracing::combine_pseudospectra(
-            traces,
-            config.pseudoscan_generation_config,
-        );
+    println!("npeaks: {:?}", npeaks);
 
-        // Report min/max/average/std and skew for ims and rt
-        // This can probably be a macro ...
-        let ims_stats =
-            utils::get_stats(&pseudoscans.iter().map(|x| x.ims as f64).collect::<Vec<_>>());
-        let ims_sd_stats = utils::get_stats(
-            &pseudoscans
-                .iter()
-                .map(|x| x.ims_std as f64)
-                .collect::<Vec<_>>(),
-        );
-        let rt_stats =
-            utils::get_stats(&pseudoscans.iter().map(|x| x.rt as f64).collect::<Vec<_>>());
-        let rt_sd_stats = utils::get_stats(
-            &pseudoscans
-                .iter()
-                .map(|x| x.rt_std as f64)
-                .collect::<Vec<_>>(),
-        );
-        let npeaks = utils::get_stats(
-            &pseudoscans
-                .iter()
-                .map(|x| x.peaks.len() as f64)
-                .collect::<Vec<_>>(),
-        );
-
-        println!("ims_stats: {:?}", ims_stats);
-        println!("rt_stats: {:?}", rt_stats);
-
-        println!("ims_sd_stats: {:?}", ims_sd_stats);
-        println!("rt_sd_stats: {:?}", rt_sd_stats);
-
-        println!("npeaks: {:?}", npeaks);
-
-        let out = match out_path_scans {
-            Some(out_path) => aggregation::tracing::write_pseudoscans_json(&pseudoscans, out_path),
-            None => Ok(()),
-        };
-
-        match out {
-            Ok(_) => {}
-            Err(e) => {
-                log::warn!("Error writing pseudoscans: {:?}", e);
-            }
-        }
-        pseudoscans
+    let out = match out_path_scans {
+        Some(out_path) => aggregation::tracing::write_pseudoscans_json(&pseudoscans, out_path),
+        None => Ok(()),
     };
+
+    match out {
+        Ok(_) => {}
+        Err(e) => {
+            log::warn!("Error writing pseudoscans: {:?}", e);
+        }
+    }
 
     println!("pseudoscans: {:?}", pseudoscans.len());
     pseudoscans.retain(|x| x.peaks.len() > 5);

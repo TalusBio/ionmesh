@@ -1,5 +1,6 @@
-use crate::aggregation::dbscan::{dbscan_generic, ClusterAggregator};
-use crate::ms::frames::{DenseFrame, DenseFrameWindow, TimsPeak};
+use crate::aggregation::dbscan::dbscan_generic;
+use crate::aggregation::aggregators::ClusterAggregator;
+use crate::ms::frames::DenseFrameWindow;
 use crate::space::space_generics::{HasIntensity, NDPoint, NDPointConverter, TraceLike};
 use crate::utils;
 use crate::utils::RollingSDCalculator;

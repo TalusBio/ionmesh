@@ -1,7 +1,12 @@
 use log::{debug, error, info, trace};
-use rusqlite::{Connection, Result};
-use std::path::Path;
+
+use sqlx::Pool;
+use std::path::{Path, PathBuf};
 use timsrust::{ConvertableIndex, Frame};
+use sqlx::{Row, Sqlite, SqlitePool,FromRow};
+use tokio;
+use tokio::runtime::Runtime;
+
 
 use crate::ms::frames::{DenseFrame, DenseFrameWindow, FrameQuadWindow};
 
@@ -10,6 +15,7 @@ use crate::ms::frames::{DenseFrame, DenseFrameWindow, FrameQuadWindow};
 
 #[derive(Debug, Clone)]
 pub struct ScanRange {
+    pub id: usize,
     pub scan_start: usize,
     pub scan_end: usize,
     pub iso_mz: f32,
@@ -23,6 +29,7 @@ pub struct ScanRange {
 
 impl ScanRange {
     pub fn new(
+        id: usize,
         scan_start: usize,
         scan_end: usize,
         iso_mz: f32,
@@ -41,6 +48,7 @@ impl ScanRange {
         let iso_high = iso_mz + iso_width / 2.0;
 
         Self {
+            id,
             scan_start,
             scan_end,
             iso_mz,
@@ -81,43 +89,30 @@ pub struct DIAFrameInfo {
 // of a splitter than a frame info reader.
 // Maybe a builder -> splitter pattern?
 impl DIAFrameInfo {
-    pub fn get_group(&self, frame_id: usize) -> Option<&DIAWindowGroup> {
+    pub fn get_dia_frame_window_group(&self, frame_id: usize) -> Option<&DIAWindowGroup> {
         let group_id = self.frame_groups[frame_id];
-
-        match group_id {
-            None => None,
-            Some(group_id) => self.groups[group_id].as_ref(),
+        if group_id.is_none() {
+            return None;
         }
+        self.groups[group_id.unwrap()].as_ref()
     }
 
-    fn rts_from_tdf_connection(conn: &Connection) -> Result<Vec<Option<f32>>> {
+
+    async fn rts_from_tdf_connection(conn: &Pool<Sqlite>) -> Result<Vec<Option<f32>>, sqlx::Error> {
         // To calculate cycle time ->
         // DiaFrameMsMsInfo -> Get the frames that match a specific id (one for each ...)
         // Frames -> SELECT id, time FROM Frames -> make a Vec<Option<f32>>, map the former
         // framer id list (no value should be None).
         // Scan diff the new vec!
-        let mut stmt = conn.prepare("SELECT Id, Time FROM Frames")?;
-        let mut times = Vec::new();
-        let res = stmt.query_map([], |row| {
-            let id: usize = row.get(0)?;
-            let time: f32 = row.get(1)?;
-            Ok((id, time))
-        });
-
-        match res {
-            Ok(x) => {
-                for y in x {
-                    let (id, time) = y.unwrap();
-                    times.resize(id + 1, None);
-                    times[id] = Some(time);
-                }
-            }
-            Err(e) => {
-                error!("Error reading Frames: {}", e);
-            }
+        let results:Vec<(i32, f32)> = sqlx::query_as("SELECT Id, Time FROM Frames").fetch_all(conn).await?;
+        let mut retention_times = Vec::new();
+        for row in results.iter() {
+            let id: usize = row.0 as usize;
+            let time: f32 = row.1;
+            retention_times.resize(id + 1, None);
+            retention_times[id] = Some(time);
         }
-
-        Ok(times)
+        Ok(retention_times)
     }
 
     pub fn calculate_cycle_time(&self) -> f32 {
@@ -203,12 +198,13 @@ impl DIAFrameInfo {
         Ok(out_frames)
     }
 
-    pub fn split_dense_frame(&self, mut denseframe: DenseFrame) -> Result<Vec<DenseFrameWindow>> {
-        let group = self.get_group(denseframe.index);
-        // if group.is_none() {
-        //     return Err("Frame not in DIA group".into());
-        // }
-        let group = group.unwrap();
+
+    pub fn split_frames() {
+
+    }
+
+    pub fn split_dense_frame(&self, mut denseframe: DenseFrame) -> Vec<DenseFrameWindow> {
+        let group = self.get_dia_frame_window_group(denseframe.index).expect("Frame not in DIA group");
 
         // Steps
         // 1. Sort by ims
@@ -263,7 +259,7 @@ impl DIAFrameInfo {
             frames.push(frame_window);
         }
 
-        Ok(frames)
+        frames
     }
 
     /// Returns a vector of length equal to the number of groups.
@@ -271,7 +267,7 @@ impl DIAFrameInfo {
     fn bundle_by_group(&self, frames: Vec<DenseFrame>) -> Vec<Vec<DenseFrame>> {
         let mut frame_groups = Vec::new();
         for frame in frames {
-            let group = self.get_group(frame.index);
+            let group = self.get_dia_frame_window_group(frame.index);
             if group.is_none() {
                 continue;
             }
@@ -321,15 +317,8 @@ impl DIAFrameInfo {
             info!("Processing group {}", i);
             for frame in frame_bundle {
                 let frame_windows = self.split_dense_frame(frame);
-                match frame_windows {
-                    Ok(frame_windows) => {
-                        for frame_window in frame_windows {
-                            out[i][frame_window.quad_group_id].push(frame_window);
-                        }
-                    }
-                    Err(e) => {
-                        error!("Error splitting frame: {}", e);
-                    }
+                for frame_window in frame_windows {
+                    out[i][frame_window.quad_group_id].push(frame_window);
                 }
             }
         }
@@ -390,137 +379,162 @@ impl DIAFrameInfo {
 //     FOREIGN KEY (WindowGroup) REFERENCES DiaFrameMsMsWindowGroups (Id)
 //  ) WITHOUT ROWID
 
-// TODO refactor this to make it a constructor method ...
-pub fn read_dia_frame_info(dotd_file: String) -> Result<DIAFrameInfo> {
-    let reader = timsrust::FileReader::new(dotd_file.clone()).unwrap();
-    let scan_converter = reader.get_scan_converter().unwrap();
 
-    // Find an 'analysis.tdf' file inside the dotd file (directory).
-    let tdf_path = Path::new(dotd_file.as_str()).join("analysis.tdf");
+#[derive(Clone, FromRow, Debug)]
+pub struct DiaFrameMsMsWindowInfo {
+    pub window_group: i32,
+    pub scan_num_begin: i32,
+    pub scan_num_end: i32,
+    pub isolation_mz: f32,
+    pub isolation_width: f32,
+    pub collision_energy: f32,
+}
 
-    info!("tdf_path: {:?}", tdf_path);
-    let conn = Connection::open(tdf_path)?;
+impl DiaFrameMsMsWindowInfo {
+    fn into_scan_range(&self, id: usize, scan_converter: &timsrust::Scan2ImConverter) -> ScanRange {
+        ScanRange::new(
+            id,
+            self.scan_num_begin as usize,
+            self.scan_num_end as usize,
+            self.isolation_mz,
+            self.isolation_width,
+            self.collision_energy,
+            scan_converter,
+        )
+    }
+}
 
-    let mut stmt_ids = conn.prepare("SELECT Frame, WindowGroup FROM DiaFrameMsMsInfo")?;
+struct FrameInfoBuilder {
+    pub tdf_path: String,
+    pub scan_converter: timsrust::Scan2ImConverter,
+}
 
-    let mut ids_vec: Vec<(usize, usize)> = Vec::new();
-    let res = stmt_ids.query_map([], |row| {
-        let id: usize = row.get(0)?;
-        let group: usize = row.get(1)?;
-        Ok((id, group))
-    });
+impl FrameInfoBuilder {
+    pub fn from_dotd_path(dotd_path: String) -> Self {
+        let reader = timsrust::FileReader::new(dotd_path.clone()).unwrap();
+        let scan_converter = reader.get_scan_converter().unwrap();
 
-    match res {
-        Ok(x) => {
-            for id_group in x {
-                ids_vec.push(id_group.unwrap());
+        // Find an 'analysis.tdf' file inside the dotd file (directory).
+        let tdf_path = Path::new(dotd_path.as_str()).join("analysis.tdf").into_os_string().into_string().unwrap();
+        info!("tdf_path: {:?}", tdf_path);
+        Self { tdf_path, scan_converter }
+    }
+
+    pub fn build(&self) -> Result<DIAFrameInfo, sqlx::Error> {
+        let mut rt = Runtime::new().unwrap();
+
+        rt.block_on(async {
+            self.build_async().await
+        })
+    }
+
+    async fn build_async(&self) -> Result<DIAFrameInfo, sqlx::Error> {
+        let db =  SqlitePool::connect(&self.tdf_path).await?;
+
+        // This vec maps frame_id -> window_group_id
+        let frame_info = self.get_frame_mapping(&db).await?;
+
+        // This vec maps window_group_id -> Vec<ScanRange>
+        // And also returns the grouping level.
+        let (group_mapping, grouping_level) = self.get_frame_windows(&db).await?;
+
+        let max_window_id = group_mapping.len() - 1;
+
+        let mut groups_vec_o = (0..(max_window_id + 1)).map(|_| None).collect::<Vec<_>>();
+        for (i, scan_ranges) in group_mapping.into_iter().enumerate() {
+            let scan_ranges = match scan_ranges {
+                None => continue,
+                Some(scan_ranges) => scan_ranges,
+            };
+            if scan_ranges.is_empty() {
+                continue;
+            } else {
+                groups_vec_o[i] = Some(DIAWindowGroup { id: i, scan_ranges });
             }
         }
-        Err(e) => {
-            error!("Error reading DiaFrameMsMsInfo: {}", e);
-        }
-    }
 
-    let max_id = ids_vec.iter().map(|(id, _)| id).max().unwrap();
-    let mut ids_map_vec = vec![None; max_id + 1];
-    for (id, group) in ids_vec {
-        ids_map_vec[id] = Some(group);
-    }
-
-    let mut stmt_groups = conn.prepare(
-        "SELECT
-            WindowGroup,
-            ScanNumBegin,
-            ScanNumEnd,
-            IsolationMz,
-            IsolationWidth,
-            CollisionEnergy
-        FROM DiaFrameMsMsWindows",
-    )?;
-    let mut groups_vec: Vec<(usize, usize, usize, f32, f32, f32)> = Vec::new();
-    let res = stmt_groups.query_map([], |row| {
-        Ok((
-            row.get(0)?,
-            row.get(1)?,
-            row.get(2)?,
-            row.get(3)?,
-            row.get(4)?,
-            row.get(5)?,
-        ))
-    });
-
-    match res {
-        Ok(x) => {
-            for group in x {
-                groups_vec.push(group.unwrap());
-            }
-        }
-        Err(e) => {
-            error!("Error reading DiaFrameMsMsWindows: {}", e);
-        }
-    }
-
-    let max_window_id = groups_vec
-        .iter()
-        .map(|(id, _, _, _, _, _)| *id)
-        .max()
-        .unwrap();
-
-    let mut groups_map_vec: Vec<Option<Vec<ScanRange>>> =
-        (0..(max_window_id + 1)).map(|_| None).collect();
-
-
-    let mut num_scan_ranges = 0;
-    for (group, scan_start, scan_end, iso_mz, iso_width, nce) in groups_vec {
-        num_scan_ranges += 1;
-        let scan_range = ScanRange::new(
-            scan_start,
-            scan_end,
-            iso_mz,
-            iso_width,
-            nce,
-            &scan_converter,
-        );
-
-        if groups_map_vec[group].is_none() {
-            groups_map_vec[group] = Some(Vec::new());
-        }
-
-        match &mut groups_map_vec[group] {
-            None => continue,
-            Some(scan_ranges) => {
-                scan_ranges.push(scan_range);
-            }
-        }
-    }
-
-    let grouping_level = if num_scan_ranges > 200 {
-        log::info!("More than 200 scan ranges, using WindowGroup grouping level. (diagonal PASEF?)");
-        GroupingLevel::WindowGroup
-    } else {
-        log::info!("More than 200 scan ranges, using WindowGroup grouping level. (diaPASEF?)");
-        GroupingLevel::QuadWindowGroup
-    };
-
-    let mut groups_vec_o = (0..(max_window_id + 1)).map(|_| None).collect::<Vec<_>>();
-    for (i, scan_ranges) in groups_map_vec.into_iter().enumerate() {
-        let scan_ranges = match scan_ranges {
-            None => continue,
-            Some(scan_ranges) => scan_ranges,
+        let frame_info = DIAFrameInfo {
+            groups: groups_vec_o,
+            frame_groups: frame_info,
+            retention_times: DIAFrameInfo::rts_from_tdf_connection(&db).await?,
+            grouping_level,
         };
-        if scan_ranges.is_empty() {
-            continue;
-        } else {
-            groups_vec_o[i] = Some(DIAWindowGroup { id: i, scan_ranges });
-        }
+
+        Ok(frame_info)
+
     }
 
-    let frame_info = DIAFrameInfo {
-        groups: groups_vec_o,
-        frame_groups: ids_map_vec,
-        retention_times: DIAFrameInfo::rts_from_tdf_connection(&conn)?,
-        grouping_level,
-    };
+    async fn get_frame_mapping(&self, db: &Pool<Sqlite>) -> Result<Vec<Option<usize>>, sqlx::Error>{
+        let result: Vec<(i32, i32)> = sqlx::query_as(
+            "SELECT Frame, WindowGroup FROM DiaFrameMsMsInfo;",
+        )
+        .fetch_all(db).await?;
 
-    Ok(frame_info)
+        let frame_info = result.iter().map(|(id, group)| (*id as usize, *group as usize)).collect::<Vec<(usize, usize)>>();
+
+        let max_id = frame_info.iter().map(|(id, _)| id).max().unwrap();
+        let mut ids_map_vec = vec![None; max_id + 1];
+        for (id, group) in frame_info {
+            ids_map_vec[id] = Some(group);
+        }
+
+        Ok(ids_map_vec)
+    }
+
+    async fn get_frame_windows(&self, db: &Pool<Sqlite>) -> Result<(Vec<Option<Vec<ScanRange>>>, GroupingLevel), sqlx::Error> {
+        let result: Vec<DiaFrameMsMsWindowInfo> = sqlx::query_as::<_, DiaFrameMsMsWindowInfo>(
+            "SELECT
+                WindowGroup,
+                ScanNumBegin,
+                ScanNumEnd,
+                IsolationMz,
+                IsolationWidth,
+                CollisionEnergy
+            FROM DiaFrameMsMsWindows",
+        )
+        .fetch_all(db).await.unwrap();
+
+        let grouping_level = if result.len() > 200 {
+            log::info!("More than 200 scan ranges, using WindowGroup grouping level. (diagonal PASEF?)");
+            GroupingLevel::WindowGroup
+        } else {
+            log::info!("More than 200 scan ranges, using WindowGroup grouping level. (diaPASEF?)");
+            GroupingLevel::QuadWindowGroup
+        };
+
+        let max_window_id: usize = result
+            .iter()
+            .map(|window| window.window_group)
+            .max()
+            .unwrap() as usize;
+
+        let mut group_map_vec: Vec<Option<Vec<ScanRange>>> = vec![None; max_window_id + 1];
+
+        let mut scangroup_id = 0;
+        for window in result {
+            // TODO this is maybe a good place to make the trouping ...
+            // If its diapasef, the groups are quad+window groups.
+            // If its diagonal, the groups are only window groups.
+            let usize_wg = window.window_group as usize;
+            if group_map_vec[usize_wg].is_none() {
+                group_map_vec[usize_wg] = Some(Vec::new());
+            }
+
+            match &mut group_map_vec[usize_wg] {
+                None => continue,
+                Some(scan_ranges) => {
+                    scan_ranges.push(window.into_scan_range(scangroup_id.clone(), &self.scan_converter));
+                    scangroup_id += 1;
+                }
+            }
+        }
+        Ok((group_map_vec, grouping_level))
+    }
+
+}
+
+// TODO refactor this to make it a constructor method ...
+pub fn read_dia_frame_info(dotd_file: String) -> Result<DIAFrameInfo, sqlx::Error> {
+    let builder = FrameInfoBuilder::from_dotd_path(dotd_file);
+    builder.build()
 }
