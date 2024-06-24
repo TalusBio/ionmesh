@@ -74,8 +74,8 @@ There are a couple of features for development.
 ### Env variables
 ```
 RUST_LOG=info # will change the log level ... levels are standard (info, debug, warn, error, trace)
-DEBUG_TRACES_FROM_CACHE=1 # If set and non empty will load the traces from the cache.
-# It will skip the generation of the traces and will read the file specified on the config. (handy when optimizing the pseudospectra generation)
+RUST_BACKTRACE=1 # will show a backtrace on panic
+RAYON_NUM_THREADS=4 # will set the number of threads to use in rayon
 ```
 
 ## Roadmap

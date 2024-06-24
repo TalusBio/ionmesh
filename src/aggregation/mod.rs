@@ -1,5 +1,6 @@
 pub mod dbscan;
 pub mod ms_denoise;
-pub mod trace_combination;
+pub mod converters;
+pub mod aggregators;
 pub mod tracing;
 pub mod chromatograms;

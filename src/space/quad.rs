@@ -1,5 +1,3 @@
-use crate::mod_types::Float;
-
 use crate::space::space_generics::{IndexedPoints, NDBoundary, NDPoint};
 use core::panic;
 use log::trace;
@@ -8,7 +6,7 @@ use log::trace;
 pub struct RadiusQuadTree<'a, T> {
     boundary: NDBoundary<2>,
     capacity: usize,
-    radius: Float,
+    radius: f32,
     points: Vec<(NDPoint<2>, &'a T)>,
     northeast: Option<Box<RadiusQuadTree<'a, T>>>,
     northwest: Option<Box<RadiusQuadTree<'a, T>>>,
@@ -23,7 +21,7 @@ impl<'a, T> RadiusQuadTree<'a, T> {
     pub fn new_empty(
         boundary: NDBoundary<2>,
         capacity: usize,
-        radius: Float,
+        radius: f32,
     ) -> RadiusQuadTree<'a, T> {
         RadiusQuadTree {
             boundary,

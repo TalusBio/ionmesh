@@ -1,14 +1,12 @@
-use crate::mod_types::Float;
 use crate::space::space_generics::{IndexedPoints, NDBoundary, NDPoint};
 use log::warn;
 
-const EPSILON: Float = Float::EPSILON;
 // Implements a kdtree with several minor differences.
 #[derive(Debug, Clone)]
 pub struct RadiusKDTree<'a, T, const DIMENSIONALITY: usize> {
     boundary: NDBoundary<DIMENSIONALITY>,
     capacity: usize,
-    radius: Float,
+    radius: f32,
     points: Vec<(NDPoint<DIMENSIONALITY>, &'a T)>,
     high_split: Option<Box<RadiusKDTree<'a, T, DIMENSIONALITY>>>,
     low_split: Option<Box<RadiusKDTree<'a, T, DIMENSIONALITY>>>,
@@ -17,7 +15,7 @@ pub struct RadiusKDTree<'a, T, const DIMENSIONALITY: usize> {
     // Since ranges are [closed, open) by convention,
     // I could think of the splits to be [low_bounds, division_value)
     // and [division_value, high_bounds).
-    division_value: Option<Float>,
+    division_value: Option<f32>,
     count: usize,
     level: usize,
 }
@@ -28,7 +26,7 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
     pub fn new_empty(
         boundary: NDBoundary<D>,
         capacity: usize,
-        radius: Float,
+        radius: f32,
     ) -> RadiusKDTree<'a, T, D> {
         RadiusKDTree {
             boundary,
@@ -88,7 +86,7 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
         let _low_bounds = self.boundary.starts;
         let _high_bounds = self.boundary.ends;
         let mut longest_axis: Option<usize> = None;
-        let mut longest_axis_length: Option<Float> = None;
+        let mut longest_axis_length: Option<f32> = None;
 
         for i in 0..D {
             let axis_length = self.boundary.widths[i];
@@ -103,7 +101,7 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
                 let mut keep = false;
                 for point in self.points.iter() {
                     let diff = (point.0.values[i] - axis_val_first).abs();
-                    if diff > EPSILON {
+                    if diff > f32::EPSILON {
                         keep = true;
                         break;
                     }
@@ -183,14 +181,14 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
                 .values
                 .iter()
                 .map(|x| x - self.radius)
-                .collect::<Vec<Float>>()
+                .collect::<Vec<f32>>()
                 .try_into()
                 .unwrap(),
             point
                 .values
                 .iter()
                 .map(|x| x + self.radius)
-                .collect::<Vec<Float>>()
+                .collect::<Vec<f32>>()
                 .try_into()
                 .unwrap(),
         ));
@@ -243,7 +241,7 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
                         .iter()
                         .zip(point.values.iter())
                         .map(|(x, y)| (x - y).abs())
-                        .sum::<Float>();
+                        .sum::<f32>();
                 dist < self.radius
             })
             .map(|x| x.1)
