@@ -8,7 +8,6 @@
 //
 
 mod aggregation;
-mod extraction;
 mod ms;
 mod scoring;
 mod space;
@@ -22,7 +21,6 @@ use clap::Parser;
 
 use crate::scoring::SageSearchConfig;
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::fs;
 use std::path::Path;
 

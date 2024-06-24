@@ -23,7 +23,7 @@ impl NDPointConverter<TimsPeak, 2> for DenseFrameConverter {
         NDPoint {
             values: [
                 (elem.mz / self.mz_scaling) as f32,
-                (elem.mobility / self.ims_scaling) as f32,
+                (elem.mobility / self.ims_scaling),
             ],
         }
     }

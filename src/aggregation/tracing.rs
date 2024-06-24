@@ -717,9 +717,9 @@ pub fn combine_pseudospectra(
         quad_scaling: config.quad_scaling.into(),
     };
     let max_extension_distances: [f32; 3] = [
-        config.max_rt_expansion_ratio as f32,
-        config.max_ims_expansion_ratio as f32,
-        config.max_quad_expansion_ratio as f32,
+        config.max_rt_expansion_ratio,
+        config.max_ims_expansion_ratio,
+        config.max_quad_expansion_ratio,
     ];
 
     let foo: Vec<PseudoSpectrum> = dbscan_generic(
@@ -765,12 +765,12 @@ pub fn write_pseudoscans_json(
     Ok(())
 }
 
-pub fn read_pseudoscans_json(
-    in_path: impl AsRef<Path>,
-) -> Result<Vec<PseudoSpectrum>, Box<dyn Error>> {
-    info!("Reading pseudoscans from json {}", in_path.as_ref().display());
-    let file = std::fs::File::open(in_path)?;
-    let reader = std::io::BufReader::new(file);
-    let out: Vec<PseudoSpectrum> = serde_json::from_reader(reader)?;
-    Ok(out)
-}
+// pub fn read_pseudoscans_json(
+//     in_path: impl AsRef<Path>,
+// ) -> Result<Vec<PseudoSpectrum>, Box<dyn Error>> {
+//     info!("Reading pseudoscans from json {}", in_path.as_ref().display());
+//     let file = std::fs::File::open(in_path)?;
+//     let reader = std::io::BufReader::new(file);
+//     let out: Vec<PseudoSpectrum> = serde_json::from_reader(reader)?;
+//     Ok(out)
+// }

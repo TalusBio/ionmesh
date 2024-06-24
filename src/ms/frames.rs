@@ -40,7 +40,6 @@ pub enum SortingOrder {
 
 /// Unprocessed data from a 'Frame' after breaking by quad isolation_window + ims window.
 ///
-///
 /// 1. every tof-index + intensity represents a peak.
 /// 2. Scan offsets are monotonically increasing.
 /// 3. Peaks are arranged in increasing m/z order WITHIN a scan.
@@ -62,6 +61,7 @@ pub enum SortingOrder {
 ///    - scan_start       123  // The scan number of the first scan offset in the current window.
 ///    - group_id         1    // The group id of the current window.
 ///    - quad_group_id    2    // The quad group id of the current window within the current group.
+///    - quad_row_id      3    // The quad row id of the current window within all quad windows.
 #[derive(Debug, Clone)]
 pub struct FrameQuadWindow {
     pub scan_offsets: Vec<u64>,
@@ -70,11 +70,13 @@ pub struct FrameQuadWindow {
     pub index: usize,
     pub rt: f64,
     pub frame_type: FrameType,
+
     // From this point on they are local implementations
     // Before they are used from the timsrust crate.
     pub scan_start: usize,
     pub group_id: usize,
     pub quad_group_id: usize,
+    pub quad_row_id: usize,
 }
 
 #[derive(Debug, Clone)]

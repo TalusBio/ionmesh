@@ -4,6 +4,7 @@ use crate::aggregation::dbscan;
 use crate::ms::frames::Converters;
 use crate::ms::frames::DenseFrame;
 use crate::ms::frames::DenseFrameWindow;
+use crate::ms::frames::FrameQuadWindow;
 use crate::ms::tdf;
 use crate::ms::tdf::DIAFrameInfo;
 use crate::utils;
@@ -11,8 +12,8 @@ use crate::utils;
 use indicatif::ParallelProgressIterator;
 use log::{info, trace, warn};
 use rayon::prelude::*;
-use timsrust::Frame;
 use serde::{Deserialize, Serialize};
+use timsrust::Frame;
 
 // TODO I can probably split the ms1 and ms2 ...
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
@@ -112,10 +113,10 @@ fn _denoise_denseframe(
     max_ims_extension: f32,
 ) -> DenseFrame {
     // I am 99% sure the compiler will remove this section when optimizing ... but I still need to test it.
-    let frame_stats_start = FrameStats::new(&frame);
+    let frame_stats_start: FrameStats = FrameStats::new(&frame);
     let index = frame.index;
+
     // this is the line that matters
-    // TODO move the scalings to parameters
     let denoised_frame = dbscan::dbscan_denseframe(
         frame,
         mz_scaling,
@@ -146,40 +147,69 @@ fn _denoise_dia_frame(
     ims_scaling: f32,
     max_ims_extension: f32,
 ) -> Vec<DenseFrameWindow> {
+    let window_group = dia_frame_info
+        .get_dia_frame_window_group(frame.index)
+        .unwrap();
     let frame_windows = dia_frame_info
-        .split_frame(frame)
+        .split_frame(frame, window_group)
         .expect("Only DIA frames should be passed to this function");
 
     frame_windows
         .into_iter()
         .map(|frame_window| {
-            let denseframe_window = DenseFrameWindow::from_frame_window(
+            denoise_frame_window(
                 frame_window,
                 ims_converter,
                 mz_converter,
                 dia_frame_info,
-            );
-            let denoised_frame = _denoise_denseframe(
-                denseframe_window.frame,
                 min_n,
                 min_intensity,
                 mz_scaling,
                 max_mz_extension,
                 ims_scaling,
                 max_ims_extension,
-            );
-
-            DenseFrameWindow {
-                frame: denoised_frame,
-                ims_start: denseframe_window.ims_start,
-                ims_end: denseframe_window.ims_end,
-                mz_start: denseframe_window.mz_start,
-                mz_end: denseframe_window.mz_end,
-                group_id: denseframe_window.group_id,
-                quad_group_id: denseframe_window.quad_group_id,
-            }
+            )
         })
         .collect::<Vec<_>>()
+}
+
+fn denoise_frame_window(
+    frame_window: FrameQuadWindow,
+    ims_converter: &timsrust::Scan2ImConverter,
+    mz_converter: &timsrust::Tof2MzConverter,
+    dia_frame_info: &DIAFrameInfo,
+    min_n: usize,
+    min_intensity: u64,
+    mz_scaling: f64,
+    max_mz_extension: f64,
+    ims_scaling: f32,
+    max_ims_extension: f32,
+) -> DenseFrameWindow {
+    let denseframe_window = DenseFrameWindow::from_frame_window(
+        frame_window,
+        ims_converter,
+        mz_converter,
+        dia_frame_info,
+    );
+    let denoised_frame = _denoise_denseframe(
+        denseframe_window.frame,
+        min_n,
+        min_intensity,
+        mz_scaling,
+        max_mz_extension,
+        ims_scaling,
+        max_ims_extension,
+    );
+
+    DenseFrameWindow {
+        frame: denoised_frame,
+        ims_start: denseframe_window.ims_start,
+        ims_end: denseframe_window.ims_end,
+        mz_start: denseframe_window.mz_start,
+        mz_end: denseframe_window.mz_end,
+        group_id: denseframe_window.group_id,
+        quad_group_id: denseframe_window.quad_group_id,
+    }
 }
 
 trait Denoiser<'a, T, W, X, Z>
@@ -190,14 +220,8 @@ where
     Z: Clone,
     Vec<T>: IntoParallelIterator<Item = T>,
 {
-    fn denoise(&self, elem: T) -> W {
-        unimplemented!()
-    }
-
-    fn par_denoise_slice(
-        &self,
-        elems: Vec<T>,
-    ) -> Vec<W>
+    fn denoise(&self, elem: T) -> W;
+    fn par_denoise_slice(&self, elems: Vec<T>) -> Vec<W>
     where
         Self: Sync,
     {
@@ -254,25 +278,61 @@ struct DIAFrameDenoiser {
     mz_converter: timsrust::Tof2MzConverter,
 }
 
+// impl DIAFrameDenoiser {
+//     fn denoise_framewindow_slice(self, elems: Vec<FrameQuadWindow>) -> Vec<DenseFrameWindow> {}
+// }
+
 impl<'a> Denoiser<'a, Frame, Vec<DenseFrameWindow>, Converters, Option<usize>>
     for DIAFrameDenoiser
 {
-    fn denoise(&self, frame: Frame) -> Vec<DenseFrameWindow> {
-        _denoise_dia_frame(
-            frame,
-            self.min_n,
-            self.min_intensity,
-            &self.dia_frame_info,
-            &self.ims_converter,
-            &self.mz_converter,
-            self.mz_scaling,
-            self.max_mz_extension,
-            self.ims_scaling,
-            self.max_ims_extension,
-        )
+    fn denoise(&self, _frame: Frame) -> Vec<DenseFrameWindow> {
+        panic!("This should not be called")
+        // _denoise_dia_frame(
+        //     frame,
+        //     self.min_n,
+        //     self.min_intensity,
+        //     &self.dia_frame_info,
+        //     &self.ims_converter,
+        //     &self.mz_converter,
+        //     self.mz_scaling,
+        //     self.max_mz_extension,
+        //     self.ims_scaling,
+        //     self.max_ims_extension,
+        // )
+    }
+    fn par_denoise_slice(&self, elems: Vec<Frame>) -> Vec<Vec<DenseFrameWindow>>
+    where
+        Self: Sync,
+    {
+        info!("Denoising {} frames", elems.len());
+
+        let frame_window_slices = self.dia_frame_info.split_frame_windows(elems);
+        let mut out = Vec::with_capacity(frame_window_slices.len());
+        for sv in frame_window_slices {
+            let progbar = indicatif::ProgressBar::new(sv.len() as u64);
+            let denoised_elements: Vec<DenseFrameWindow> = sv
+                .into_par_iter()
+                .progress_with(progbar)
+                .map(|x| {
+                    denoise_frame_window(
+                        x,
+                        &self.ims_converter,
+                        &self.mz_converter,
+                        &self.dia_frame_info,
+                        self.min_n,
+                        self.min_intensity,
+                        self.mz_scaling,
+                        self.max_mz_extension,
+                        self.ims_scaling,
+                        self.max_ims_extension,
+                    )
+                })
+                .collect::<Vec<_>>();
+            out.push(denoised_elements);
+        }
+        out
     }
 }
-
 
 // RN this is dead but will be resurrected soon ...
 pub fn read_all_ms1_denoising(
