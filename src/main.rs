@@ -9,13 +9,11 @@
 
 mod aggregation;
 mod extraction;
-mod mod_types;
 mod ms;
 mod scoring;
 mod space;
 
 mod utils;
-mod visualization;
 
 extern crate log;
 extern crate pretty_env_logger;
@@ -98,17 +96,12 @@ fn main() {
 
     pretty_env_logger::init();
 
-    let mut rec: Option<rerun::RecordingStream> = None;
-    if cfg!(feature = "viz") {
-        rec = Some(visualization::setup_recorder());
-    }
-
     let path_use = args.files;
     if path_use.len() != 1 {
         panic!("I have only implemented one path!!!");
     }
     let path_use = path_use[0].clone();
-    // ms_denoise::read_all_ms1_denoising(path_use.clone(), &mut rec);
+    // ms_denoise::read_all_ms1_denoising(path_use.clone());
 
     let out_path_dir = Path::new(&args.output_dir);
     // Create dir if not exists ...
@@ -135,7 +128,6 @@ fn main() {
         let (dia_frames, dia_info) = aggregation::ms_denoise::read_all_dia_denoising(
             path_use.clone(),
             config.denoise_config,
-            &mut rec,
         );
 
         let cycle_time = dia_info.calculate_cycle_time();
@@ -145,7 +137,6 @@ fn main() {
             dia_frames,
             config.tracing_config,
             cycle_time,
-            &mut rec,
         );
 
         let out = match out_traces_path {
@@ -171,7 +162,6 @@ fn main() {
         let pseudoscans = aggregation::tracing::combine_pseudospectra(
             traces,
             config.pseudoscan_generation_config,
-            &mut rec,
         );
 
         // Report min/max/average/std and skew for ims and rt

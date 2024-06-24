@@ -1,10 +1,8 @@
 use crate::aggregation::dbscan::{dbscan_generic, ClusterAggregator};
-use crate::mod_types::Float;
 use crate::ms::frames::{DenseFrame, DenseFrameWindow, TimsPeak};
 use crate::space::space_generics::{HasIntensity, NDPoint, NDPointConverter, TraceLike};
 use crate::utils;
 use crate::utils::RollingSDCalculator;
-use crate::visualization::RerunPlottable;
 use crate::space::space_generics::NDBoundary;
 use crate::aggregation::chromatograms::{BTreeChromatogram, ChromatogramArray, NUM_LOCAL_CHROMATOGRAM_BINS};
 
@@ -205,7 +203,6 @@ pub fn combine_traces(
     denseframe_windows: Vec<DenseFrameWindow>,
     config: TracingConfig,
     rt_binsize: f32,
-    record_stream: &mut Option<rerun::RecordingStream>,
 ) -> Vec<BaseTrace> {
     // mz_scaling: f64,
     // rt_scaling: f64,
@@ -271,79 +268,7 @@ pub fn combine_traces(
     info!("Total Combined traces: {}", out.len());
     timer.stop(true);
 
-    if let Some(stream) = record_stream.as_mut() {
-        let _ = out.plot(stream, String::from("points/combined"), None, None);
-    }
-
     out
-}
-
-impl RerunPlottable<Option<usize>> for Vec<BaseTrace> {
-    fn plot(
-        &self,
-        rec: &mut rerun::RecordingStream,
-        entry_path: String,
-        log_time_in_seconds: Option<f32>,
-        required_extras: Option<usize>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // Sort by retention time and make groups of 1s
-        let mut outs = Vec::new();
-        let mut sorted_traces = (*self).clone();
-        sorted_traces.sort_by(|a, b| a.rt.partial_cmp(&b.rt).unwrap());
-
-        let mut groups: Vec<Vec<BaseTrace>> = Vec::new();
-
-        let mut group: Vec<BaseTrace> = Vec::new();
-        let mut last_second = sorted_traces[0].rt as u32;
-        for trace in sorted_traces {
-            let curr_second = trace.rt as u32;
-            if curr_second != last_second {
-                groups.push(group.clone());
-                group = Vec::new();
-            }
-            last_second = curr_second;
-            group.push(trace);
-        }
-
-        // For each group
-        // Plot the group
-        for group in groups {
-            let mut peaks = Vec::new();
-            for trace in group {
-                peaks.push(TimsPeak {
-                    mz: trace.mz,
-                    intensity: trace.intensity.try_into().unwrap_or(u32::MAX),
-                    mobility: trace.mobility,
-                    npeaks: trace.num_agg.try_into().unwrap_or(u32::MAX),
-                })
-            }
-
-            // Pack them into a denseframe
-            let df = DenseFrame {
-                raw_peaks: peaks,
-                rt: last_second as f64,
-                index: 10 * last_second as usize, // I just need and index and back-calculating it is not worth my time.
-                frame_type: timsrust::FrameType::Unknown,
-                sorted: None,
-            };
-
-            // Plot the denseframe
-            let out = df.plot(
-                rec,
-                entry_path.clone(),
-                log_time_in_seconds,
-                required_extras,
-            );
-            if out.is_err() {
-                error!("Error plotting pseudo-denseframe: {:?}", out);
-            } else {
-                info!("Plotted pseudo-denseframe");
-            }
-            outs.push(out);
-        }
-
-        Ok(())
-    }
 }
 
 
@@ -449,9 +374,9 @@ impl NDPointConverter<TimeTimsPeak, 3> for TimeTimsPeakConverter {
     fn convert(&self, elem: &TimeTimsPeak) -> NDPoint<3> {
         NDPoint {
             values: [
-                (elem.mz / self.mz_scaling) as Float,
-                (elem.rt as f64 / self.rt_scaling) as Float,
-                (elem.ims as f64 / self.ims_scaling) as Float,
+                (elem.mz / self.mz_scaling) as f32,
+                (elem.rt as f64 / self.rt_scaling) as f32,
+                (elem.ims as f64 / self.ims_scaling) as f32,
             ],
         }
     }
@@ -667,9 +592,9 @@ impl NDPointConverter<BaseTrace, 3> for BaseTraceConverter {
         let quad_center = (elem.quad_low + elem.quad_high) / 2.;
         NDPoint {
             values: [
-                (elem.rt as f64 / self.rt_scaling) as Float,
-                (elem.mobility as f64 / self.ims_scaling) as Float,
-                (quad_center as f64 / self.quad_scaling) as Float,
+                (elem.rt as f64 / self.rt_scaling) as f32,
+                (elem.mobility as f64 / self.ims_scaling) as f32,
+                (quad_center as f64 / self.quad_scaling) as f32,
             ],
         }
     }
@@ -713,9 +638,9 @@ impl NDPointConverter<PseudoSpectrum, 3> for PseudoScanBackConverter {
         let quad_mid = (elem.quad_low + elem.quad_high) / 2.;
         NDPoint {
             values: [
-                (elem.rt as f64 / self.rt_scaling) as Float,
-                (elem.ims as f64 / self.ims_scaling) as Float,
-                (quad_mid as f64 / self.quad_scaling) as Float,
+                (elem.rt as f64 / self.rt_scaling) as f32,
+                (elem.ims as f64 / self.ims_scaling) as f32,
+                (quad_mid as f64 / self.quad_scaling) as f32,
             ],
         }
     }
@@ -755,7 +680,6 @@ impl Default for PseudoscanGenerationConfig {
 pub fn combine_pseudospectra(
     traces: Vec<BaseTrace>,
     config: PseudoscanGenerationConfig,
-    record_stream: &mut Option<rerun::RecordingStream>,
 ) -> Vec<PseudoSpectrum> {
     let mut timer =
         utils::ContextTimer::new("Combining pseudospectra", true, utils::LogLevel::INFO);
@@ -791,10 +715,10 @@ pub fn combine_pseudospectra(
         ims_scaling: config.ims_scaling.into(),
         quad_scaling: config.quad_scaling.into(),
     };
-    let max_extension_distances: [Float; 3] = [
-        config.max_rt_expansion_ratio as Float,
-        config.max_ims_expansion_ratio as Float,
-        config.max_quad_expansion_ratio as Float,
+    let max_extension_distances: [f32; 3] = [
+        config.max_rt_expansion_ratio as f32,
+        config.max_ims_expansion_ratio as f32,
+        config.max_quad_expansion_ratio as f32,
     ];
 
     let foo: Vec<PseudoSpectrum> = dbscan_generic(
@@ -812,11 +736,6 @@ pub fn combine_pseudospectra(
 
     info!("Combined pseudospectra: {}", foo.len());
     timer.stop(true);
-
-    if let Some(_stream) = record_stream.as_mut() {
-        warn!("Plotting pseudospectra is not implemented yet");
-    }
-
     foo
 }
 

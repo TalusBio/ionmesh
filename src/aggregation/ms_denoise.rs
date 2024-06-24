@@ -7,7 +7,6 @@ use crate::ms::frames::DenseFrameWindow;
 use crate::ms::tdf;
 use crate::ms::tdf::DIAFrameInfo;
 use crate::utils;
-use crate::visualization::RerunPlottable;
 
 use indicatif::ParallelProgressIterator;
 use log::{info, trace, warn};
@@ -117,7 +116,7 @@ fn _denoise_denseframe(
     let index = frame.index;
     // this is the line that matters
     // TODO move the scalings to parameters
-    let denoised_frame = dbscan::dbscan_denseframes(
+    let denoised_frame = dbscan::dbscan_denseframe(
         frame,
         mz_scaling,
         max_mz_extension,
@@ -185,78 +184,35 @@ fn _denoise_dia_frame(
 
 trait Denoiser<'a, T, W, X, Z>
 where
-    T: RerunPlottable<X> + std::marker::Send,
-    W: Clone + RerunPlottable<Z> + std::marker::Send,
+    T: std::marker::Send,
+    W: Clone + std::marker::Send,
     X: Clone,
     Z: Clone,
     Vec<T>: IntoParallelIterator<Item = T>,
 {
-    fn denoise(&self, frame: T) -> W;
-    // TODO maybe add a par_denoise_slice method
-    // with the implementation ...
+    fn denoise(&self, elem: T) -> W {
+        unimplemented!()
+    }
+
     fn par_denoise_slice(
         &self,
-        mut frames: Vec<T>,
-        record_stream: &mut Option<rerun::RecordingStream>,
-        plotting_extras: (X, Z),
+        elems: Vec<T>,
     ) -> Vec<W>
     where
         Self: Sync,
     {
-        info!("Denoising {} frames", frames.len());
+        info!("Denoising {} frames", elems.len());
         // randomly viz 1/200 frames
         // Selecting a slice of 1/200 frames
 
-        if let Some(stream) = record_stream.as_mut() {
-            warn!("Viz is enabled, randomly subsetting 1/200 frames");
-            let len_keep = frames.len() / 200;
-            let start = rand::random::<usize>() % (frames.len() - len_keep);
-            // let keep = [false, true, true, false, true];
-            let mut keep = vec![false; start]
-                .into_iter()
-                .chain(vec![true; len_keep])
-                .collect::<Vec<_>>();
-
-            keep.append(&mut vec![false; frames.len() - start - len_keep]);
-            let mut iter_keep = keep.iter();
-
-            frames.retain(|_| *iter_keep.next().unwrap());
-
-            for (i, frame) in frames.iter().enumerate() {
-                info!("Logging frame {}", i);
-                frame
-                    .plot(
-                        stream,
-                        String::from("points/Original"),
-                        None,
-                        plotting_extras.0.clone(),
-                    )
-                    .unwrap();
-            }
-        }
-
-        let progbar = indicatif::ProgressBar::new(frames.len() as u64);
-        let denoised_frames: Vec<W> = frames
+        let progbar = indicatif::ProgressBar::new(elems.len() as u64);
+        let denoised_elements: Vec<W> = elems
             .into_par_iter()
             .progress_with(progbar)
             .map(|x| self.denoise(x))
             .collect::<Vec<_>>();
 
-        if let Some(stream) = record_stream.as_mut() {
-            for (i, frame) in denoised_frames.iter().enumerate() {
-                trace!("Logging frame {}", i);
-                frame
-                    .plot(
-                        stream,
-                        String::from("points/denoised"),
-                        None,
-                        plotting_extras.1.clone(),
-                    )
-                    .unwrap();
-            }
-        }
-
-        denoised_frames
+        denoised_elements
     }
 }
 
@@ -327,7 +283,6 @@ pub fn read_all_ms1_denoising(
     max_mz_extension: f64,
     ims_scaling: f32,
     max_ims_extension: f32,
-    record_stream: &mut Option<rerun::RecordingStream>,
 ) -> Vec<DenseFrame> {
     let reader = timsrust::FileReader::new(path).unwrap();
 
@@ -357,20 +312,17 @@ pub fn read_all_ms1_denoising(
         mz_converter,
     };
 
-    let converters = (ims_converter, mz_converter);
     let mut timer =
         utils::ContextTimer::new("Denoising all MS1 frames", true, utils::LogLevel::INFO);
-    let out = ms1_denoiser.par_denoise_slice(frames, record_stream, (converters, None));
+    let out = ms1_denoiser.par_denoise_slice(frames);
     timer.stop(true);
     out
 }
 
 // This could probably be a macro ...
-// Maybe I should just pass the config ... instead of the elements
 pub fn read_all_dia_denoising(
     path: String,
     config: DenoiseConfig,
-    record_stream: &mut Option<rerun::RecordingStream>,
 ) -> (Vec<DenseFrameWindow>, DIAFrameInfo) {
     let mut timer = utils::ContextTimer::new("Reading all DIA frames", true, utils::LogLevel::INFO);
     let reader = timsrust::FileReader::new(path.clone()).unwrap();
@@ -398,11 +350,9 @@ pub fn read_all_dia_denoising(
         ims_converter,
         mz_converter,
     };
-    let converters = (ims_converter, mz_converter);
-
     let mut timer =
         utils::ContextTimer::new("Denoising all MS2 frames", true, utils::LogLevel::INFO);
-    let split_frames = denoiser.par_denoise_slice(frames, record_stream, (converters, None));
+    let split_frames = denoiser.par_denoise_slice(frames);
     let out: Vec<DenseFrameWindow> = split_frames.into_iter().flatten().collect();
     timer.stop(true);
 

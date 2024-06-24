@@ -13,7 +13,6 @@ use crate::utils;
 ///
 /// 1. Intensity usage.
 ///
-use crate::mod_types::Float;
 use crate::ms::frames;
 use crate::space::space_generics::{HasIntensity, IndexedPoints, NDPoint};
 use indicatif::ProgressIterator;
@@ -168,7 +167,7 @@ fn _dbscan<
     filter_fun: Option<FF>,
     converter: C,
     progress: bool,
-    max_extension_distances: &[Float;N],
+    max_extension_distances: &[f32;N],
 ) -> (u64, Vec<ClusterLabel<u64>>) {
     let mut initial_candidates_counts = utils::RollingSDCalculator::default();
     let mut final_candidates_counts = utils::RollingSDCalculator::default();
@@ -587,7 +586,7 @@ fn reassign_centroid<
     elements: &Vec<T>,
     def_aggregator: F,
     log_level: utils::LogLevel,
-    expansion_factors: &[Float;N],
+    expansion_factors: &[f32;N],
 ) -> Vec<R> {
     let mut timer = utils::ContextTimer::new("reassign_centroid", true, log_level);
     let mut out = Vec::with_capacity(centroids.len());
@@ -645,7 +644,7 @@ pub fn dbscan_generic<
     extra_filter_fun: Option<&FF>,
     log_level: Option<utils::LogLevel>,
     keep_unclustered: bool,
-    max_extension_distances: &[Float;N],
+    max_extension_distances: &[f32;N],
     back_converter: Option<C2>,
 ) -> Vec<R> {
     let show_progress = log_level.is_some();
@@ -741,8 +740,8 @@ impl NDPointConverter<TimsPeak, 2> for DenseFrameConverter {
     fn convert(&self, elem: &TimsPeak) -> NDPoint<2> {
         NDPoint {
             values: [
-                (elem.mz / self.mz_scaling) as Float,
-                (elem.mobility / self.ims_scaling) as Float,
+                (elem.mz / self.mz_scaling) as f32,
+                (elem.mobility / self.ims_scaling) as f32,
             ],
         }
     }
@@ -750,7 +749,7 @@ impl NDPointConverter<TimsPeak, 2> for DenseFrameConverter {
 
 type FFTimsPeak = fn(&TimsPeak, &TimsPeak) -> bool;
 // <FF: Send + Sync + Fn(&TimsPeak, &TimsPeak) -> bool>
-pub fn dbscan_denseframes(
+pub fn dbscan_denseframe(
     mut denseframe: frames::DenseFrame,
     mz_scaling: f64,
     max_mz_extension: f64,
@@ -798,7 +797,7 @@ pub fn dbscan_denseframes(
         None::<&FFTimsPeak>,
         None,
         true,
-        &[max_mz_extension as Float, max_ims_extension as Float],
+        &[max_mz_extension as f32, max_ims_extension as f32],
         None::<BypassDenseFrameBackConverter>,
     );
 

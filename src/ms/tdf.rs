@@ -3,7 +3,7 @@ use rusqlite::{Connection, Result};
 use std::path::Path;
 use timsrust::{ConvertableIndex, Frame};
 
-use crate::ms::frames::{DenseFrame, DenseFrameWindow, FrameWindow};
+use crate::ms::frames::{DenseFrame, DenseFrameWindow, FrameQuadWindow};
 
 // Diaframemsmsinfo = vec of frame_id -> windowgroup_id
 // diaframemsmswindows = vec[(windowgroup_id, scanstart, scanend, iso_mz, iso_with, nce)]
@@ -61,6 +61,12 @@ pub struct DIAWindowGroup {
 }
 
 #[derive(Debug, Clone)]
+pub enum GroupingLevel {
+    WindowGroup, // Technically this is the same as the frame level ...
+    QuadWindowGroup,
+}
+
+#[derive(Debug, Clone)]
 pub struct DIAFrameInfo {
     pub groups: Vec<Option<DIAWindowGroup>>,
     /// Frame Groups is a vec of length equal to the number of frames.
@@ -68,6 +74,7 @@ pub struct DIAFrameInfo {
     /// that the frame belongs to.
     pub frame_groups: Vec<Option<usize>>,
     pub retention_times: Vec<Option<f32>>,
+    pub grouping_level: GroupingLevel,
 }
 
 // TODO rename or split this ... since it is becoming more
@@ -154,7 +161,7 @@ impl DIAFrameInfo {
         avg_cycle_time
     }
 
-    pub fn split_frame(&self, frame: Frame) -> Result<Vec<FrameWindow>, &'static str> {
+    pub fn split_frame(&self, frame: Frame) -> Result<Vec<FrameQuadWindow>, &'static str> {
         let group = self.get_group(frame.index);
         if group.is_none() {
             return Err("Frame not in DIA group");
@@ -175,7 +182,7 @@ impl DIAFrameInfo {
             let tof_indices_keep = frame.tof_indices[mz_indptr_start..mz_indptr_end].to_vec();
             let intensities_keep = frame.intensities[mz_indptr_start..mz_indptr_end].to_vec();
 
-            let frame_window = FrameWindow {
+            let frame_window = FrameQuadWindow {
                 scan_offsets: scan_offsets_use
                     .iter()
                     .map(|x| (x - scan_start) as u64)
@@ -462,7 +469,10 @@ pub fn read_dia_frame_info(dotd_file: String) -> Result<DIAFrameInfo> {
     let mut groups_map_vec: Vec<Option<Vec<ScanRange>>> =
         (0..(max_window_id + 1)).map(|_| None).collect();
 
+
+    let mut num_scan_ranges = 0;
     for (group, scan_start, scan_end, iso_mz, iso_width, nce) in groups_vec {
+        num_scan_ranges += 1;
         let scan_range = ScanRange::new(
             scan_start,
             scan_end,
@@ -484,6 +494,14 @@ pub fn read_dia_frame_info(dotd_file: String) -> Result<DIAFrameInfo> {
         }
     }
 
+    let grouping_level = if num_scan_ranges > 200 {
+        log::info!("More than 200 scan ranges, using WindowGroup grouping level. (diagonal PASEF?)");
+        GroupingLevel::WindowGroup
+    } else {
+        log::info!("More than 200 scan ranges, using WindowGroup grouping level. (diaPASEF?)");
+        GroupingLevel::QuadWindowGroup
+    };
+
     let mut groups_vec_o = (0..(max_window_id + 1)).map(|_| None).collect::<Vec<_>>();
     for (i, scan_ranges) in groups_map_vec.into_iter().enumerate() {
         let scan_ranges = match scan_ranges {
@@ -501,6 +519,7 @@ pub fn read_dia_frame_info(dotd_file: String) -> Result<DIAFrameInfo> {
         groups: groups_vec_o,
         frame_groups: ids_map_vec,
         retention_times: DIAFrameInfo::rts_from_tdf_connection(&conn)?,
+        grouping_level,
     };
 
     Ok(frame_info)

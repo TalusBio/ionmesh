@@ -1,18 +1,14 @@
-use crate::mod_types::Float;
-// f32 or f64 depending on compilation
-
-const EPSILON: Float = Float::EPSILON;
 
 #[derive(Debug, Clone, Copy)]
 pub struct NDBoundary<const DIMENSIONALITY: usize> {
-    pub starts: [Float; DIMENSIONALITY],
-    pub ends: [Float; DIMENSIONALITY],
-    pub widths: [Float; DIMENSIONALITY],
-    pub centers: [Float; DIMENSIONALITY],
+    pub starts: [f32; DIMENSIONALITY],
+    pub ends: [f32; DIMENSIONALITY],
+    pub widths: [f32; DIMENSIONALITY],
+    pub centers: [f32; DIMENSIONALITY],
 }
 
 impl<const D: usize> NDBoundary<D> {
-    pub fn new(starts: [Float; D], ends: [Float; D]) -> NDBoundary<D> {
+    pub fn new(starts: [f32; D], ends: [f32; D]) -> NDBoundary<D> {
         let mut widths = [0.0; D];
         let mut centers = [0.0; D];
         for i in 0..D {
@@ -56,16 +52,16 @@ impl<const D: usize> NDBoundary<D> {
     }
 
     pub fn from_ndpoints(points: &[NDPoint<D>]) -> NDBoundary<D> {
-        let mut starts = [Float::MAX; D];
-        let mut ends = [Float::MIN; D];
+        let mut starts = [f32::MAX; D];
+        let mut ends = [f32::MIN; D];
 
         for point in points.iter() {
             for i in 0..D {
                 if point.values[i] < starts[i] {
-                    starts[i] = point.values[i] - EPSILON;
+                    starts[i] = point.values[i] - f32::EPSILON;
                 }
                 if point.values[i] > ends[i] {
-                    ends[i] = point.values[i] + EPSILON;
+                    ends[i] = point.values[i] + f32::EPSILON;
                 }
             }
         }
@@ -73,7 +69,7 @@ impl<const D: usize> NDBoundary<D> {
         NDBoundary::new(starts, ends)
     }
 
-    pub fn expand(&mut self, factors: &[Float; D]) {
+    pub fn expand(&mut self, factors: &[f32; D]) {
         for (i, ef) in factors.iter().enumerate() {
             let mut half_width = self.widths[i] / 2.0;
             let center = self.centers[i];
@@ -92,7 +88,7 @@ impl<const D: usize> NDBoundary<D> {
 // Oddly enough ... adding copy makes it slower ...
 #[derive(Debug, Clone)]
 pub struct NDPoint<const DIMENSIONALITY: usize> {
-    pub values: [Float; DIMENSIONALITY],
+    pub values: [f32; DIMENSIONALITY],
 }
 
 // Q: is there any instance where T is not usize?
