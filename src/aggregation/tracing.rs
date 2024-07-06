@@ -1,18 +1,20 @@
-use crate::aggregation::dbscan::dbscan_generic;
 use crate::aggregation::aggregators::ClusterAggregator;
+use crate::aggregation::chromatograms::{
+    BTreeChromatogram, ChromatogramArray, NUM_LOCAL_CHROMATOGRAM_BINS,
+};
+use crate::aggregation::dbscan::dbscan_generic;
 use crate::ms::frames::DenseFrameWindow;
+use crate::space::space_generics::NDBoundary;
 use crate::space::space_generics::{HasIntensity, NDPoint, NDPointConverter, TraceLike};
 use crate::utils;
 use crate::utils::RollingSDCalculator;
-use crate::space::space_generics::NDBoundary;
-use crate::aggregation::chromatograms::{BTreeChromatogram, ChromatogramArray, NUM_LOCAL_CHROMATOGRAM_BINS};
 
+use core::panic;
 use log::{debug, error, info, warn};
 use rayon::iter::IntoParallelIterator;
 use rayon::prelude::*;
+use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
-use serde::ser::{Serializer, SerializeStruct};
-use core::panic;
 use std::error::Error;
 use std::io::Write;
 use std::path::Path;
@@ -93,10 +95,12 @@ impl Serialize for BaseTrace {
         state.serialize_field("chromatogram", &format!("{:?}", chromatogram))?;
         state.end()
     }
-
 }
 
-pub fn write_trace_csv(traces: &Vec<BaseTrace>, path: impl AsRef<Path>) -> Result<(), Box<dyn Error>> {
+pub fn write_trace_csv(
+    traces: &Vec<BaseTrace>,
+    path: impl AsRef<Path>,
+) -> Result<(), Box<dyn Error>> {
     let mut wtr = csv::Writer::from_path(path).unwrap();
     for trace in traces {
         wtr.serialize(trace)?;
@@ -272,7 +276,6 @@ pub fn combine_traces(
     out
 }
 
-
 #[derive(Debug, Clone)]
 struct TraceAggregator {
     mz: RollingSDCalculator<f64, u64>,
@@ -313,7 +316,8 @@ impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
 
         //  The chromatogram is an array centered on the retention time
         let num_rt_points = self.btree_chromatogram.btree.len();
-        let chromatogram: ChromatogramArray<f32, NUM_LOCAL_CHROMATOGRAM_BINS> = self.btree_chromatogram.as_chromatogram_array(Some(rt));
+        let chromatogram: ChromatogramArray<f32, NUM_LOCAL_CHROMATOGRAM_BINS> =
+            self.btree_chromatogram.as_chromatogram_array(Some(rt));
 
         // let apex = chromatogram.chromatogram.iter().enumerate().max_by_key(|x| (x.1 * 100.) as i32).unwrap().0;
         // let apex_offset = (apex as f32 - (NUM_LOCAL_CHROMATOGRAM_BINS as f32 / 2.)) * self.btree_chromatogram.rt_binsize;
@@ -391,7 +395,6 @@ impl NDPointConverter<BaseTrace, 3> for BypassBaseTraceBackConverter {
     }
 }
 
-
 fn _flatten_denseframe_vec(denseframe_windows: Vec<DenseFrameWindow>) -> Vec<TimeTimsPeak> {
     denseframe_windows
         .into_iter()
@@ -414,7 +417,6 @@ fn _flatten_denseframe_vec(denseframe_windows: Vec<DenseFrameWindow>) -> Vec<Tim
 
 // Needed to specify the generic in dbscan_generic
 type FFTimeTimsPeak = fn(&TimeTimsPeak, &TimeTimsPeak) -> bool;
-
 
 // TODO maybe this can be a builder-> executor pattern
 fn _combine_single_window_traces(
@@ -603,10 +605,7 @@ impl NDPointConverter<BaseTrace, 3> for BaseTraceConverter {
     fn convert_to_bounds_query<'a>(
         &self,
         point: &'a NDPoint<3>,
-    ) -> (
-        NDBoundary<3>,
-        Option<&'a NDPoint<3>>,
-    ) {
+    ) -> (NDBoundary<3>, Option<&'a NDPoint<3>>) {
         const NUM_DIMENTIONS: usize = 3;
         // let range_center = (point.values[1] + point.values[2]) / 2.;
         let mut starts = point.values;
@@ -647,9 +646,6 @@ impl NDPointConverter<PseudoSpectrum, 3> for PseudoScanBackConverter {
     }
 }
 
-
-
-
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub struct PseudoscanGenerationConfig {
     pub rt_scaling: f32,
@@ -677,7 +673,6 @@ impl Default for PseudoscanGenerationConfig {
     }
 }
 
-
 pub fn combine_pseudospectra(
     traces: Vec<BaseTrace>,
     config: PseudoscanGenerationConfig,
@@ -689,7 +684,6 @@ pub fn combine_pseudospectra(
         rt_scaling: config.rt_scaling.into(),
         ims_scaling: config.ims_scaling.into(),
         quad_scaling: config.quad_scaling.into(),
-
         // rt_start_end_ratio: 2.,
         // peak_width_prior: 0.75,
     };

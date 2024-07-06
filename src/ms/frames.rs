@@ -1,4 +1,3 @@
-
 pub use timsrust::Frame;
 pub use timsrust::FrameType;
 pub use timsrust::{
@@ -38,6 +37,25 @@ pub enum SortingOrder {
     Intensity,
 }
 
+/// Information on the context of a window in a frame.
+///
+/// This adds to a frame slice the context of the what isolation was used
+/// to generate the frame slice.
+#[derive(Debug, Clone)]
+pub struct FrameMsMsWindowInfo {
+    pub mz_start: f32,
+    pub mz_end: f32,
+    pub window_group_id: usize,
+    pub within_window_quad_group_id: usize,
+    pub global_quad_row_id: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum MsMsFrameSliceWindowInfo {
+    WindowGroup(usize),
+    SingleWindow(FrameMsMsWindowInfo),
+}
+
 /// Unprocessed data from a 'Frame' after breaking by quad isolation_window + ims window.
 ///
 /// 1. every tof-index + intensity represents a peak.
@@ -52,31 +70,68 @@ pub enum SortingOrder {
 ///    calibration)
 ///
 /// Frame                  Example values
-///    - Scan offsets.    [0,0,0,0,0,3,5,6 ...] n=number of scans
-///    - tof indices.     [100, 101, 102, 10, 20, 30 ...] len = len(intensities)
-///    - intensities.     [123, 111, 12 ,  3,  4,  1 ...] len = len(tof indices)
-///    - index            34
+///    - Scan offsets.    `[0,0,0,0,0,3,5,6 ...]` n=number of scans
+///    - tof indices.     `[100, 101, 102, 10, 20, 30 ...]` len = len(intensities)
+///    - intensities.     `[123, 111, 12 ,  3,  4,  1 ...]` len = len(tof indices)
 ///    - rt               65.34
-/// Additions for FrameQuadWindow:
+///
+/// Renamed from the frame:
+///    - parent_frame_index   34 // renamed from Frame.index for clarity.
+///
+/// Additions for FrameSlice:
 ///    - scan_start       123  // The scan number of the first scan offset in the current window.
-///    - group_id         1    // The group id of the current window.
-///    - quad_group_id    2    // The quad group id of the current window within the current group.
-///    - quad_row_id      3    // The quad row id of the current window within all quad windows.
+///    - slice_window_info Some(MsMsFrameSliceWindowInfo::SingleWindow(FrameMsMsWindow))
 #[derive(Debug, Clone)]
-pub struct FrameQuadWindow {
-    pub scan_offsets: Vec<u64>,
-    pub tof_indices: Vec<u32>,
-    pub intensities: Vec<u32>,
-    pub index: usize,
+pub struct FrameSlice<'a> {
+    pub scan_offsets: &'a [usize],
+    pub tof_indices: &'a [u32],
+    pub intensities: &'a [u32],
+    pub parent_frame_index: usize,
     pub rt: f64,
     pub frame_type: FrameType,
 
     // From this point on they are local implementations
     // Before they are used from the timsrust crate.
     pub scan_start: usize,
-    pub group_id: usize,
-    pub quad_group_id: usize,
-    pub quad_row_id: usize,
+    pub slice_window_info: Option<MsMsFrameSliceWindowInfo>,
+}
+
+impl<'a> FrameSlice<'a> {
+    pub fn slice_frame(
+        frame: &'a Frame,
+        scan_start: usize,
+        scan_end: usize,
+        slice_window_info: Option<MsMsFrameSliceWindowInfo>,
+    ) -> FrameSlice<'a> {
+        let scan_offsets = &frame.scan_offsets[scan_start..=scan_end];
+        let scan_start = scan_offsets[0];
+
+        let indprt_start = scan_offsets[0];
+        let indptr_end = *scan_offsets.last().expect("Scan range is empty");
+
+        let tof_indices = &frame.tof_indices[indprt_start..indptr_end];
+        let intensities = &frame.intensities[indprt_start..indptr_end];
+        debug_assert!(tof_indices.len() == intensities.len());
+        debug_assert!(indptr_end - indprt_start == tof_indices.len() as usize);
+        #[cfg(debug_assertions)]
+        {
+            for i in 1..(scan_offsets.len() - 1) {
+                debug_assert!(scan_offsets[i] <= scan_offsets[i + 1]);
+                debug_assert!((scan_offsets[i + 1] - scan_start) <= tof_indices.len() as usize);
+            }
+        }
+
+        FrameSlice {
+            scan_offsets,
+            tof_indices,
+            intensities,
+            parent_frame_index: frame.index,
+            rt: frame.rt,
+            frame_type: frame.frame_type,
+            scan_start,
+            slice_window_info: slice_window_info,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -91,8 +146,8 @@ pub struct DenseFrame {
 #[derive(Debug, Clone)]
 pub struct DenseFrameWindow {
     pub frame: DenseFrame,
-    pub ims_start: f32,
-    pub ims_end: f32,
+    pub ims_min: f32,
+    pub ims_max: f32,
     pub mz_start: f64,
     pub mz_end: f64,
     pub group_id: usize,
@@ -101,36 +156,60 @@ pub struct DenseFrameWindow {
 
 impl DenseFrameWindow {
     pub fn from_frame_window(
-        frame_window: FrameQuadWindow,
+        frame_window: &FrameSlice,
         ims_converter: &Scan2ImConverter,
         mz_converter: &Tof2MzConverter,
         dia_info: &DIAFrameInfo,
     ) -> DenseFrameWindow {
-        let group_id = frame_window.group_id;
-        let quad_group_id = frame_window.quad_group_id;
-        let scan_start = frame_window.scan_start;
+        let (window_group_id, ww_quad_group_id, scan_start) = match frame_window.slice_window_info {
+            None => {
+                panic!("No window info")
+                // This branch points to an error in logic ...
+                // The window info should always be present in this context.
+            }
+            Some(MsMsFrameSliceWindowInfo::WindowGroup(_)) => {
+                // This branch should be easy to implement for things like synchro pasef...
+                // Some details to iron out though ...
+                panic!("Not implemented")
+            }
+            Some(MsMsFrameSliceWindowInfo::SingleWindow(ref x)) => {
+                let window_group_id = x.window_group_id;
+                let ww_quad_group_id = x.within_window_quad_group_id;
+                let scan_start = frame_window.scan_start;
+                (window_group_id, ww_quad_group_id, scan_start)
+            }
+        };
 
         // NOTE: I am swapping here the 'scan start' to be the `ims_end` because
         // the first scans have lower 1/k0 values.
-        let ims_end = ims_converter.convert(scan_start as u32) as f32;
-        let ims_start =
+        let ims_max = ims_converter.convert(scan_start as u32) as f32;
+        let ims_min =
             ims_converter.convert((frame_window.scan_offsets.len() + scan_start) as u32) as f32;
-        let scan_range: &ScanRange = dia_info
-            .get_quad_windows(group_id, quad_group_id)
-            .expect("Quad group id should be valid");
 
-        let frame = DenseFrame::from_frame_window(frame_window, ims_converter, mz_converter);
+        debug_assert!(ims_max <= ims_min);
 
-        debug_assert!(ims_start <= ims_end);
+        let scan_range: Option<&ScanRange> =
+            dia_info.get_quad_windows(window_group_id, ww_quad_group_id);
+        let scan_range = match scan_range {
+            Some(x) => x,
+            None => {
+                panic!(
+                    "No scan range for window_group_id: {}, within_window_quad_group_id: {}",
+                    window_group_id, ww_quad_group_id
+                );
+            }
+        };
+
+        let frame = DenseFrame::from_frame_window(&frame_window, ims_converter, mz_converter);
 
         DenseFrameWindow {
             frame,
-            ims_start,
-            ims_end,
+            ims_min,
+            ims_max,
             mz_start: scan_range.iso_low as f64,
             mz_end: scan_range.iso_high as f64,
-            group_id,
-            quad_group_id,
+            group_id: window_group_id,
+            quad_group_id: ww_quad_group_id,
         }
     }
 }
@@ -183,7 +262,7 @@ impl DenseFrame {
     }
 
     pub fn from_frame_window(
-        frame_window: FrameQuadWindow,
+        frame_window: &FrameSlice,
         ims_converter: &Scan2ImConverter,
         mz_converter: &Tof2MzConverter,
     ) -> DenseFrame {
@@ -193,7 +272,7 @@ impl DenseFrame {
             let num_tofs = index_offset - last_scan_offset;
             let scan_index_use = (scan_index + frame_window.scan_start) as u32;
 
-            let ims = ims_converter.convert(scan_index_use) as f32;
+            let ims = ims_converter.convert(scan_index as f64) as f32;
             if ims < 0.0 {
                 info!("Negative IMS value: {}", ims);
                 info!("scan_index_use: {}", scan_index_use);
@@ -204,7 +283,7 @@ impl DenseFrame {
             expanded_scan_indices.extend(vec![ims; num_tofs as usize]);
             last_scan_offset = *index_offset;
         }
-        debug_assert!(last_scan_offset == frame_window.tof_indices.len() as u64);
+        debug_assert!(last_scan_offset == frame_window.tof_indices.len());
 
         let peaks = expanded_scan_indices
             .iter()
@@ -224,7 +303,7 @@ impl DenseFrame {
             }
         }
 
-        let index = frame_window.index;
+        let index = frame_window.parent_frame_index;
         let rt = frame_window.rt;
         let frame_type = frame_window.frame_type;
 

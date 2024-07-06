@@ -4,7 +4,7 @@ use crate::aggregation::dbscan;
 use crate::ms::frames::Converters;
 use crate::ms::frames::DenseFrame;
 use crate::ms::frames::DenseFrameWindow;
-use crate::ms::frames::FrameQuadWindow;
+use crate::ms::frames::FrameSlice;
 use crate::ms::tdf;
 use crate::ms::tdf::DIAFrameInfo;
 use crate::utils;
@@ -151,14 +151,14 @@ fn _denoise_dia_frame(
         .get_dia_frame_window_group(frame.index)
         .unwrap();
     let frame_windows = dia_frame_info
-        .split_frame(frame, window_group)
+        .split_frame(&frame, window_group)
         .expect("Only DIA frames should be passed to this function");
 
     frame_windows
         .into_iter()
         .map(|frame_window| {
-            denoise_frame_window(
-                frame_window,
+            denoise_frame_slice(
+                &frame_window,
                 ims_converter,
                 mz_converter,
                 dia_frame_info,
@@ -173,8 +173,8 @@ fn _denoise_dia_frame(
         .collect::<Vec<_>>()
 }
 
-fn denoise_frame_window(
-    frame_window: FrameQuadWindow,
+fn denoise_frame_slice(
+    frame_window: &FrameSlice,
     ims_converter: &timsrust::Scan2ImConverter,
     mz_converter: &timsrust::Tof2MzConverter,
     dia_frame_info: &DIAFrameInfo,
@@ -203,8 +203,8 @@ fn denoise_frame_window(
 
     DenseFrameWindow {
         frame: denoised_frame,
-        ims_start: denseframe_window.ims_start,
-        ims_end: denseframe_window.ims_end,
+        ims_min: denseframe_window.ims_min,
+        ims_max: denseframe_window.ims_max,
         mz_start: denseframe_window.mz_start,
         mz_end: denseframe_window.mz_end,
         group_id: denseframe_window.group_id,
@@ -306,7 +306,7 @@ impl<'a> Denoiser<'a, Frame, Vec<DenseFrameWindow>, Converters, Option<usize>>
     {
         info!("Denoising {} frames", elems.len());
 
-        let frame_window_slices = self.dia_frame_info.split_frame_windows(elems);
+        let frame_window_slices = self.dia_frame_info.split_frame_windows(&elems);
         let mut out = Vec::with_capacity(frame_window_slices.len());
         for sv in frame_window_slices {
             let progbar = indicatif::ProgressBar::new(sv.len() as u64);
@@ -314,8 +314,8 @@ impl<'a> Denoiser<'a, Frame, Vec<DenseFrameWindow>, Converters, Option<usize>>
                 .into_par_iter()
                 .progress_with(progbar)
                 .map(|x| {
-                    denoise_frame_window(
-                        x,
+                    denoise_frame_slice(
+                        &x,
                         &self.ims_converter,
                         &self.mz_converter,
                         &self.dia_frame_info,

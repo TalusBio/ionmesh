@@ -1,4 +1,3 @@
-
 use log::warn;
 use num_traits::AsPrimitive;
 
@@ -16,7 +15,10 @@ pub struct BTreeChromatogram {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct ChromatogramArray <T: Mul<Output = T> + AddAssign + Default + AsPrimitive<f32>, const NBINS: usize>{
+pub struct ChromatogramArray<
+    T: Mul<Output = T> + AddAssign + Default + AsPrimitive<f32>,
+    const NBINS: usize,
+> {
     pub chromatogram: [T; NBINS],
     pub rt_binsize: f32,
     pub rt_bin_offset: Option<f32>,
@@ -103,7 +105,7 @@ impl BTreeChromatogram {
         // Check that the bin size is almost the same
         let binsize_diff = (self.rt_binsize - other.rt_binsize).abs();
         if binsize_diff > 0.01 {
-            return None
+            return None;
         }
 
         // This would be the offset needed to align the two chromatograms
@@ -111,7 +113,8 @@ impl BTreeChromatogram {
         // be bin number `other_vs_self_offset` in other.
         // This line will also return None if either of the chromatograms
         // has no bin offset set.
-        let other_vs_self_offset = ((other.rt_bin_offset? - self.rt_bin_offset?) / self.rt_binsize) as i32;
+        let other_vs_self_offset =
+            ((other.rt_bin_offset? - self.rt_bin_offset?) / self.rt_binsize) as i32;
 
         let (min, max) = self.int_range()?;
         let (min_o, max_o) = other.int_range()?;
@@ -137,7 +140,10 @@ impl BTreeChromatogram {
         Some(cosine)
     }
 
-    pub fn as_chromatogram_array(&self, center_rt: Option<f32>) -> ChromatogramArray<f32, NUM_LOCAL_CHROMATOGRAM_BINS> {
+    pub fn as_chromatogram_array(
+        &self,
+        center_rt: Option<f32>,
+    ) -> ChromatogramArray<f32, NUM_LOCAL_CHROMATOGRAM_BINS> {
         let mut chromatogram_arr = [0.; NUM_LOCAL_CHROMATOGRAM_BINS];
 
         let max_chr_arr_width = NUM_LOCAL_CHROMATOGRAM_BINS as f32 * self.rt_binsize;
@@ -151,7 +157,8 @@ impl BTreeChromatogram {
         // The chromatogram uses the bin size of the chromatogram btree
         // but re-centers it to the mean RT of the trace
         if !self.btree.is_empty() {
-            let int_center = ((center_rt.unwrap_or(0.) - self.rt_bin_offset.unwrap()) / self.rt_binsize) as i32;
+            let int_center =
+                ((center_rt.unwrap_or(0.) - self.rt_bin_offset.unwrap()) / self.rt_binsize) as i32;
             let left_start = int_center - (NUM_LOCAL_CHROMATOGRAM_BINS / 2) as i32;
 
             for i in 0..NUM_LOCAL_CHROMATOGRAM_BINS {
@@ -168,13 +175,14 @@ impl BTreeChromatogram {
     }
 }
 
-impl<T: Mul<Output = T> + AddAssign + Default + AsPrimitive<f32>, const NBINS:usize> ChromatogramArray<T, NBINS> {
-
+impl<T: Mul<Output = T> + AddAssign + Default + AsPrimitive<f32>, const NBINS: usize>
+    ChromatogramArray<T, NBINS>
+{
     pub fn cosine_similarity(&self, other: &Self) -> Option<f32> {
         // Check that the bin size is almost the same
         let binsize_diff = (self.rt_binsize - other.rt_binsize).abs();
         if binsize_diff > 0.01 {
-            return None
+            return None;
         }
 
         // This would be the offset needed to align the two chromatograms
@@ -182,7 +190,8 @@ impl<T: Mul<Output = T> + AddAssign + Default + AsPrimitive<f32>, const NBINS:us
         // be bin number `other_vs_self_offset` in other.
         // This line will also return None if either of the chromatograms
         // has no bin offset set.
-        let other_vs_self_offset = ((other.rt_bin_offset? - self.rt_bin_offset?) / self.rt_binsize) as i32;
+        let other_vs_self_offset =
+            ((other.rt_bin_offset? - self.rt_bin_offset?) / self.rt_binsize) as i32;
 
         let mut dot = T::default();
         let mut mag_a = T::default();
@@ -247,7 +256,7 @@ mod chromatogram_tests {
     }
 
     #[test]
-    fn test_chromatogram_array_cosine(){
+    fn test_chromatogram_array_cosine() {
         let mut c = ChromatogramArray::<i32, 5> {
             chromatogram: [0; 5],
             rt_binsize: 1.,
@@ -277,7 +286,6 @@ mod chromatogram_tests {
         c.chromatogram[4] = 20;
         let cosine = c.cosine_similarity(&c2).unwrap();
         assert!(cosine <= 0.9, "Cosine: {}", cosine);
-
     }
 
     #[test]
@@ -304,7 +312,6 @@ mod chromatogram_tests {
         c.add(1., 2);
         c.add(2., 3);
         c.add(5., 5);
-
 
         let mut c2 = BTreeChromatogram::new(1., 1.55);
         // With bin offset of 1.55 and binsize 1.0, bin 0 is [1.55, 2.55)

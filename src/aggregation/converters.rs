@@ -1,7 +1,6 @@
-
 use crate::ms::frames::TimsPeak;
-use crate::space::space_generics::NDPointConverter;
 use crate::space::space_generics::NDPoint;
+use crate::space::space_generics::NDPointConverter;
 
 // https://github.com/rust-lang/rust/issues/35121
 // The never type is not stable yet....

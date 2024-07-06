@@ -1,4 +1,3 @@
-
 #[derive(Debug, Clone, Copy)]
 pub struct NDBoundary<const DIMENSIONALITY: usize> {
     pub starts: [f32; DIMENSIONALITY],

@@ -249,8 +249,6 @@ fn _dbscan<
         let mut seed_set: Vec<&usize> = Vec::new();
         seed_set.extend(neighbors);
 
-        let mut internal_neighbor_additions = 0;
-
         while let Some(neighbor) = seed_set.pop() {
             let neighbor_index = *neighbor;
             if cluster_labels[neighbor_index] == ClusterLabel::Noise {
@@ -316,7 +314,6 @@ fn _dbscan<
                 });
                 local_neighbor_filter_timer.stop(false);
 
-                internal_neighbor_additions += local_neighbors.len();
                 seed_set.extend(local_neighbors);
             }
         }
@@ -409,6 +406,7 @@ fn reassign_centroid<
     timer.stop(true);
     out
 }
+
 // TODO: rename prefiltered peaks argument!
 // TODO implement a version that takes a sparse distance matrix.
 

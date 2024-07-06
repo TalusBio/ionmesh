@@ -108,24 +108,31 @@ fn main() {
     }
 
     // TODO: consier moving this to the config struct as an implementation.
-    let out_path_scans = config.output_config.debug_scans_json.as_ref().map(|path| out_path_dir.join(path).to_path_buf());
-    let out_traces_path = config.output_config.debug_traces_csv.as_ref().map(|path| out_path_dir.join(path).to_path_buf());
-    let out_path_features = config.output_config.out_features_csv.as_ref().map(|path| out_path_dir.join(path).to_path_buf());
+    let out_path_scans = config
+        .output_config
+        .debug_scans_json
+        .as_ref()
+        .map(|path| out_path_dir.join(path).to_path_buf());
+    let out_traces_path = config
+        .output_config
+        .debug_traces_csv
+        .as_ref()
+        .map(|path| out_path_dir.join(path).to_path_buf());
+    let out_path_features = config
+        .output_config
+        .out_features_csv
+        .as_ref()
+        .map(|path| out_path_dir.join(path).to_path_buf());
 
     log::info!("Reading DIA data from: {}", path_use);
-    let (dia_frames, dia_info) = aggregation::ms_denoise::read_all_dia_denoising(
-        path_use.clone(),
-        config.denoise_config,
-    );
+    let (dia_frames, dia_info) =
+        aggregation::ms_denoise::read_all_dia_denoising(path_use.clone(), config.denoise_config);
 
     let cycle_time = dia_info.calculate_cycle_time();
 
     // TODO add here expansion limits
-    let mut traces = aggregation::tracing::combine_traces(
-        dia_frames,
-        config.tracing_config,
-        cycle_time,
-    );
+    let mut traces =
+        aggregation::tracing::combine_traces(dia_frames, config.tracing_config, cycle_time);
 
     let out = match out_traces_path {
         Some(out_path) => aggregation::tracing::write_trace_csv(&traces, out_path),
@@ -147,23 +154,19 @@ fn main() {
 
     // Maybe reparametrize as 1.1 cycle time
     // TODO add here expansion limits
-    let mut pseudoscans = aggregation::tracing::combine_pseudospectra(
-        traces,
-        config.pseudoscan_generation_config,
-    );
+    let mut pseudoscans =
+        aggregation::tracing::combine_pseudospectra(traces, config.pseudoscan_generation_config);
 
     // Report min/max/average/std and skew for ims and rt
     // This can probably be a macro ...
-    let ims_stats =
-        utils::get_stats(&pseudoscans.iter().map(|x| x.ims as f64).collect::<Vec<_>>());
+    let ims_stats = utils::get_stats(&pseudoscans.iter().map(|x| x.ims as f64).collect::<Vec<_>>());
     let ims_sd_stats = utils::get_stats(
         &pseudoscans
             .iter()
             .map(|x| x.ims_std as f64)
             .collect::<Vec<_>>(),
     );
-    let rt_stats =
-        utils::get_stats(&pseudoscans.iter().map(|x| x.rt as f64).collect::<Vec<_>>());
+    let rt_stats = utils::get_stats(&pseudoscans.iter().map(|x| x.rt as f64).collect::<Vec<_>>());
     let rt_sd_stats = utils::get_stats(
         &pseudoscans
             .iter()
