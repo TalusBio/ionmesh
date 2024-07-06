@@ -155,7 +155,7 @@ fn _dbscan<
 >(
     indexed_points: &'a T,
     prefiltered_peaks: &Vec<E>,
-    quad_points: &Vec<NDPoint<N>>,
+    quad_points: &[NDPoint<N>],
     min_n: usize,
     min_intensity: u64,
     intensity_sorted_indices: &Vec<(usize, I)>,
@@ -282,10 +282,8 @@ fn _dbscan<
 
             if local_neighbors.len() >= min_n && neighbor_intensity_total >= min_intensity {
                 // Keep only the neighbors that are not already in a cluster
-                local_neighbors.retain(|i| match cluster_labels[**i] {
-                    ClusterLabel::Cluster(_) => false,
-                    _ => true,
-                });
+                local_neighbors
+                    .retain(|i| !matches!(cluster_labels[**i], ClusterLabel::Cluster(_)));
 
                 // Keep only the neighbors that are within the max extension distance
                 // It might be worth setting a different max extension distance for the mz and mobility dimensions.
@@ -376,7 +374,7 @@ fn reassign_centroid<
     centroids: Vec<R>,
     indexed_points: &'a I,
     centroid_converter: C,
-    elements: &Vec<T>,
+    elements: &[T],
     def_aggregator: F,
     log_level: utils::LogLevel,
     expansion_factors: &[f32; N],

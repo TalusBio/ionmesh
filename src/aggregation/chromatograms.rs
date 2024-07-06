@@ -161,9 +161,13 @@ impl BTreeChromatogram {
                 ((center_rt.unwrap_or(0.) - self.rt_bin_offset.unwrap()) / self.rt_binsize) as i32;
             let left_start = int_center - (NUM_LOCAL_CHROMATOGRAM_BINS / 2) as i32;
 
-            for i in 0..NUM_LOCAL_CHROMATOGRAM_BINS {
+            for (i, item) in chromatogram_arr
+                .iter_mut()
+                .enumerate()
+                .take(NUM_LOCAL_CHROMATOGRAM_BINS)
+            {
                 let bin = left_start + i as i32;
-                chromatogram_arr[i] = *self.btree.get(&bin).unwrap_or(&0) as f32;
+                *item = *self.btree.get(&bin).unwrap_or(&0) as f32;
             }
         }
 
@@ -198,7 +202,7 @@ impl<T: Mul<Output = T> + AddAssign + Default + AsPrimitive<f32>, const NBINS: u
         let mut mag_b = T::default();
         for i in 0..NBINS {
             let other_index = i + other_vs_self_offset as usize;
-            if other_index >= other.chromatogram.len() || other_index < 0 {
+            if other_index >= other.chromatogram.len() {
                 continue;
             }
 

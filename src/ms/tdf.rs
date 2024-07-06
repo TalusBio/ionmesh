@@ -1,4 +1,4 @@
-use log::{debug, info, trace};
+use log::{debug, info};
 
 use sqlx::Pool;
 use sqlx::{FromRow, Sqlite, SqlitePool};
@@ -67,14 +67,14 @@ impl ScanRange {
     }
 }
 
-impl Into<FrameMsMsWindowInfo> for ScanRange {
-    fn into(self) -> FrameMsMsWindowInfo {
+impl From<ScanRange> for FrameMsMsWindowInfo {
+    fn from(val: ScanRange) -> Self {
         FrameMsMsWindowInfo {
-            mz_start: self.iso_low,
-            mz_end: self.iso_high,
-            window_group_id: self.window_group_id.into(),
-            within_window_quad_group_id: self.within_window_quad_group_id.into(),
-            global_quad_row_id: self.row_id.into(),
+            mz_start: val.iso_low,
+            mz_end: val.iso_high,
+            window_group_id: val.window_group_id,
+            within_window_quad_group_id: val.within_window_quad_group_id,
+            global_quad_row_id: val.row_id,
         }
     }
 }
@@ -197,7 +197,7 @@ impl DIAFrameInfo {
             let slice_w_info: MsMsFrameSliceWindowInfo =
                 MsMsFrameSliceWindowInfo::SingleWindow(scan_range.clone().into());
             let frame_slice = FrameSlice::slice_frame(
-                &frame,
+                frame,
                 scan_range.scan_start,
                 scan_range.scan_end,
                 Some(slice_w_info),
@@ -236,7 +236,7 @@ impl DIAFrameInfo {
                 }
                 GroupingLevel::QuadWindowGroup => {
                     let frame_windows = self
-                        .split_frame(&frame, group)
+                        .split_frame(frame, group)
                         .expect("Error splitting frame");
                     for frame_window in frame_windows {
                         match &frame_window.slice_window_info {

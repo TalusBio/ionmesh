@@ -79,7 +79,7 @@ fn _sanity_check_framestats(
     frame_stats_end: FrameStats,
     frame_index: usize,
 ) {
-    let intensity_ratio = frame_stats_end.tot_intensity / frame_stats_end.tot_intensity;
+    let intensity_ratio = frame_stats_start.tot_intensity / frame_stats_end.tot_intensity;
     let peak_ratio = frame_stats_end.num_peaks as f64 / frame_stats_start.num_peaks as f64;
 
     trace!(
@@ -354,10 +354,7 @@ pub fn read_all_ms1_denoising(
     let ims_converter = reader.get_scan_converter().unwrap();
     let mz_converter = reader.get_tof_converter().unwrap();
 
-    frames.retain(|frame| match frame.frame_type {
-        timsrust::FrameType::MS1 => true,
-        _ => false,
-    });
+    frames.retain(|frame| matches!(frame.frame_type, timsrust::FrameType::MS1));
 
     // let min_intensity = 100u64;
     // let min_n: usize = 3;
@@ -394,9 +391,11 @@ pub fn read_all_dia_denoising(
     let mz_converter = reader.get_tof_converter().unwrap();
     timer.stop(true);
 
-    frames.retain(|frame| match frame.frame_type {
-        timsrust::FrameType::MS2(timsrust::AcquisitionType::DIAPASEF) => true,
-        _ => false,
+    frames.retain(|frame| {
+        matches!(
+            frame.frame_type,
+            timsrust::FrameType::MS2(timsrust::AcquisitionType::DIAPASEF)
+        )
     });
 
     let denoiser = DIAFrameDenoiser {

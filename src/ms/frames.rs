@@ -112,12 +112,12 @@ impl<'a> FrameSlice<'a> {
         let tof_indices = &frame.tof_indices[indprt_start..indptr_end];
         let intensities = &frame.intensities[indprt_start..indptr_end];
         debug_assert!(tof_indices.len() == intensities.len());
-        debug_assert!(indptr_end - indprt_start == tof_indices.len() as usize);
+        debug_assert!(indptr_end - indprt_start == tof_indices.len());
         #[cfg(debug_assertions)]
         {
             for i in 1..(scan_offsets.len() - 1) {
                 debug_assert!(scan_offsets[i] <= scan_offsets[i + 1]);
-                debug_assert!((scan_offsets[i + 1] - scan_start) <= tof_indices.len() as usize);
+                debug_assert!((scan_offsets[i + 1] - scan_start) <= tof_indices.len());
             }
         }
 
@@ -129,7 +129,7 @@ impl<'a> FrameSlice<'a> {
             rt: frame.rt,
             frame_type: frame.frame_type,
             scan_start,
-            slice_window_info: slice_window_info,
+            slice_window_info,
         }
     }
 }
@@ -200,7 +200,7 @@ impl DenseFrameWindow {
             }
         };
 
-        let frame = DenseFrame::from_frame_window(&frame_window, ims_converter, mz_converter);
+        let frame = DenseFrame::from_frame_window(frame_window, ims_converter, mz_converter);
 
         DenseFrameWindow {
             frame,
@@ -280,7 +280,7 @@ impl DenseFrame {
                 info!("frame_window.scan_start: {}", frame_window.scan_start);
             }
             debug_assert!(ims >= 0.0);
-            expanded_scan_indices.extend(vec![ims; num_tofs as usize]);
+            expanded_scan_indices.extend(vec![ims; num_tofs]);
             last_scan_offset = *index_offset;
         }
         debug_assert!(last_scan_offset == frame_window.tof_indices.len());
@@ -314,12 +314,6 @@ impl DenseFrame {
             frame_type,
             sorted: None,
         }
-    }
-
-    fn concatenate(mut self, other: DenseFrame) -> DenseFrame {
-        self.raw_peaks.extend(other.raw_peaks);
-        self.sorted = None;
-        self
     }
 
     pub fn sort_by_mz(&mut self) {
