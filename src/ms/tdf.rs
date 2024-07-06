@@ -101,6 +101,14 @@ pub struct DIAFrameInfo {
     pub retention_times: Vec<Option<f32>>,
     pub grouping_level: GroupingLevel,
     pub number_of_groups: usize,
+
+    /// The row to group is meant to map the `Isolation window row id`
+    /// to the grouping level it will have... for diaPASEF, since every
+    /// scan range has a different quand window, the number of distinct
+    /// groups is the number of scan ranges (window groups+scan range
+    /// combinations). For the case of diagonal PASEF, the number of
+    /// groups is the number of window groups, since the scan ranges
+    /// are not independent from each other.
     pub row_to_group: Vec<usize>,
 }
 
@@ -184,10 +192,6 @@ impl DIAFrameInfo {
     where
         'a: 'b,
     {
-        // let group = self
-        //     .get_dia_frame_window_group(frame.index)
-        //     .expect("Frame not in DIA group, non splittable frame passed to split_frame.");
-
         let mut out_frames = Vec::new();
         for scan_range in window_group.scan_ranges.iter() {
             let slice_w_info: MsMsFrameSliceWindowInfo =
@@ -199,39 +203,6 @@ impl DIAFrameInfo {
                 Some(slice_w_info),
             );
             out_frames.push(frame_slice);
-
-            // TODO remove this old implementation
-            // for (i, scan_range) in window_group.scan_ranges.iter().enumerate() {
-
-            // scan_range.scan_start;
-            // scan_range.scan_end;
-
-            // let scan_offsets_use =
-            //     &frame.scan_offsets[scan_range.scan_start..(scan_range.scan_end - 1)];
-            // let scan_start = scan_offsets_use[0];
-            // let mz_indptr_start = scan_offsets_use[0];
-            // let mz_indptr_end = *scan_offsets_use.last().unwrap();
-
-            // let tof_indices_keep = frame.tof_indices[mz_indptr_start..mz_indptr_end].to_vec();
-            // let intensities_keep = frame.intensities[mz_indptr_start..mz_indptr_end].to_vec();
-
-            // let frame_window = FrameSlice {
-            //     scan_offsets: scan_offsets_use
-            //         .iter()
-            //         .map(|x| (x - scan_start) as u64)
-            //         .collect::<Vec<_>>(),
-            //     tof_indices: tof_indices_keep,
-            //     intensities: intensities_keep,
-            //     index: frame.index,
-            //     rt: frame.rt,
-            //     frame_type: frame.frame_type,
-            //     scan_start: scan_range.scan_start,
-            //     group_id: window_group.id,
-            //     quad_group_id: i,
-            //     quad_row_id: scan_range.row_id,
-            // };
-
-            // out_frames.push(frame_window);
         }
 
         Ok(out_frames)
@@ -390,7 +361,8 @@ impl DiaFrameMsMsWindowInfo {
     }
 }
 
-struct FrameInfoBuilder {
+#[derive(Debug)]
+pub struct FrameInfoBuilder {
     pub tdf_path: String,
     pub scan_converter: timsrust::Scan2ImConverter,
 }
