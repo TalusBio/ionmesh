@@ -457,7 +457,7 @@ fn _combine_single_window_traces(
             quad_low_high: window_quad_low_high,
             btree_chromatogram: BTreeChromatogram::new_lazy(rt_binsize),
         },
-        None::<&FFTimeTimsPeak>,
+        None::<&(dyn Fn(&TimeTimsPeak, &TimeTimsPeak) -> bool + Send + Sync)>,
         None,
         false,
         &max_extension_distances,

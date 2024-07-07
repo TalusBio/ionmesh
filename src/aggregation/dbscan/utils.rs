@@ -1,48 +1,43 @@
 use std::collections::BTreeMap;
 
-pub struct FilterFunCache<'a> {
+pub struct FilterFunCache {
     cache: Vec<Option<BTreeMap<usize, bool>>>,
-    filter_fun: Box<&'a dyn Fn(&usize, &usize) -> bool>,
     tot_queries: u64,
     cached_queries: u64,
 }
 
-impl<'a> FilterFunCache<'a> {
-    pub fn new(filter_fun: Box<&'a dyn Fn(&usize, &usize) -> bool>, capacity: usize) -> Self {
+impl FilterFunCache {
+    pub fn new(capacity: usize) -> Self {
         Self {
             cache: vec![None; capacity],
-            filter_fun,
             tot_queries: 0,
             cached_queries: 0,
         }
     }
 
-    pub fn get(&mut self, elem_idx: usize, reference_idx: usize) -> bool {
-        // Get the value if it exists, call the functon, insert it and
-        // return it if it doesn't.
+    pub fn get(&mut self, elem_idx: usize, reference_idx: usize) -> Option<bool> {
         self.tot_queries += 1;
 
-        let out: bool = match self.cache[elem_idx] {
+        let out: Option<bool> = match self.cache[elem_idx] {
             Some(ref map) => match map.get(&reference_idx) {
                 Some(x) => {
                     self.cached_queries += 1;
-                    *x
+                    Some(*x)
                 }
-                None => {
-                    let out: bool = (self.filter_fun)(&elem_idx, &reference_idx);
-                    self.insert(elem_idx, reference_idx, out);
-                    self.insert(reference_idx, elem_idx, out);
-                    out
-                }
+                None => None,
             },
-            None => {
-                let out = (self.filter_fun)(&elem_idx, &reference_idx);
-                self.insert(elem_idx, reference_idx, out);
-                self.insert(reference_idx, elem_idx, out);
-                out
-            }
+            None => None,
         };
         out
+    }
+
+    pub fn set(&mut self, elem_idx: usize, reference_idx: usize, value: bool) {
+        self.insert_both_ways(elem_idx, reference_idx, value);
+    }
+
+    fn insert_both_ways(&mut self, elem_idx: usize, reference_idx: usize, value: bool) {
+        self.insert(elem_idx, reference_idx, value);
+        self.insert(reference_idx, elem_idx, value);
     }
 
     fn insert(&mut self, elem_idx: usize, reference_idx: usize, value: bool) {

@@ -1,13 +1,12 @@
 use crate::ms::frames::TimsPeak;
 use crate::space::space_generics::HasIntensity;
 use crate::utils;
-use std::ops::Add;
 
 use rayon::prelude::*;
 
 // I Dont really like having this here but I am not sure where else to
 // define it ... since its needed by the aggregation functions
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum ClusterLabel<T> {
     Unassigned,
     Noise,

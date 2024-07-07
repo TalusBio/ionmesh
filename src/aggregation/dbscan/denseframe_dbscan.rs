@@ -4,7 +4,6 @@ use crate::aggregation::dbscan::dbscan::dbscan_generic;
 use crate::ms::frames::{DenseFrame, TimsPeak};
 use crate::utils::within_distance_apply;
 
-type FFTimsPeak = fn(&TimsPeak, &TimsPeak) -> bool;
 // <FF: Send + Sync + Fn(&TimsPeak, &TimsPeak) -> bool>
 pub fn dbscan_denseframe(
     mut denseframe: DenseFrame,
@@ -51,7 +50,7 @@ pub fn dbscan_denseframe(
         min_n,
         min_intensity,
         TimsPeakAggregator::default,
-        None::<&FFTimsPeak>,
+        None::<&(dyn Fn(&TimsPeak, &TimsPeak) -> bool + Send + Sync)>,
         None,
         true,
         &[max_mz_extension as f32, max_ims_extension],
