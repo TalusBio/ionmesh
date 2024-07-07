@@ -1,4 +1,4 @@
-use crate::space::space_generics::{IndexedPoints, NDBoundary, NDPoint};
+use crate::space::space_generics::{NDBoundary, NDPoint, QueriableIndexedPoints};
 use log::warn;
 
 // Implements a kdtree with several minor differences.
@@ -250,7 +250,7 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
     }
 }
 
-impl<'a, T, const D: usize> IndexedPoints<'a, D, T> for RadiusKDTree<'a, T, D> {
+impl<'a, T, const D: usize> QueriableIndexedPoints<'a, D, T> for RadiusKDTree<'a, T, D> {
     fn query_ndpoint(&'a self, point: &NDPoint<D>) -> Vec<&'a T> {
         self.query(point)
     }

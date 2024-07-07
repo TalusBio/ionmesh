@@ -1,8 +1,7 @@
 use crate::ms::frames::TimsPeak;
 use crate::space::space_generics::HasIntensity;
 use crate::utils;
-use num::cast::AsPrimitive;
-use std::ops::{Add, Div, Mul, Sub};
+use std::ops::Add;
 
 use rayon::prelude::*;
 
@@ -23,7 +22,7 @@ pub enum ClusterLabel<T> {
 /// R: The type of the aggregated point.
 /// S: The type of the aggregator.
 ///
-pub trait ClusterAggregator<T, R> {
+pub trait ClusterAggregator<T, R>: Send + Sync {
     fn add(&mut self, elem: &T);
     fn aggregate(&self) -> R;
     fn combine(self, other: Self) -> Self;
@@ -69,19 +68,10 @@ impl ClusterAggregator<TimsPeak, TimsPeak> for TimsPeakAggregator {
 }
 
 pub fn aggregate_clusters<
-    T: HasIntensity<Z> + Send + Clone + Copy,
+    T: HasIntensity + Send + Clone + Copy,
     G: Sync + Send + ClusterAggregator<T, R>,
     R: Send,
     F: Fn() -> G + Send + Sync,
-    Z: AsPrimitive<u64>
-        + Send
-        + Sync
-        + Add<Output = Z>
-        + PartialOrd
-        + Div<Output = Z>
-        + Mul<Output = Z>
-        + Default
-        + Sub<Output = Z>,
 >(
     tot_clusters: u64,
     cluster_labels: Vec<ClusterLabel<u64>>,

@@ -1,4 +1,4 @@
-use crate::space::space_generics::{IndexedPoints, NDBoundary, NDPoint};
+use crate::space::space_generics::{NDBoundary, NDPoint, QueriableIndexedPoints};
 use core::panic;
 use log::trace;
 
@@ -240,7 +240,7 @@ impl<'a, T> RadiusQuadTree<'a, T> {
 // TODO: rename count_neigh_monotonocally_increasing
 // because it can do more than just count neighbors....
 
-impl<'a, T> IndexedPoints<'a, 2, T> for RadiusQuadTree<'a, T> {
+impl<'a, T> QueriableIndexedPoints<'a, 2, T> for RadiusQuadTree<'a, T> {
     fn query_ndpoint(&'a self, point: &NDPoint<2>) -> Vec<&'a T> {
         self.query(point)
             .into_iter()

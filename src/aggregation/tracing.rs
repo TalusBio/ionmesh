@@ -2,7 +2,7 @@ use crate::aggregation::aggregators::ClusterAggregator;
 use crate::aggregation::chromatograms::{
     BTreeChromatogram, ChromatogramArray, NUM_LOCAL_CHROMATOGRAM_BINS,
 };
-use crate::aggregation::dbscan::dbscan_generic;
+use crate::aggregation::dbscan::dbscan::dbscan_generic;
 use crate::ms::frames::DenseFrameWindow;
 use crate::space::space_generics::NDBoundary;
 use crate::space::space_generics::{HasIntensity, NDPoint, NDPointConverter, TraceLike};
@@ -119,16 +119,9 @@ pub struct TimeTimsPeak {
     pub n_peaks: u32,
 }
 
-impl HasIntensity<u32> for TimeTimsPeak {
-    fn intensity(&self) -> u32 {
-        let o = self.intensity.try_into();
-        match o {
-            Ok(x) => x,
-            Err(_) => {
-                error!("Intensity overflowed u32");
-                u32::MAX
-            }
-        }
+impl HasIntensity for TimeTimsPeak {
+    fn intensity(&self) -> u64 {
+        self.intensity
     }
 }
 
@@ -179,7 +172,7 @@ impl BaseTrace {
     }
 }
 
-impl HasIntensity<u64> for BaseTrace {
+impl HasIntensity for BaseTrace {
     fn intensity(&self) -> u64 {
         self.intensity
     }

@@ -1,25 +1,16 @@
-use std::collections::BTreeMap;
-use std::ops::{Add, Div, Mul, Sub};
-
-use crate::ms::frames::TimsPeak;
-use crate::space::space_generics::NDPointConverter;
-use crate::utils;
-use crate::utils::within_distance_apply;
-
-use crate::aggregation::aggregators::{
-    aggregate_clusters, ClusterAggregator, ClusterLabel, TimsPeakAggregator,
+use crate::aggregation::aggregators::{aggregate_clusters, ClusterAggregator, ClusterLabel};
+use crate::space::kdtree::RadiusKDTree;
+use crate::space::space_generics::{
+    HasIntensity, NDPoint, NDPointConverter, QueriableIndexedPoints,
 };
-use crate::aggregation::converters::{BypassDenseFrameBackConverter, DenseFrameConverter};
-use crate::ms::frames;
-use crate::space::space_generics::{HasIntensity, IndexedPoints, NDPoint};
+use crate::utils;
 use indicatif::ProgressIterator;
 use log::{debug, info, trace};
-
-use rayon::prelude::*;
-
-use crate::space::kdtree::RadiusKDTree;
-
 use num::cast::AsPrimitive;
+use rayon::prelude::*;
+use std::ops::Add;
+
+use crate::aggregation::dbscan::utils::FilterFunCache;
 
 /// Density-based spatial clustering of applications with noise (DBSCAN)
 ///
@@ -58,99 +49,65 @@ use num::cast::AsPrimitive;
 /// 3. Use an intensity threshold intead of a minimum number of neighbors.
 /// 4. There are ways to define the limits to the extension of a cluster.
 
-impl HasIntensity<u32> for frames::TimsPeak {
-    fn intensity(&self) -> u32 {
-        self.intensity
-    }
-}
-
-struct FilterFunCache<'a> {
-    cache: Vec<Option<BTreeMap<usize, bool>>>,
-    filter_fun: Box<&'a dyn Fn(&usize, &usize) -> bool>,
-    tot_queries: u64,
-    cached_queries: u64,
-}
-
-impl<'a> FilterFunCache<'a> {
-    fn new(filter_fun: Box<&'a dyn Fn(&usize, &usize) -> bool>, capacity: usize) -> Self {
-        Self {
-            cache: vec![None; capacity],
-            filter_fun,
-            tot_queries: 0,
-            cached_queries: 0,
-        }
-    }
-
-    fn get(&mut self, elem_idx: usize, reference_idx: usize) -> bool {
-        // Get the value if it exists, call the functon, insert it and
-        // return it if it doesn't.
-        self.tot_queries += 1;
-
-        let out: bool = match self.cache[elem_idx] {
-            Some(ref map) => match map.get(&reference_idx) {
-                Some(x) => {
-                    self.cached_queries += 1;
-                    *x
-                }
-                None => {
-                    let out: bool = (self.filter_fun)(&elem_idx, &reference_idx);
-                    self.insert(elem_idx, reference_idx, out);
-                    self.insert(reference_idx, elem_idx, out);
-                    out
-                }
-            },
-            None => {
-                let out = (self.filter_fun)(&elem_idx, &reference_idx);
-                self.insert(elem_idx, reference_idx, out);
-                self.insert(reference_idx, elem_idx, out);
-                out
-            }
-        };
-        out
-    }
-
-    fn insert(&mut self, elem_idx: usize, reference_idx: usize, value: bool) {
-        match self.cache[elem_idx] {
-            Some(ref mut map) => {
-                _ = map.insert(reference_idx, value);
-            }
-            None => {
-                let mut map = BTreeMap::new();
-                map.insert(reference_idx, value);
-                self.cache[elem_idx] = Some(map);
-            }
-        }
-    }
-
-    fn get_stats(&self) -> (u64, u64) {
-        (self.tot_queries, self.cached_queries)
-    }
-}
-
 // TODO: rename quad_points, since this no longer uses a quadtree.
 // TODO: refactor to take a filter function instead of requiting
 //       a min intensity and an intensity trait.
 // TODO: rename the pre-filtered...
 // TODO: reimplement this a two-stage pass, where the first in parallel
 //       gets the neighbors and the second does the iterative aggregation.
+// THERE BE DRAGONS in this function ... I am thinking about sane ways to
+// refactor it to make it more readable and maintainable.
+
+struct DBScanTimers {
+    main: utils::ContextTimer,
+    filter_fun_cache_timer: utils::ContextTimer,
+    outer_loop_nn_timer: utils::ContextTimer,
+    inner_loop_nn_timer: utils::ContextTimer,
+    local_neighbor_filter_timer: utils::ContextTimer,
+    outer_intensity_calculation: utils::ContextTimer,
+    inner_intensity_calculation: utils::ContextTimer,
+}
+
+impl DBScanTimers {
+    fn new() -> Self {
+        let mut timer = utils::ContextTimer::new("internal_dbscan", false, utils::LogLevel::DEBUG);
+        let mut filter_fun_cache_timer = timer.start_sub_timer("filter_fun_cache");
+        let mut outer_loop_nn_timer = timer.start_sub_timer("outer_loop_nn");
+        let mut inner_loop_nn_timer = timer.start_sub_timer("inner_loop_nn");
+        let mut local_neighbor_filter_timer = timer.start_sub_timer("local_neighbor_filter");
+        let mut outer_intensity_calculation = timer.start_sub_timer("outer_intensity_calculation");
+        let mut inner_intensity_calculation = timer.start_sub_timer("inner_intensity_calculation");
+        Self {
+            main: timer,
+            filter_fun_cache_timer,
+            outer_loop_nn_timer,
+            inner_loop_nn_timer,
+            local_neighbor_filter_timer,
+            outer_intensity_calculation,
+            inner_intensity_calculation,
+        }
+    }
+
+    fn report_if_gt_us(self, min_time: f64) {
+        if self.timer.cumtime.as_micros() > min_time {
+            self.main.report();
+            self.filter_fun_cache_timer.report();
+            self.outer_loop_nn_timer.report();
+            self.inner_loop_nn_timer.report();
+            self.local_neighbor_filter_timer.report();
+            self.outer_intensity_calculation.report();
+            self.inner_intensity_calculation.report();
+        }
+    }
+}
 
 // THIS IS A BOTTLENECK FUNCTION
 fn _dbscan<
     'a,
     const N: usize,
     C: NDPointConverter<E, N>,
-    I: Div<Output = I>
-        + Add<Output = I>
-        + Mul<Output = I>
-        + Sub<Output = I>
-        + Default
-        + Copy
-        + PartialOrd<I>
-        + AsPrimitive<u64>
-        + Send
-        + Sync,
-    E: Sync + HasIntensity<I>,
-    T: IndexedPoints<'a, N, usize> + std::marker::Sync,
+    E: Sync + HasIntensity,
+    T: QueriableIndexedPoints<'a, N, usize> + std::marker::Sync,
     FF: Fn(&E, &E) -> bool + Send + Sync + Copy,
 >(
     indexed_points: &'a T,
@@ -158,7 +115,7 @@ fn _dbscan<
     quad_points: &[NDPoint<N>],
     min_n: usize,
     min_intensity: u64,
-    intensity_sorted_indices: &Vec<(usize, I)>,
+    intensity_sorted_indices: &Vec<(usize, u64)>,
     filter_fun: Option<FF>,
     converter: C,
     progress: bool,
@@ -169,15 +126,7 @@ fn _dbscan<
 
     let mut cluster_labels = vec![ClusterLabel::Unassigned; prefiltered_peaks.len()];
     let mut cluster_id = 0;
-
-    let mut timer = utils::ContextTimer::new("internal_dbscan", false, utils::LogLevel::DEBUG);
-
-    let mut filter_fun_cache_timer = timer.start_sub_timer("filter_fun_cache");
-    let mut outer_loop_nn_timer = timer.start_sub_timer("outer_loop_nn");
-    let mut inner_loop_nn_timer = timer.start_sub_timer("inner_loop_nn");
-    let mut local_neighbor_filter_timer = timer.start_sub_timer("local_neighbor_filter");
-    let mut outer_intensity_calculation = timer.start_sub_timer("outer_intensity_calculation");
-    let mut inner_intensity_calculation = timer.start_sub_timer("inner_intensity_calculation");
+    let mut timers = DBScanTimers::new();
 
     let usize_filterfun = |a: &usize, b: &usize| {
         filter_fun.expect("filter_fun should be Some")(
@@ -188,9 +137,9 @@ fn _dbscan<
     let mut filterfun_cache =
         FilterFunCache::new(Box::new(&usize_filterfun), prefiltered_peaks.len());
     let mut filterfun_with_cache = |elem_idx: usize, reference_idx: usize| {
-        filter_fun_cache_timer.reset_start();
+        timers.filter_fun_cache_timer.reset_start();
         let out = filterfun_cache.get(elem_idx, reference_idx);
-        filter_fun_cache_timer.stop(false);
+        timers.filter_fun_cache_timer.stop(false);
         out
     };
 
@@ -206,10 +155,10 @@ fn _dbscan<
             continue;
         }
 
-        outer_loop_nn_timer.reset_start();
+        timers.outer_loop_nn_timer.reset_start();
         let query_elems = converter.convert_to_bounds_query(&quad_points[point_index]);
         let mut neighbors = indexed_points.query_ndrange(&query_elems.0, query_elems.1);
-        outer_loop_nn_timer.stop(false);
+        timers.outer_loop_nn_timer.stop(false);
 
         if neighbors.len() < min_n {
             cluster_labels[point_index] = ClusterLabel::Noise;
@@ -232,12 +181,12 @@ fn _dbscan<
         }
 
         // Q: Do I need to care about overflows here? - Sebastian
-        outer_intensity_calculation.reset_start();
+        timers.outer_intensity_calculation.reset_start();
         let neighbor_intensity_total = neighbors
             .iter()
             .map(|i| prefiltered_peaks[**i].intensity().as_())
             .sum::<u64>();
-        outer_intensity_calculation.stop(false);
+        timers.outer_intensity_calculation.stop(false);
 
         if neighbor_intensity_total < min_intensity {
             cluster_labels[point_index] = ClusterLabel::Noise;
@@ -261,24 +210,24 @@ fn _dbscan<
 
             cluster_labels[neighbor_index] = ClusterLabel::Cluster(cluster_id);
 
-            inner_loop_nn_timer.reset_start();
+            timers.inner_loop_nn_timer.reset_start();
             let inner_query_elems = converter.convert_to_bounds_query(&quad_points[*neighbor]);
             let mut local_neighbors =
                 indexed_points.query_ndrange(&inner_query_elems.0, inner_query_elems.1);
-            inner_loop_nn_timer.stop(false);
+            timers.inner_loop_nn_timer.stop(false);
 
             if filter_fun.is_some() {
                 local_neighbors.retain(|i| filterfun_with_cache(**i, point_index))
                 // .filter(|i| filter_fun.unwrap()(&prefiltered_peaks[**i], &query_peak))
             }
 
-            inner_intensity_calculation.reset_start();
+            timers.inner_intensity_calculation.reset_start();
             let query_intensity = prefiltered_peaks[neighbor_index].intensity();
             let neighbor_intensity_total = local_neighbors
                 .iter()
                 .map(|i| prefiltered_peaks[**i].intensity().as_())
                 .sum::<u64>();
-            inner_intensity_calculation.stop(false);
+            timers.inner_intensity_calculation.stop(false);
 
             if local_neighbors.len() >= min_n && neighbor_intensity_total >= min_intensity {
                 // Keep only the neighbors that are not already in a cluster
@@ -287,7 +236,7 @@ fn _dbscan<
 
                 // Keep only the neighbors that are within the max extension distance
                 // It might be worth setting a different max extension distance for the mz and mobility dimensions.
-                local_neighbor_filter_timer.reset_start();
+                timers.local_neighbor_filter_timer.reset_start();
                 local_neighbors.retain(|i| {
                     let going_downhill = prefiltered_peaks[**i].intensity() <= query_intensity;
 
@@ -310,14 +259,14 @@ fn _dbscan<
 
                     going_downhill && within_distance
                 });
-                local_neighbor_filter_timer.stop(false);
+                timers.local_neighbor_filter_timer.stop(false);
 
                 seed_set.extend(local_neighbors);
             }
         }
     }
 
-    let (tot_queries, cached_queries) = filterfun_cache.get_stats();
+    let (tot_queries, cached_queries) = timers.filterfun_cache.get_stats();
 
     if tot_queries > 1000 {
         let cache_hit_rate = cached_queries as f64 / tot_queries as f64;
@@ -334,16 +283,8 @@ fn _dbscan<
         );
     }
 
-    timer.stop(false);
-    if timer.cumtime.as_micros() > 1000000 {
-        timer.report();
-        filter_fun_cache_timer.report();
-        outer_loop_nn_timer.report();
-        inner_loop_nn_timer.report();
-        local_neighbor_filter_timer.report();
-        outer_intensity_calculation.report();
-        inner_intensity_calculation.report();
-    }
+    timers.main.stop(false);
+    timers.report_if_gt_us(1000000);
 
     (cluster_id, cluster_labels)
 }
@@ -355,21 +296,12 @@ fn _dbscan<
 fn reassign_centroid<
     'a,
     const N: usize,
-    T: HasIntensity<Z> + Send + Clone + Copy,
+    T: HasIntensity + Send + Clone + Copy,
     C: NDPointConverter<R, N>,
-    I: IndexedPoints<'a, N, usize> + std::marker::Sync,
+    I: QueriableIndexedPoints<'a, N, usize> + std::marker::Sync,
     G: Sync + Send + ClusterAggregator<T, R>,
     R: Send,
     F: Fn() -> G + Send + Sync,
-    Z: AsPrimitive<u64>
-        + Send
-        + Sync
-        + Add<Output = Z>
-        + PartialOrd
-        + Div<Output = Z>
-        + Mul<Output = Z>
-        + Default
-        + Sub<Output = Z>,
 >(
     centroids: Vec<R>,
     indexed_points: &'a I,
@@ -413,19 +345,9 @@ pub fn dbscan_generic<
     C2: NDPointConverter<R, N>,
     R: Send,
     G: Sync + Send + ClusterAggregator<T, R>,
-    T: HasIntensity<Z> + Send + Clone + Copy + Sync,
+    T: HasIntensity + Send + Clone + Copy + Sync,
     F: Fn() -> G + Send + Sync,
     const N: usize,
-    // Z is usually u32 or u64
-    Z: AsPrimitive<u64>
-        + Send
-        + Sync
-        + Add<Output = Z>
-        + PartialOrd
-        + Div<Output = Z>
-        + Mul<Output = Z>
-        + Default
-        + Sub<Output = Z>,
     FF: Send + Sync + Fn(&T, &T) -> bool,
 >(
     converter: C,
@@ -504,68 +426,5 @@ pub fn dbscan_generic<
             max_extension_distances,
         ),
         None => centroids,
-    }
-}
-
-type FFTimsPeak = fn(&TimsPeak, &TimsPeak) -> bool;
-// <FF: Send + Sync + Fn(&TimsPeak, &TimsPeak) -> bool>
-pub fn dbscan_denseframe(
-    mut denseframe: frames::DenseFrame,
-    mz_scaling: f64,
-    max_mz_extension: f64,
-    ims_scaling: f32,
-    max_ims_extension: f32,
-    min_n: usize,
-    min_intensity: u64,
-) -> frames::DenseFrame {
-    let out_frame_type: timsrust::FrameType = denseframe.frame_type;
-    let out_rt: f64 = denseframe.rt;
-    let out_index: usize = denseframe.index;
-
-    let prefiltered_peaks = {
-        denseframe.sort_by_mz();
-
-        let keep_vector = within_distance_apply(
-            &denseframe.raw_peaks,
-            &|peak| peak.mz,
-            &mz_scaling,
-            &|i_right, i_left| (i_right - i_left) >= min_n,
-        );
-
-        // Filter the peaks and replace the raw peaks with the filtered peaks.
-
-        denseframe
-            .raw_peaks
-            .clone()
-            .into_iter()
-            .zip(keep_vector)
-            .filter(|(_, b)| *b)
-            .map(|(peak, _)| peak) // Clone the TimsPeak
-            .collect::<Vec<_>>()
-    };
-
-    let converter = DenseFrameConverter {
-        mz_scaling,
-        ims_scaling,
-    };
-    let peak_vec: Vec<TimsPeak> = dbscan_generic(
-        converter,
-        prefiltered_peaks,
-        min_n,
-        min_intensity,
-        TimsPeakAggregator::default,
-        None::<&FFTimsPeak>,
-        None,
-        true,
-        &[max_mz_extension as f32, max_ims_extension],
-        None::<BypassDenseFrameBackConverter>,
-    );
-
-    frames::DenseFrame {
-        raw_peaks: peak_vec,
-        index: out_index,
-        rt: out_rt,
-        frame_type: out_frame_type,
-        sorted: None,
     }
 }

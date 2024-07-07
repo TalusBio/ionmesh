@@ -1,6 +1,6 @@
 use core::panic;
 
-use crate::aggregation::dbscan;
+use crate::aggregation::dbscan::denseframe_dbscan::dbscan_denseframe;
 use crate::ms::frames::Converters;
 use crate::ms::frames::DenseFrame;
 use crate::ms::frames::DenseFrameWindow;
@@ -117,7 +117,7 @@ fn _denoise_denseframe(
     let index = frame.index;
 
     // this is the line that matters
-    let denoised_frame = dbscan::dbscan_denseframe(
+    let denoised_frame = dbscan_denseframe(
         frame,
         mz_scaling,
         max_mz_extension,
@@ -253,7 +253,7 @@ struct FrameDenoiser {
 
 impl<'a> Denoiser<'a, Frame, DenseFrame, Converters, Option<usize>> for FrameDenoiser {
     fn denoise(&self, frame: Frame) -> DenseFrame {
-        let denseframe = DenseFrame::new(&frame, &self.ims_converter, &self.mz_converter);
+        let denseframe = DenseFrame::from_frame(&frame, &self.ims_converter, &self.mz_converter);
         _denoise_denseframe(
             denseframe,
             self.min_n,

@@ -91,7 +91,7 @@ pub struct NDPoint<const DIMENSIONALITY: usize> {
 }
 
 // Q: is there any instance where T is not usize?
-pub trait IndexedPoints<'a, const N: usize, T> {
+pub trait QueriableIndexedPoints<'a, const N: usize, T> {
     fn query_ndpoint(&'a self, point: &NDPoint<N>) -> Vec<&'a T>;
     fn query_ndrange(
         &'a self,
@@ -100,17 +100,20 @@ pub trait IndexedPoints<'a, const N: usize, T> {
     ) -> Vec<&'a T>;
 }
 
-pub trait HasIntensity<T>
-where
-    T: Copy
-        + PartialOrd
-        + std::ops::Add<Output = T>
-        + std::ops::Sub<Output = T>
-        + std::ops::Mul<Output = T>
-        + std::ops::Div<Output = T>
-        + Default,
-{
-    fn intensity(&self) -> T;
+pub trait AsNDPoints<const D: usize> {
+    fn get_ndpoint(&self, index: usize) -> NDPoint<D>;
+    fn num_ndpoints(&self) -> usize;
+    fn intensity_at(&self, index: usize) -> u64;
+    fn weight_at(&self, index: usize) -> u64 {
+        self.intensity_at(index)
+    }
+}
+
+pub trait HasIntensity: Sync {
+    fn intensity(&self) -> u64;
+    fn weight(&self) -> u64 {
+        self.intensity()
+    }
 }
 
 pub trait TraceLike<R: std::convert::Into<f64>> {

@@ -5,6 +5,7 @@ pub use timsrust::{
 };
 
 use crate::ms::tdf::{DIAFrameInfo, ScanRange};
+use crate::space::space_generics::HasIntensity;
 
 use log::info;
 
@@ -14,6 +15,12 @@ pub struct TimsPeak {
     pub mz: f64,
     pub mobility: f32,
     pub npeaks: u32,
+}
+
+impl HasIntensity for TimsPeak {
+    fn intensity(&self) -> u64 {
+        self.intensity as u64
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -50,6 +57,73 @@ pub struct FrameMsMsWindowInfo {
     pub global_quad_row_id: usize,
 }
 
+pub trait FramePointTolerance {
+    fn tof_index_range(&self, tof_index: u32) -> (u32, u32);
+    fn scan_range(&self, scan_index: usize) -> (usize, usize);
+}
+
+struct AbsoluteFramePointTolerance {
+    tof_index_tolerance: u32,
+    scan_tolerance: usize,
+}
+
+impl FramePointTolerance for AbsoluteFramePointTolerance {
+    fn tof_index_range(&self, tof_index: u32) -> (u32, u32) {
+        let tof_index_tolerance = self.tof_index_tolerance;
+        (
+            tof_index.saturating_sub(tof_index_tolerance),
+            tof_index.saturating_add(tof_index_tolerance),
+        )
+    }
+
+    fn scan_range(&self, scan_index: usize) -> (usize, usize) {
+        let scan_tolerance = self.scan_tolerance;
+        (
+            scan_index.saturating_sub(scan_tolerance),
+            scan_index + scan_tolerance,
+        )
+    }
+}
+
+type Range = (usize, usize);
+
+pub struct RangeSet {
+    ranges: Vec<Range>,
+    offset: usize,
+}
+
+impl RangeSet {
+    fn extend(&mut self, other: RangeSet) {
+        let new_offset = self.offset.min(other.offset);
+        let vs_self_offset = self.offset - new_offset;
+        let vs_other_offset = other.offset - new_offset;
+
+        for item in self.ranges.iter_mut() {
+            item.0 += vs_self_offset;
+            item.1 += vs_self_offset;
+        }
+
+        for item in other.ranges.iter() {
+            self.ranges
+                .push((item.0 + vs_other_offset, item.1 + vs_other_offset));
+        }
+
+        self.ranges.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    }
+
+    fn any_overlap(&self) -> bool {
+        let mut last_end = 0;
+
+        for range in self.ranges.iter() {
+            if range.0 < last_end {
+                return true;
+            }
+            last_end = range.1;
+        }
+        false
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum MsMsFrameSliceWindowInfo {
     WindowGroup(usize),
@@ -61,10 +135,15 @@ pub enum MsMsFrameSliceWindowInfo {
 /// 1. every tof-index + intensity represents a peak.
 /// 2. Scan offsets are monotonically increasing.
 /// 3. Peaks are arranged in increasing m/z order WITHIN a scan.
-/// 4. Getting the peaks for scan #x in the frame is done by subsetting
-///    the tof indices and intensities.
-///     - scan_1_intensities = intensities[scan_offsets[1]:scan_offsets[2]]
-///     - scan_x_intensities = intensities[scan_offsets[x]:scan_offsets[x+1]]
+/// 4. Getting the peaks for scan #x in the frame_slice is done by subsetting
+///    the tof indices and intensities, and subtracting the offset of the first
+///    scan.
+///     - scan_1_intensities = intensities[scan_offsets[1]-scan_offsets[0]:scan_offsets[2]-scan_offsets[0]]
+///     - scan_x_intensities = intensities[scan_offsets[x]-scan_offsets[0]:scan_offsets[x+1]-scan_offsets[0]]
+///     - NOTE: to get the peaks in the scan #y IN THE FRAME (not the frame slice)
+///       you need to add to subtract the scan_start from the scan number.
+///         - scan_y_intensities = intensities[scan_offsets[y-scan_start]-scan_offsets[0]:scan_offsets[y-scan_start+1]-scan_offsets[0]]
+///         - Then obviously, scans < scan_start are not in the frame slice.
 /// 5. The m/z values are a function of the tof indices (the measured m/z
 ///    of tof index `x` will be the same within the same run/instrument
 ///    calibration)
@@ -130,6 +209,149 @@ impl<'a> FrameSlice<'a> {
             frame_type: frame.frame_type,
             scan_start,
             slice_window_info,
+        }
+    }
+
+    /// Get the global scan number at the local index.
+    ///
+    /// This means that ... provided the index of a tof index in the frame slice,
+    /// this function will return the global scan number that tof index would belong
+    /// to... in other words, "what is the scan number in the parent frame where peak
+    /// number `x` in the frame slice would be found in the parent frame?"
+    pub fn global_scan_at_index(&self, local_index: usize) -> usize {
+        let search_val = self.scan_offsets[0] + local_index;
+        let loc = self
+            .scan_offsets
+            .binary_search_by(|x| x.partial_cmp(&search_val).unwrap());
+        let local_scan_index = match loc {
+            Ok(mut x) => {
+                while x > 0 && self.scan_offsets[x - 1] >= search_val {
+                    x -= 1;
+                }
+                x
+            }
+            Err(x) => x - 1,
+        };
+        self.scan_start + local_scan_index
+    }
+
+    pub fn explode_scan_numbers(&self) -> Vec<usize> {
+        let mut scan_numbers = Vec::with_capacity(self.tof_indices.len());
+        let curr_scan = self.scan_start;
+
+        for (scan_index, index_offset) in self.scan_offsets[1..].iter().enumerate() {
+            let num_tofs = index_offset - self.scan_offsets[scan_index];
+            scan_numbers.extend(vec![curr_scan + scan_index; num_tofs]);
+        }
+
+        if cfg!(debug_assertions) {
+            // Check that all are monotonically increasing with min == scan_start
+            let mut last_scan = 0;
+            for scan in scan_numbers.iter() {
+                debug_assert!(*scan >= last_scan);
+                last_scan = *scan;
+            }
+
+            debug_assert!(scan_numbers[0] == self.scan_start);
+            debug_assert!(scan_numbers.len() == self.tof_indices.len());
+            debug_assert_eq!(
+                scan_numbers.last().unwrap(),
+                &(self.scan_offsets.len() - 1 + self.scan_start)
+            );
+        }
+        scan_numbers
+    }
+
+    pub fn tof_intensities_at_scan(&self, scan_number: usize) -> ((&[u32], &[u32]), usize) {
+        let scan_index = scan_number - self.scan_start;
+        let offset_offset = self.scan_offsets[0];
+        let scan_start = self.scan_offsets[scan_index] - offset_offset;
+        let scan_end = self.scan_offsets[scan_index + 1] - offset_offset;
+        let tof_indices = &self.tof_indices[scan_start..scan_end];
+        let intensities = &self.intensities[scan_start..scan_end];
+        ((tof_indices, intensities), scan_start)
+    }
+
+    pub fn matching_range_at_scan<T>(
+        &self,
+        tof_index: i32,
+        scan_number: usize,
+        tolerance: &T,
+    ) -> Option<(Range, usize)>
+    where
+        T: FramePointTolerance,
+    {
+        // TODO implement later a two pointer approach for sorted slices of tof indices.
+        let ((tof_indices, _), start_indptr) = self.tof_intensities_at_scan(scan_number);
+        let tof_len = tof_indices.len();
+        let (start, end) = tolerance.tof_index_range(tof_index as u32);
+        let tof_index_start = tof_indices.binary_search_by(|x| x.partial_cmp(&start).unwrap());
+        let tof_index_end = tof_indices.binary_search_by(|x| x.partial_cmp(&end).unwrap());
+        let tof_index_start = match tof_index_start {
+            Ok(mut x) => {
+                while x > 0 && tof_indices[x - 1] >= start {
+                    x -= 1;
+                }
+                x
+            }
+            Err(x) => x,
+        };
+
+        if tof_index_start >= tof_len {
+            return None;
+        };
+
+        let tof_index_end = match tof_index_end {
+            Ok(x) => x,
+            Err(mut x) => {
+                while x < tof_len && tof_indices[x] < end {
+                    x += 1;
+                }
+                x
+            }
+        };
+
+        if tof_index_end > tof_index_start {
+            Some(((tof_index_start, tof_index_end), start_indptr))
+        } else {
+            None
+        }
+    }
+
+    pub fn matching_rangeset<T>(
+        &self,
+        tof_index: i32,
+        scan_number: usize,
+        tolerance: &T,
+    ) -> Option<RangeSet>
+    where
+        T: FramePointTolerance,
+    {
+        let mut ranges = RangeSet {
+            ranges: Vec::new(),
+            offset: 0,
+        };
+
+        let scan_range = tolerance.scan_range(scan_number);
+        for scan_number in scan_range.0..scan_range.1 {
+            if let Some(range_offset) =
+                self.matching_range_at_scan(tof_index, scan_number, tolerance)
+            {
+                ranges.ranges.push((
+                    range_offset.0 .0 - range_offset.1,
+                    range_offset.0 .1 - range_offset.1,
+                ));
+            }
+        }
+
+        if cfg!(debug_assertions) {
+            debug_assert!(!ranges.any_overlap());
+        }
+
+        if ranges.ranges.len() == 0 {
+            None
+        } else {
+            Some(ranges)
         }
     }
 }
@@ -215,7 +437,7 @@ impl DenseFrameWindow {
 }
 
 impl DenseFrame {
-    pub fn new(
+    pub fn from_frame(
         frame: &Frame,
         ims_converter: &Scan2ImConverter,
         mz_converter: &Tof2MzConverter,
