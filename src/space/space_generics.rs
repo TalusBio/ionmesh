@@ -7,7 +7,10 @@ pub struct NDBoundary<const DIMENSIONALITY: usize> {
 }
 
 impl<const D: usize> NDBoundary<D> {
-    pub fn new(starts: [f32; D], ends: [f32; D]) -> NDBoundary<D> {
+    pub fn new(
+        starts: [f32; D],
+        ends: [f32; D],
+    ) -> NDBoundary<D> {
         let mut widths = [0.0; D];
         let mut centers = [0.0; D];
         for i in 0..D {
@@ -31,7 +34,10 @@ impl<const D: usize> NDBoundary<D> {
         }
     }
 
-    pub fn contains(&self, point: &NDPoint<D>) -> bool {
+    pub fn contains(
+        &self,
+        point: &NDPoint<D>,
+    ) -> bool {
         for i in 0..D {
             // if point.values[i] < self.starts[i] || point.values[i] >= self.ends[i] {
             if point.values[i] < self.starts[i] || point.values[i] > self.ends[i] {
@@ -41,7 +47,10 @@ impl<const D: usize> NDBoundary<D> {
         true
     }
 
-    pub fn intersects(&self, other: &NDBoundary<D>) -> bool {
+    pub fn intersects(
+        &self,
+        other: &NDBoundary<D>,
+    ) -> bool {
         for i in 0..D {
             if self.starts[i] >= other.ends[i] || self.ends[i] <= other.starts[i] {
                 return false;
@@ -68,7 +77,10 @@ impl<const D: usize> NDBoundary<D> {
         NDBoundary::new(starts, ends)
     }
 
-    pub fn expand(&mut self, factors: &[f32; D]) {
+    pub fn expand(
+        &mut self,
+        factors: &[f32; D],
+    ) {
         for (i, ef) in factors.iter().enumerate() {
             let mut half_width = self.widths[i] / 2.0;
             let center = self.centers[i];
@@ -92,7 +104,10 @@ pub struct NDPoint<const DIMENSIONALITY: usize> {
 
 // Q: is there any instance where T is not usize?
 pub trait QueriableIndexedPoints<'a, const N: usize, T> {
-    fn query_ndpoint(&'a self, point: &NDPoint<N>) -> Vec<&'a T>;
+    fn query_ndpoint(
+        &'a self,
+        point: &NDPoint<N>,
+    ) -> Vec<&'a T>;
     fn query_ndrange(
         &'a self,
         boundary: &NDBoundary<N>,
@@ -101,10 +116,19 @@ pub trait QueriableIndexedPoints<'a, const N: usize, T> {
 }
 
 pub trait AsNDPoints<const D: usize> {
-    fn get_ndpoint(&self, index: usize) -> NDPoint<D>;
+    fn get_ndpoint(
+        &self,
+        index: usize,
+    ) -> NDPoint<D>;
     fn num_ndpoints(&self) -> usize;
-    fn intensity_at(&self, index: usize) -> u64;
-    fn weight_at(&self, index: usize) -> u64 {
+    fn intensity_at(
+        &self,
+        index: usize,
+    ) -> u64;
+    fn weight_at(
+        &self,
+        index: usize,
+    ) -> u64 {
         self.intensity_at(index)
     }
 }
@@ -125,8 +149,14 @@ pub trait TraceLike<R: std::convert::Into<f64>> {
 }
 
 pub trait NDPointConverter<T, const D: usize> {
-    fn convert(&self, elem: &T) -> NDPoint<D>;
-    fn convert_vec(&self, elems: &[T]) -> (Vec<NDPoint<D>>, NDBoundary<D>) {
+    fn convert(
+        &self,
+        elem: &T,
+    ) -> NDPoint<D>;
+    fn convert_vec(
+        &self,
+        elems: &[T],
+    ) -> (Vec<NDPoint<D>>, NDBoundary<D>) {
         let points = elems
             .iter()
             .map(|elem| self.convert(elem))

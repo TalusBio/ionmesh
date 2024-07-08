@@ -220,8 +220,14 @@ where
     Z: Clone,
     Vec<T>: IntoParallelIterator<Item = T>,
 {
-    fn denoise(&self, elem: T) -> W;
-    fn par_denoise_slice(&self, elems: Vec<T>) -> Vec<W>
+    fn denoise(
+        &self,
+        elem: T,
+    ) -> W;
+    fn par_denoise_slice(
+        &self,
+        elems: Vec<T>,
+    ) -> Vec<W>
     where
         Self: Sync,
     {
@@ -252,7 +258,10 @@ struct FrameDenoiser {
 }
 
 impl<'a> Denoiser<'a, Frame, DenseFrame, Converters, Option<usize>> for FrameDenoiser {
-    fn denoise(&self, frame: Frame) -> DenseFrame {
+    fn denoise(
+        &self,
+        frame: Frame,
+    ) -> DenseFrame {
         let denseframe = DenseFrame::from_frame(&frame, &self.ims_converter, &self.mz_converter);
         _denoise_denseframe(
             denseframe,
@@ -285,7 +294,10 @@ struct DIAFrameDenoiser {
 impl<'a> Denoiser<'a, Frame, Vec<DenseFrameWindow>, Converters, Option<usize>>
     for DIAFrameDenoiser
 {
-    fn denoise(&self, _frame: Frame) -> Vec<DenseFrameWindow> {
+    fn denoise(
+        &self,
+        _frame: Frame,
+    ) -> Vec<DenseFrameWindow> {
         panic!("This should not be called")
         // _denoise_dia_frame(
         //     frame,
@@ -300,7 +312,10 @@ impl<'a> Denoiser<'a, Frame, Vec<DenseFrameWindow>, Converters, Option<usize>>
         //     self.max_ims_extension,
         // )
     }
-    fn par_denoise_slice(&self, elems: Vec<Frame>) -> Vec<Vec<DenseFrameWindow>>
+    fn par_denoise_slice(
+        &self,
+        elems: Vec<Frame>,
+    ) -> Vec<Vec<DenseFrameWindow>>
     where
         Self: Sync,
     {

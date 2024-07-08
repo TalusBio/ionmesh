@@ -68,7 +68,10 @@ struct SerializableFeature<'a> {
 }
 
 impl<'a> SerializableFeature<'a> {
-    fn from_feature(feat: &'a sage_core::scoring::Feature, db: &IndexedDatabase) -> Self {
+    fn from_feature(
+        feat: &'a sage_core::scoring::Feature,
+        db: &IndexedDatabase,
+    ) -> Self {
         let peptide = db[feat.peptide_idx].to_string().clone();
         SerializableFeature {
             peptide,
@@ -78,7 +81,10 @@ impl<'a> SerializableFeature<'a> {
 }
 
 impl Serialize for SerializableFeature<'_> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(
+        &self,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -124,7 +130,10 @@ impl Serialize for SerializableFeature<'_> {
 
 //
 
-fn pseudospectrum_to_spec(pseudo: PseudoSpectrum, scan_id: String) -> RawSpectrum {
+fn pseudospectrum_to_spec(
+    pseudo: PseudoSpectrum,
+    scan_id: String,
+) -> RawSpectrum {
     let file_id = 0;
     let ms_level = 2;
 
@@ -301,7 +310,7 @@ pub fn score_pseudospectra(
 
     // Serialize to a csv for debugging
     match out_path_features {
-        None => {}
+        None => {},
         Some(out_path_features) => {
             warn!("Writing features to features.csv ... and sebastian should delete this b4 publishing...");
             let mut wtr = csv::Writer::from_path(out_path_features)?;
@@ -311,7 +320,7 @@ pub fn score_pseudospectra(
             }
             wtr.flush()?;
             drop(wtr);
-        }
+        },
     }
 
     println!("Number of psms at 0.01 FDR: {}", num_q_001);

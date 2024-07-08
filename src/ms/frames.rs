@@ -58,8 +58,14 @@ pub struct FrameMsMsWindowInfo {
 }
 
 pub trait FramePointTolerance {
-    fn tof_index_range(&self, tof_index: u32) -> (u32, u32);
-    fn scan_range(&self, scan_index: usize) -> (usize, usize);
+    fn tof_index_range(
+        &self,
+        tof_index: u32,
+    ) -> (u32, u32);
+    fn scan_range(
+        &self,
+        scan_index: usize,
+    ) -> (usize, usize);
 }
 
 struct AbsoluteFramePointTolerance {
@@ -68,7 +74,10 @@ struct AbsoluteFramePointTolerance {
 }
 
 impl FramePointTolerance for AbsoluteFramePointTolerance {
-    fn tof_index_range(&self, tof_index: u32) -> (u32, u32) {
+    fn tof_index_range(
+        &self,
+        tof_index: u32,
+    ) -> (u32, u32) {
         let tof_index_tolerance = self.tof_index_tolerance;
         (
             tof_index.saturating_sub(tof_index_tolerance),
@@ -76,7 +85,10 @@ impl FramePointTolerance for AbsoluteFramePointTolerance {
         )
     }
 
-    fn scan_range(&self, scan_index: usize) -> (usize, usize) {
+    fn scan_range(
+        &self,
+        scan_index: usize,
+    ) -> (usize, usize) {
         let scan_tolerance = self.scan_tolerance;
         (
             scan_index.saturating_sub(scan_tolerance),
@@ -93,7 +105,10 @@ pub struct RangeSet {
 }
 
 impl RangeSet {
-    fn extend(&mut self, other: RangeSet) {
+    fn extend(
+        &mut self,
+        other: RangeSet,
+    ) {
         let new_offset = self.offset.min(other.offset);
         let vs_self_offset = self.offset - new_offset;
         let vs_other_offset = other.offset - new_offset;
@@ -218,7 +233,10 @@ impl<'a> FrameSlice<'a> {
     /// this function will return the global scan number that tof index would belong
     /// to... in other words, "what is the scan number in the parent frame where peak
     /// number `x` in the frame slice would be found in the parent frame?"
-    pub fn global_scan_at_index(&self, local_index: usize) -> usize {
+    pub fn global_scan_at_index(
+        &self,
+        local_index: usize,
+    ) -> usize {
         let search_val = self.scan_offsets[0] + local_index;
         let loc = self
             .scan_offsets
@@ -229,7 +247,7 @@ impl<'a> FrameSlice<'a> {
                     x -= 1;
                 }
                 x
-            }
+            },
             Err(x) => x - 1,
         };
         self.scan_start + local_scan_index
@@ -262,7 +280,10 @@ impl<'a> FrameSlice<'a> {
         scan_numbers
     }
 
-    pub fn tof_intensities_at_scan(&self, scan_number: usize) -> ((&[u32], &[u32]), usize) {
+    pub fn tof_intensities_at_scan(
+        &self,
+        scan_number: usize,
+    ) -> ((&[u32], &[u32]), usize) {
         let scan_index = scan_number - self.scan_start;
         let offset_offset = self.scan_offsets[0];
         let scan_start = self.scan_offsets[scan_index] - offset_offset;
@@ -293,7 +314,7 @@ impl<'a> FrameSlice<'a> {
                     x -= 1;
                 }
                 x
-            }
+            },
             Err(x) => x,
         };
 
@@ -308,7 +329,7 @@ impl<'a> FrameSlice<'a> {
                     x += 1;
                 }
                 x
-            }
+            },
         };
 
         if tof_index_end > tof_index_start {
@@ -388,18 +409,18 @@ impl DenseFrameWindow {
                 panic!("No window info")
                 // This branch points to an error in logic ...
                 // The window info should always be present in this context.
-            }
+            },
             Some(MsMsFrameSliceWindowInfo::WindowGroup(_)) => {
                 // This branch should be easy to implement for things like synchro pasef...
                 // Some details to iron out though ...
                 panic!("Not implemented")
-            }
+            },
             Some(MsMsFrameSliceWindowInfo::SingleWindow(ref x)) => {
                 let window_group_id = x.window_group_id;
                 let ww_quad_group_id = x.within_window_quad_group_id;
                 let scan_start = frame_window.scan_start;
                 (window_group_id, ww_quad_group_id, scan_start)
-            }
+            },
         };
 
         // NOTE: I am swapping here the 'scan start' to be the `ims_end` because
@@ -419,7 +440,7 @@ impl DenseFrameWindow {
                     "No scan range for window_group_id: {}, within_window_quad_group_id: {}",
                     window_group_id, ww_quad_group_id
                 );
-            }
+            },
         };
 
         let frame = DenseFrame::from_frame_window(frame_window, ims_converter, mz_converter);
@@ -545,7 +566,7 @@ impl DenseFrame {
                 self.raw_peaks
                     .sort_unstable_by(|a, b| a.mz.partial_cmp(&b.mz).unwrap());
                 self.sorted = Some(SortingOrder::Mz);
-            }
+            },
         }
     }
 
@@ -556,7 +577,7 @@ impl DenseFrame {
                 self.raw_peaks
                     .sort_unstable_by(|a, b| a.mobility.partial_cmp(&b.mobility).unwrap());
                 self.sorted = Some(SortingOrder::Mobility);
-            }
+            },
         }
     }
 }

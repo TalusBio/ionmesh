@@ -15,7 +15,11 @@ impl FilterFunCache {
         }
     }
 
-    pub fn get(&mut self, elem_idx: usize, reference_idx: usize) -> Option<bool> {
+    pub fn get(
+        &mut self,
+        elem_idx: usize,
+        reference_idx: usize,
+    ) -> Option<bool> {
         self.tot_queries += 1;
 
         let out: Option<bool> = match self.cache[elem_idx] {
@@ -23,7 +27,7 @@ impl FilterFunCache {
                 Some(x) => {
                     self.cached_queries += 1;
                     Some(*x)
-                }
+                },
                 None => None,
             },
             None => None,
@@ -31,25 +35,40 @@ impl FilterFunCache {
         out
     }
 
-    pub fn set(&mut self, elem_idx: usize, reference_idx: usize, value: bool) {
+    pub fn set(
+        &mut self,
+        elem_idx: usize,
+        reference_idx: usize,
+        value: bool,
+    ) {
         self.insert_both_ways(elem_idx, reference_idx, value);
     }
 
-    fn insert_both_ways(&mut self, elem_idx: usize, reference_idx: usize, value: bool) {
+    fn insert_both_ways(
+        &mut self,
+        elem_idx: usize,
+        reference_idx: usize,
+        value: bool,
+    ) {
         self.insert(elem_idx, reference_idx, value);
         self.insert(reference_idx, elem_idx, value);
     }
 
-    fn insert(&mut self, elem_idx: usize, reference_idx: usize, value: bool) {
+    fn insert(
+        &mut self,
+        elem_idx: usize,
+        reference_idx: usize,
+        value: bool,
+    ) {
         match self.cache[elem_idx] {
             Some(ref mut map) => {
                 _ = map.insert(reference_idx, value);
-            }
+            },
             None => {
                 let mut map = BTreeMap::new();
                 map.insert(reference_idx, value);
                 self.cache[elem_idx] = Some(map);
-            }
+            },
         }
     }
 

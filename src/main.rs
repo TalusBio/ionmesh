@@ -139,10 +139,10 @@ fn main() {
         None => Ok(()),
     };
     match out {
-        Ok(_) => {}
+        Ok(_) => {},
         Err(e) => {
             log::warn!("Error writing traces: {:?}", e);
-        }
+        },
     }
 
     println!("traces: {:?}", traces.len());
@@ -194,10 +194,10 @@ fn main() {
     };
 
     match out {
-        Ok(_) => {}
+        Ok(_) => {},
         Err(e) => {
             log::warn!("Error writing pseudoscans: {:?}", e);
-        }
+        },
     }
 
     println!("pseudoscans: {:?}", pseudoscans.len());
@@ -210,9 +210,9 @@ fn main() {
         1,
     );
     match score_out {
-        Ok(_) => {}
+        Ok(_) => {},
         Err(e) => {
             log::error!("Error scoring pseudospectra: {:?}", e);
-        }
+        },
     }
 }

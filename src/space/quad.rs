@@ -38,11 +38,19 @@ impl<'a, T> RadiusQuadTree<'a, T> {
         }
     }
 
-    pub fn insert_ndpoint(&mut self, point: NDPoint<2>, data: &'a T) {
+    pub fn insert_ndpoint(
+        &mut self,
+        point: NDPoint<2>,
+        data: &'a T,
+    ) {
         self.insert(point, data);
     }
 
-    pub fn insert(&mut self, point: NDPoint<2>, data: &'a T) {
+    pub fn insert(
+        &mut self,
+        point: NDPoint<2>,
+        data: &'a T,
+    ) {
         if cfg!(debug_assertions) && !self.boundary.contains(&point) {
             println!(
                 "(Error??) Point outside of boundary {:?} {:?}",
@@ -176,7 +184,10 @@ impl<'a, T> RadiusQuadTree<'a, T> {
         self.points.clear();
     }
 
-    pub fn query(&'a self, point: &NDPoint<2>) -> Vec<(&'a NDPoint<2>, &'a T)> {
+    pub fn query(
+        &'a self,
+        point: &NDPoint<2>,
+    ) -> Vec<(&'a NDPoint<2>, &'a T)> {
         let mut result = Vec::new();
         let range = NDBoundary::new(
             [point.values[0] - self.radius, point.values[1] - self.radius],
@@ -208,7 +219,11 @@ impl<'a, T> RadiusQuadTree<'a, T> {
     }
 
     // This function is used a lot so any optimization here will have a big impact.
-    pub fn query_range(&'a self, range: &NDBoundary<2>, result: &mut Vec<(&'a NDPoint<2>, &'a T)>) {
+    pub fn query_range(
+        &'a self,
+        range: &NDBoundary<2>,
+        result: &mut Vec<(&'a NDPoint<2>, &'a T)>,
+    ) {
         if !self.boundary.intersects(range) || self.count == 0 {
             return;
         }
@@ -241,7 +256,10 @@ impl<'a, T> RadiusQuadTree<'a, T> {
 // because it can do more than just count neighbors....
 
 impl<'a, T> QueriableIndexedPoints<'a, 2, T> for RadiusQuadTree<'a, T> {
-    fn query_ndpoint(&'a self, point: &NDPoint<2>) -> Vec<&'a T> {
+    fn query_ndpoint(
+        &'a self,
+        point: &NDPoint<2>,
+    ) -> Vec<&'a T> {
         self.query(point)
             .into_iter()
             .map(|x| x.1)

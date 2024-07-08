@@ -18,7 +18,11 @@ pub enum LogLevel {
 }
 
 impl ContextTimer {
-    pub fn new(name: &str, report_start: bool, level: LogLevel) -> ContextTimer {
+    pub fn new(
+        name: &str,
+        report_start: bool,
+        level: LogLevel,
+    ) -> ContextTimer {
         let out = ContextTimer {
             start: Instant::now(),
             name: name.to_string(),
@@ -44,7 +48,10 @@ impl ContextTimer {
         }
     }
 
-    pub fn stop(&mut self, report: bool) -> Duration {
+    pub fn stop(
+        &mut self,
+        report: bool,
+    ) -> Duration {
         let duration = self.start.elapsed();
         self.cumtime += duration;
         if report {
@@ -75,7 +82,10 @@ impl ContextTimer {
         }
     }
 
-    pub fn start_sub_timer(&self, name: &str) -> ContextTimer {
+    pub fn start_sub_timer(
+        &self,
+        name: &str,
+    ) -> ContextTimer {
         ContextTimer::new(
             &format!("{}::{}", self.name, name),
             self.report_start,
@@ -223,7 +233,11 @@ where
     u64: AsPrimitive<T>,
     f64: AsPrimitive<T>,
 {
-    pub fn add(&mut self, x: T, w: W) {
+    pub fn add(
+        &mut self,
+        x: T,
+        w: W,
+    ) {
         // Check for overflows
         self.merge(&Self {
             n: 1,
@@ -281,7 +295,10 @@ where
         self.max
     }
 
-    pub fn merge(&mut self, other: &Self) {
+    pub fn merge(
+        &mut self,
+        other: &Self,
+    ) {
         // There is for sure some optimization to be done here.
         // But right now the math is the hard part ...  would definitely pay off
         let a = *self;
@@ -405,7 +422,10 @@ mod test_rolling_sd {
         6.58, 5.76, 7.71, 8.84, 8.47, 7.04, 5.25, 12.50, 5.56, 7.91, 6.89,
     ];
 
-    fn assert_close(a: f64, b: f64) {
+    fn assert_close(
+        a: f64,
+        b: f64,
+    ) {
         assert!((a - b).abs() < 1e-3, "{} != {}", a, b);
     }
 

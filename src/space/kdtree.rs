@@ -42,7 +42,11 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
         }
     }
 
-    pub fn insert_ndpoint(&mut self, point: NDPoint<D>, value: &'a T) {
+    pub fn insert_ndpoint(
+        &mut self,
+        point: NDPoint<D>,
+        value: &'a T,
+    ) {
         if cfg!(debug_assertions) && !self.boundary.contains(&point) {
             panic!(
                 "Point {:?} is not contained in the boundary of this tree ({:?})",
@@ -175,7 +179,10 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
         Ok(())
     }
 
-    pub fn query(&'a self, point: &NDPoint<D>) -> Vec<&'a T> {
+    pub fn query(
+        &'a self,
+        point: &NDPoint<D>,
+    ) -> Vec<&'a T> {
         let candidates: Vec<(&NDPoint<D>, &T)> = self.query_range(&NDBoundary::new(
             point
                 .values
@@ -197,7 +204,10 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
         out
     }
 
-    pub fn query_range(&'a self, boundary: &NDBoundary<D>) -> Vec<(&NDPoint<D>, &'a T)> {
+    pub fn query_range(
+        &'a self,
+        boundary: &NDBoundary<D>,
+    ) -> Vec<(&NDPoint<D>, &'a T)> {
         let mut result = Vec::new();
         if !self.boundary.intersects(boundary) {
             return result;
@@ -251,7 +261,10 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
 }
 
 impl<'a, T, const D: usize> QueriableIndexedPoints<'a, D, T> for RadiusKDTree<'a, T, D> {
-    fn query_ndpoint(&'a self, point: &NDPoint<D>) -> Vec<&'a T> {
+    fn query_ndpoint(
+        &'a self,
+        point: &NDPoint<D>,
+    ) -> Vec<&'a T> {
         self.query(point)
     }
 

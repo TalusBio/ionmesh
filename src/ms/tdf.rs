@@ -116,7 +116,10 @@ pub struct DIAFrameInfo {
 // of a splitter than a frame info reader.
 // Maybe a builder -> splitter pattern?
 impl DIAFrameInfo {
-    pub fn get_dia_frame_window_group(&self, frame_id: usize) -> Option<&DIAWindowGroup> {
+    pub fn get_dia_frame_window_group(
+        &self,
+        frame_id: usize,
+    ) -> Option<&DIAWindowGroup> {
         let group_id = self.frame_groups[frame_id];
         match group_id {
             None => None,
@@ -208,7 +211,10 @@ impl DIAFrameInfo {
         Ok(out_frames)
     }
 
-    pub fn split_frame_windows<'a>(&'a self, frames: &'a [Frame]) -> Vec<Vec<FrameSlice>> {
+    pub fn split_frame_windows<'a>(
+        &'a self,
+        frames: &'a [Frame],
+    ) -> Vec<Vec<FrameSlice>> {
         let mut out = Vec::new();
 
         match self.grouping_level {
@@ -216,12 +222,12 @@ impl DIAFrameInfo {
                 for _ in 0..(self.groups.len() + 1) {
                     out.push(Vec::new());
                 }
-            }
+            },
             GroupingLevel::QuadWindowGroup => {
                 for _ in 0..(self.row_to_group.len() + 1) {
                     out.push(Vec::new());
                 }
-            }
+            },
         }
 
         for frame in frames {
@@ -233,7 +239,7 @@ impl DIAFrameInfo {
                 GroupingLevel::WindowGroup => {
                     panic!("WindowGroup grouping level not implemented for splitting frames")
                     //out[group.id].push(frame_window);
-                }
+                },
                 GroupingLevel::QuadWindowGroup => {
                     let frame_windows = self
                         .split_frame(frame, group)
@@ -242,16 +248,16 @@ impl DIAFrameInfo {
                         match &frame_window.slice_window_info {
                             None => {
                                 panic!("Frame window has no slice window info")
-                            }
+                            },
                             Some(MsMsFrameSliceWindowInfo::SingleWindow(scan_range)) => {
                                 out[scan_range.global_quad_row_id].push(frame_window);
-                            }
+                            },
                             Some(MsMsFrameSliceWindowInfo::WindowGroup(group)) => {
                                 out[*group].push(frame_window);
-                            }
+                            },
                         }
                     }
-                }
+                },
             }
         }
 
@@ -285,7 +291,7 @@ impl DIAFrameInfo {
                     scan_group_id,
                     self.groups.len()
                 )
-            }
+            },
             Some(group) => group,
         };
 
@@ -296,7 +302,7 @@ impl DIAFrameInfo {
                     "Quad group not found for quad group id: {}, in scan_ranges {:?}",
                     quad_group_id, group.scan_ranges
                 )
-            }
+            },
             Some(quad_group) => quad_group,
         };
 
@@ -520,16 +526,16 @@ impl FrameInfoBuilder {
                         &self.scan_converter,
                     ));
                     scangroup_id += 1;
-                }
+                },
             }
 
             match grouping_level {
                 GroupingLevel::WindowGroup => {
                     row_to_group.push(usize_wg);
-                }
+                },
                 GroupingLevel::QuadWindowGroup => {
                     row_to_group.push(scangroup_id);
-                }
+                },
             }
         }
         Ok((group_map_vec, grouping_level, row_to_group))

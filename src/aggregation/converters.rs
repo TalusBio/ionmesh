@@ -7,7 +7,10 @@ use crate::space::space_generics::NDPointConverter;
 pub struct BypassDenseFrameBackConverter {}
 
 impl NDPointConverter<TimsPeak, 2> for BypassDenseFrameBackConverter {
-    fn convert(&self, _elem: &TimsPeak) -> NDPoint<2> {
+    fn convert(
+        &self,
+        _elem: &TimsPeak,
+    ) -> NDPoint<2> {
         panic!("This should never be called")
     }
 }
@@ -18,7 +21,10 @@ pub struct DenseFrameConverter {
 }
 
 impl NDPointConverter<TimsPeak, 2> for DenseFrameConverter {
-    fn convert(&self, elem: &TimsPeak) -> NDPoint<2> {
+    fn convert(
+        &self,
+        elem: &TimsPeak,
+    ) -> NDPoint<2> {
         NDPoint {
             values: [
                 (elem.mz / self.mz_scaling) as f32,

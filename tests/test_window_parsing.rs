@@ -20,10 +20,10 @@ fn test_dia_pasef() {
     // Make sure the grouping is correctly assigned... for diaPASEF it should
     // be `QuadWindowGroup`
     match finfo.grouping_level {
-        GroupingLevel::QuadWindowGroup => {}
+        GroupingLevel::QuadWindowGroup => {},
         GroupingLevel::WindowGroup => {
             assert!(false);
-        }
+        },
     }
 
     // Make sure the grouping is correct.
@@ -55,8 +55,8 @@ fn test_synchro_dia_pasef() {
     match finfo.grouping_level {
         GroupingLevel::QuadWindowGroup => {
             assert!(false);
-        }
-        GroupingLevel::WindowGroup => {}
+        },
+        GroupingLevel::WindowGroup => {},
     }
 
     // Make sure the grouping is correct.

@@ -71,7 +71,10 @@ pub struct BaseTrace {
 }
 
 impl Serialize for BaseTrace {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(
+        &self,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -125,7 +128,10 @@ impl HasIntensity for TimeTimsPeak {
     }
 }
 
-pub fn iou(a: &(f32, f32), b: &(f32, f32)) -> f32 {
+pub fn iou(
+    a: &(f32, f32),
+    b: &(f32, f32),
+) -> f32 {
     let min_ends = a.1.min(b.1);
     let max_starts = a.0.max(b.0);
 
@@ -162,7 +168,10 @@ mod tests {
 }
 
 impl BaseTrace {
-    pub fn rt_iou(&self, other: &BaseTrace) -> f32 {
+    pub fn rt_iou(
+        &self,
+        other: &BaseTrace,
+    ) -> f32 {
         // TODO change this to be the measured peak width ...
         let width_a = self.rt_std.max(0.7);
         let width_b: f32 = other.rt_std.max(0.7);
@@ -282,7 +291,10 @@ struct TraceAggregator {
 }
 
 impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
-    fn add(&mut self, peak: &TimeTimsPeak) {
+    fn add(
+        &mut self,
+        peak: &TimeTimsPeak,
+    ) {
         let _f64_intensity = peak.intensity as f64;
         self.mz.add(peak.mz, peak.intensity);
         debug_assert!(peak.intensity < u64::MAX - self.intensity);
@@ -336,7 +348,10 @@ impl ClusterAggregator<TimeTimsPeak, BaseTrace> for TraceAggregator {
         }
     }
 
-    fn combine(self, other: Self) -> Self {
+    fn combine(
+        self,
+        other: Self,
+    ) -> Self {
         let mut mz = self.mz;
         let mut rt = self.rt;
         let mut ims = self.ims;
@@ -369,7 +384,10 @@ struct TimeTimsPeakConverter {
 }
 
 impl NDPointConverter<TimeTimsPeak, 3> for TimeTimsPeakConverter {
-    fn convert(&self, elem: &TimeTimsPeak) -> NDPoint<3> {
+    fn convert(
+        &self,
+        elem: &TimeTimsPeak,
+    ) -> NDPoint<3> {
         NDPoint {
             values: [
                 (elem.mz / self.mz_scaling) as f32,
@@ -383,7 +401,10 @@ impl NDPointConverter<TimeTimsPeak, 3> for TimeTimsPeakConverter {
 struct BypassBaseTraceBackConverter {}
 
 impl NDPointConverter<BaseTrace, 3> for BypassBaseTraceBackConverter {
-    fn convert(&self, _elem: &BaseTrace) -> NDPoint<3> {
+    fn convert(
+        &self,
+        _elem: &BaseTrace,
+    ) -> NDPoint<3> {
         panic!("This should never be called");
     }
 }
@@ -515,7 +536,10 @@ impl Default for PseudoSpectrumAggregator {
 }
 
 impl<'a> ClusterAggregator<BaseTrace, PseudoSpectrum> for PseudoSpectrumAggregator {
-    fn add(&mut self, peak: &BaseTrace) {
+    fn add(
+        &mut self,
+        peak: &BaseTrace,
+    ) {
         debug_assert!(peak.intensity < u64::MAX - self.intensity);
 
         self.rt.add(peak.rt as f64, peak.intensity);
@@ -550,7 +574,10 @@ impl<'a> ClusterAggregator<BaseTrace, PseudoSpectrum> for PseudoSpectrumAggregat
         }
     }
 
-    fn combine(self, other: Self) -> Self {
+    fn combine(
+        self,
+        other: Self,
+    ) -> Self {
         let mut peaks = self.peaks.clone();
         peaks.extend(other.peaks.clone());
         let mut rt = self.rt;
@@ -581,7 +608,10 @@ struct BaseTraceConverter {
 }
 
 impl NDPointConverter<BaseTrace, 3> for BaseTraceConverter {
-    fn convert(&self, elem: &BaseTrace) -> NDPoint<3> {
+    fn convert(
+        &self,
+        elem: &BaseTrace,
+    ) -> NDPoint<3> {
         // let rt_start_use = (elem.rt - elem.rt_std).min(elem.rt - self.peak_width_prior as f32);
         // let rt_end_use = (elem.rt + elem.rt_std).max(elem.rt + self.peak_width_prior as f32);
         // let rt_start_end_scaling = self.rt_scaling * self.rt_start_end_ratio;
@@ -627,7 +657,10 @@ struct PseudoScanBackConverter {
 }
 
 impl NDPointConverter<PseudoSpectrum, 3> for PseudoScanBackConverter {
-    fn convert(&self, elem: &PseudoSpectrum) -> NDPoint<3> {
+    fn convert(
+        &self,
+        elem: &PseudoSpectrum,
+    ) -> NDPoint<3> {
         let quad_mid = (elem.quad_low + elem.quad_high) / 2.;
         NDPoint {
             values: [

@@ -22,9 +22,15 @@ pub enum ClusterLabel<T> {
 /// S: The type of the aggregator.
 ///
 pub trait ClusterAggregator<T, R>: Send + Sync {
-    fn add(&mut self, elem: &T);
+    fn add(
+        &mut self,
+        elem: &T,
+    );
     fn aggregate(&self) -> R;
-    fn combine(self, other: Self) -> Self;
+    fn combine(
+        self,
+        other: Self,
+    ) -> Self;
 }
 
 #[derive(Default, Debug)]
@@ -36,7 +42,10 @@ pub struct TimsPeakAggregator {
 }
 
 impl ClusterAggregator<TimsPeak, TimsPeak> for TimsPeakAggregator {
-    fn add(&mut self, elem: &TimsPeak) {
+    fn add(
+        &mut self,
+        elem: &TimsPeak,
+    ) {
         let f64_intensity = elem.intensity as f64;
         debug_assert!((elem.intensity as u64) < (u64::MAX - self.cluster_intensity));
         self.cluster_intensity += elem.intensity as u64;
@@ -56,7 +65,10 @@ impl ClusterAggregator<TimsPeak, TimsPeak> for TimsPeakAggregator {
         }
     }
 
-    fn combine(self, other: Self) -> Self {
+    fn combine(
+        self,
+        other: Self,
+    ) -> Self {
         Self {
             cluster_intensity: self.cluster_intensity + other.cluster_intensity,
             cluster_mz: self.cluster_mz + other.cluster_mz,
@@ -90,7 +102,7 @@ pub fn aggregate_clusters<
                     let cluster_idx = *cluster_id as usize - 1;
                     let tmp: Option<(usize, T)> = Some((cluster_idx, elements[point_index]));
                     tmp
-                }
+                },
                 _ => None,
             })
             .collect();
@@ -113,7 +125,7 @@ pub fn aggregate_clusters<
                             (Some(l), Some(r)) => {
                                 let o = l.combine(r);
                                 Some(o)
-                            }
+                            },
                             (Some(l), None) => Some(l),
                             (None, Some(r)) => Some(r),
                             (None, None) => None,
@@ -165,15 +177,15 @@ pub fn aggregate_clusters<
                 ClusterLabel::Cluster(cluster_id) => {
                     let cluster_idx = *cluster_id as usize - 1;
                     cluster_vecs[cluster_idx].add(&(elements[point_index]));
-                }
+                },
                 ClusterLabel::Noise => {
                     if keep_unclustered {
                         let mut oe = def_aggregator();
                         oe.add(&elements[point_index]);
                         unclustered_points.push(oe);
                     }
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
         cluster_vecs.extend(unclustered_points);
