@@ -60,25 +60,41 @@ impl ClusterLabels {
         }
     }
 
-    fn set_cluster(&mut self, index: usize, cluster_id: u64) {
+    fn set_cluster(
+        &mut self,
+        index: usize,
+        cluster_id: u64,
+    ) {
         self.cluster_labels[index] = ClusterLabel::Cluster(cluster_id);
     }
 
-    fn set_new_cluster(&mut self, index: usize) {
+    fn set_new_cluster(
+        &mut self,
+        index: usize,
+    ) {
         self.num_clusters += 1;
         self.set_cluster(index, self.num_clusters);
     }
 
-    fn set_current_cluster(&mut self, index: usize) {
+    fn set_current_cluster(
+        &mut self,
+        index: usize,
+    ) {
         let cluster_id = self.num_clusters;
         self.set_cluster(index, cluster_id);
     }
 
-    fn set_noise(&mut self, index: usize) {
+    fn set_noise(
+        &mut self,
+        index: usize,
+    ) {
         self.cluster_labels[index] = ClusterLabel::Noise;
     }
 
-    fn get(&self, index: usize) -> ClusterLabel<u64> {
+    fn get(
+        &self,
+        index: usize,
+    ) -> ClusterLabel<u64> {
         self.cluster_labels[index]
     }
 }
@@ -113,7 +129,10 @@ impl DBScanTimers {
         }
     }
 
-    fn report_if_gt_us(&self, min_time: u128) {
+    fn report_if_gt_us(
+        &self,
+        min_time: u128,
+    ) {
         if self.main.cumtime.as_micros() > min_time {
             self.main.report();
             self.filter_fun_cache_timer.report();
@@ -148,7 +167,10 @@ struct DBSCANRunnerState {
 }
 
 impl DBSCANRunnerState {
-    fn new<P>(nlabels: usize, usize_filterfun: Option<P>) -> Self
+    fn new<P>(
+        nlabels: usize,
+        usize_filterfun: Option<P>,
+    ) -> Self
     where
         P: Fn(&usize, &usize) -> bool + Send + Sync,
     {
@@ -170,7 +192,11 @@ impl DBSCANRunnerState {
         }
     }
 
-    fn create_progress_bar(&self, len: usize, visible: bool) -> indicatif::ProgressBar {
+    fn create_progress_bar(
+        &self,
+        len: usize,
+        visible: bool,
+    ) -> indicatif::ProgressBar {
         if visible {
             indicatif::ProgressBar::new(len as u64)
         } else {
@@ -225,7 +251,7 @@ where
                 };
                 let bind = Some(cl);
                 bind
-            }
+            },
             None => None,
         };
         // |a: &usize, b: &usize| {
@@ -246,13 +272,19 @@ where
         self.take_cluster_labels(state)
     }
 
-    fn report_timers(&self, mut state: DBSCANRunnerState) -> DBSCANRunnerState {
+    fn report_timers(
+        &self,
+        mut state: DBSCANRunnerState,
+    ) -> DBSCANRunnerState {
         state.timers.main.stop(false);
         state.timers.report_if_gt_us(1000000);
         state
     }
 
-    fn take_cluster_labels(&self, state: DBSCANRunnerState) -> ClusterLabels {
+    fn take_cluster_labels(
+        &self,
+        state: DBSCANRunnerState,
+    ) -> ClusterLabels {
         state.cluster_labels
     }
 
@@ -281,6 +313,7 @@ where
         state
     }
 
+    /// This method gets applied to every point in decreasing intensity order.
     fn process_single_point(
         &self,
         point_index: usize,
@@ -294,16 +327,20 @@ where
             return;
         }
 
-        let (neighbors, ref_point) =
-            self.find_neighbors(point_index, points, filter_fun_cache, timers, cc_metrics);
+        let neighbors = self.find_main_loop_neighbors(
+            point_index,
+            points,
+            filter_fun_cache,
+            timers,
+            cc_metrics,
+        );
         if !self.is_core_point(&neighbors, points.prefiltered_peaks, timers) {
             cluster_labels.set_noise(point_index);
             return;
         }
 
-        self.expand_cluster(
+        self.main_loop_expand_cluster(
             point_index,
-            ref_point.unwrap(),
             neighbors,
             points,
             cluster_labels,
@@ -312,14 +349,14 @@ where
         );
     }
 
-    fn find_neighbors(
+    fn find_main_loop_neighbors(
         &self,
         point_index: usize,
         points: &DBSCANPoints<'a, N, E>,
         filter_fun_cache: &mut Option<FilterFunCache>,
         timers: &mut DBScanTimers,
         cc_metrics: &mut CandidateCountMetrics,
-    ) -> (Vec<usize>, Option<&NDPoint<N>>) {
+    ) -> Vec<usize> {
         timers.outer_loop_nn_timer.reset_start();
         let query_elems = self
             .converter
@@ -333,7 +370,7 @@ where
         timers.outer_loop_nn_timer.stop(false);
 
         if filter_fun_cache.is_none() {
-            return (candidate_neighbors, query_elems.1);
+            return candidate_neighbors;
         }
 
         let num_initial_candidates = candidate_neighbors.len();
@@ -349,7 +386,7 @@ where
                     );
                     tmp.set(*i, point_index, res);
                     res
-                }
+                },
             }
         });
 
@@ -362,7 +399,7 @@ where
             .final_candidates_counts
             .add(candidates_after_filter as f32, 1);
 
-        (neighbors, query_elems.1)
+        neighbors
     }
 
     fn is_core_point(
@@ -380,100 +417,314 @@ where
         return neighbor_intensity_total >= self.min_intensity;
     }
 
-    fn expand_cluster(
+    /// OLD IMPLEMENTATION delete before merging ...
+    // fn expand_cluster(
+    //     &self,
+    //     point_index: usize,
+    //     query_point: &NDPoint<N>,
+    //     neighbors: Vec<usize>,
+    //     points: &DBSCANPoints<'a, N, E>,
+    //     cluster_labels: &mut ClusterLabels,
+    //     filter_fun_cache: &mut Option<FilterFunCache>,
+    //     timers: &mut DBScanTimers,
+    // ) {
+    //     cluster_labels.set_new_cluster(point_index);
+
+    //     let mut seed_set: Vec<usize> = Vec::new();
+    //     seed_set.extend(neighbors);
+
+    //     while let Some(neighbor) = seed_set.pop() {
+    //         let neighbor_index = neighbor;
+    //         if cluster_labels.get(neighbor_index) == ClusterLabel::Noise {
+    //             cluster_labels.set_current_cluster(neighbor_index);
+    //         }
+
+    //         if cluster_labels.get(neighbor_index) != ClusterLabel::Unassigned {
+    //             continue;
+    //         }
+
+    //         cluster_labels.set_current_cluster(neighbor_index);
+
+    //         timers.inner_loop_nn_timer.reset_start();
+    //         let inner_query_elems = self
+    //             .converter
+    //             .convert_to_bounds_query(&points.quad_points[neighbor]);
+    //         let mut local_neighbors = points
+    //             .indexed_points
+    //             .query_ndrange(&inner_query_elems.0, inner_query_elems.1);
+    //         timers.inner_loop_nn_timer.stop(false);
+
+    //         if filter_fun_cache.is_some() {
+    //             local_neighbors.retain(|i| {
+    //                 let cache = filter_fun_cache.as_mut().unwrap();
+    //                 let res = cache.get(**i, point_index);
+    //                 let out = match res {
+    //                     Some(res) => res,
+    //                     None => {
+    //                         let res = (self.filter_fun.unwrap())(
+    //                             &points.prefiltered_peaks[**i],
+    //                             &points.prefiltered_peaks[point_index],
+    //                         );
+    //                         cache.set(**i, point_index, res);
+    //                         res
+    //                     }
+    //                 };
+    //                 out
+    //             });
+    //         }
+
+    //         timers.inner_intensity_calculation.reset_start();
+    //         let query_intensity = points.prefiltered_peaks[neighbor_index].intensity();
+    //         let neighbor_intensity_total = local_neighbors
+    //             .iter()
+    //             .map(|i| points.prefiltered_peaks[**i].intensity())
+    //             .sum::<u64>();
+    //         timers.inner_intensity_calculation.stop(false);
+
+    //         if local_neighbors.len() >= self.min_n && neighbor_intensity_total >= self.min_intensity
+    //         {
+    //             local_neighbors
+    //                 .retain(|i| !matches!(cluster_labels.get(**i), ClusterLabel::Cluster(_)));
+
+    //             timers.local_neighbor_filter_timer.reset_start();
+    //             local_neighbors.retain(|i| {
+    //                 let going_downhill =
+    //                     points.prefiltered_peaks[**i].intensity() <= query_intensity;
+
+    //                 let p: &NDPoint<N> = &points.quad_points[**i];
+    //                 let mut within_distance = true;
+    //                 for ((p, q), max_dist) in p
+    //                     .values
+    //                     .iter()
+    //                     .zip(query_point.values)
+    //                     .zip(self.max_extension_distances.iter())
+    //                 {
+    //                     let dist = (p - q).abs();
+    //                     within_distance = within_distance && dist <= *max_dist;
+    //                     if !within_distance {
+    //                         break;
+    //                     }
+    //                 }
+
+    //                 going_downhill && within_distance
+    //             });
+    //             timers.local_neighbor_filter_timer.stop(false);
+
+    //             seed_set.extend(local_neighbors);
+    //         }
+    //     }
+    // }
+
+    fn main_loop_expand_cluster(
         &self,
-        point_index: usize,
-        query_point: &NDPoint<N>,
+        apex_point_index: usize,
         neighbors: Vec<usize>,
         points: &DBSCANPoints<'a, N, E>,
         cluster_labels: &mut ClusterLabels,
         filter_fun_cache: &mut Option<FilterFunCache>,
         timers: &mut DBScanTimers,
     ) {
-        cluster_labels.set_new_cluster(point_index);
+        cluster_labels.set_new_cluster(apex_point_index);
+        let mut seed_set: Vec<usize> = neighbors;
 
-        let mut seed_set: Vec<usize> = Vec::new();
-        seed_set.extend(neighbors);
-
-        while let Some(neighbor) = seed_set.pop() {
-            let neighbor_index = neighbor;
-            if cluster_labels.get(neighbor_index) == ClusterLabel::Noise {
-                cluster_labels.set_current_cluster(neighbor_index);
-            }
-
-            if cluster_labels.get(neighbor_index) != ClusterLabel::Unassigned {
+        while let Some(neighbor_index) = seed_set.pop() {
+            if !self.process_neighbor(neighbor_index, cluster_labels) {
                 continue;
             }
 
-            cluster_labels.set_current_cluster(neighbor_index);
+            let local_neighbors = self.find_local_neighbors(neighbor_index, points, timers);
+            let filtered_neighbors = self.filter_neighbors_inner_loop(
+                local_neighbors,
+                apex_point_index,
+                neighbor_index,
+                points,
+                cluster_labels,
+                filter_fun_cache,
+                timers,
+            );
 
-            timers.inner_loop_nn_timer.reset_start();
-            let inner_query_elems = self
-                .converter
-                .convert_to_bounds_query(&points.quad_points[neighbor]);
-            let mut local_neighbors = points
-                .indexed_points
-                .query_ndrange(&inner_query_elems.0, inner_query_elems.1);
-            timers.inner_loop_nn_timer.stop(false);
-
-            if filter_fun_cache.is_some() {
-                local_neighbors.retain(|i| {
-                    let cache = filter_fun_cache.as_mut().unwrap();
-                    let res = cache.get(**i, point_index);
-                    match res {
-                        Some(res) => res,
-                        None => {
-                            let res = (self.filter_fun.unwrap())(
-                                &points.prefiltered_peaks[**i],
-                                &points.prefiltered_peaks[point_index],
-                            );
-                            cache.set(**i, point_index, res);
-                            res
-                        }
-                    }
-                });
-            }
-
-            timers.inner_intensity_calculation.reset_start();
-            let query_intensity = points.prefiltered_peaks[neighbor_index].intensity();
-            let neighbor_intensity_total = local_neighbors
-                .iter()
-                .map(|i| points.prefiltered_peaks[**i].intensity())
-                .sum::<u64>();
-            timers.inner_intensity_calculation.stop(false);
-
-            if local_neighbors.len() >= self.min_n && neighbor_intensity_total >= self.min_intensity
-            {
-                local_neighbors
-                    .retain(|i| !matches!(cluster_labels.get(**i), ClusterLabel::Cluster(_)));
-
-                timers.local_neighbor_filter_timer.reset_start();
-                local_neighbors.retain(|i| {
-                    let going_downhill =
-                        points.prefiltered_peaks[**i].intensity() <= query_intensity;
-
-                    let p: &NDPoint<N> = &points.quad_points[**i];
-                    let mut within_distance = true;
-                    for ((p, q), max_dist) in p
-                        .values
-                        .iter()
-                        .zip(query_point.values)
-                        .zip(self.max_extension_distances.iter())
-                    {
-                        let dist = (p - q).abs();
-                        within_distance = within_distance && dist <= *max_dist;
-                        if !within_distance {
-                            break;
-                        }
-                    }
-
-                    going_downhill && within_distance
-                });
-                timers.local_neighbor_filter_timer.stop(false);
-
-                seed_set.extend(local_neighbors);
-            }
+            seed_set.extend(filtered_neighbors);
         }
+    }
+
+    fn process_neighbor(
+        &self,
+        neighbor_index: usize,
+        cluster_labels: &mut ClusterLabels,
+    ) -> bool {
+        match cluster_labels.get(neighbor_index) {
+            ClusterLabel::Noise => {
+                cluster_labels.set_current_cluster(neighbor_index);
+                true
+            },
+            ClusterLabel::Unassigned => {
+                cluster_labels.set_current_cluster(neighbor_index);
+                true
+            },
+            ClusterLabel::Cluster(_) => false,
+        }
+    }
+
+    fn find_local_neighbors(
+        &self,
+        neighbor_index: usize,
+        points: &DBSCANPoints<'a, N, E>,
+        timers: &mut DBScanTimers,
+    ) -> Vec<usize> {
+        timers.inner_loop_nn_timer.reset_start();
+        let inner_query_elems = self
+            .converter
+            .convert_to_bounds_query(&points.quad_points[neighbor_index]);
+        let local_neighbors: Vec<usize> = points
+            .indexed_points
+            .query_ndrange(&inner_query_elems.0, inner_query_elems.1)
+            .iter_mut()
+            .map(|x| **x)
+            .collect::<Vec<_>>();
+        timers.inner_loop_nn_timer.stop(false);
+        local_neighbors
+    }
+
+    fn filter_neighbors_inner_loop(
+        &self,
+        local_neighbors: Vec<usize>,
+        cluster_apex_point_index: usize,
+        current_center_point_index: usize,
+        points: &DBSCANPoints<'a, N, E>,
+        cluster_labels: &ClusterLabels,
+        filter_fun_cache: &mut Option<FilterFunCache>,
+        timers: &mut DBScanTimers,
+    ) -> Vec<usize> {
+        let filtered = self.apply_filter_fun(
+            local_neighbors,
+            cluster_apex_point_index,
+            points,
+            filter_fun_cache,
+        );
+
+        if !self.is_extension_core_point(&filtered, current_center_point_index, points, timers) {
+            return Vec::new();
+        }
+
+        let unassigned = self.filter_unassigned(filtered, cluster_labels);
+        let unassigned_in_global_distance =
+            self.filter_by_apex_distance(unassigned, cluster_apex_point_index, points, timers);
+        self.filter_by_local_intensity_and_distance(
+            unassigned_in_global_distance,
+            current_center_point_index,
+            points,
+            timers,
+        )
+    }
+
+    fn filter_by_apex_distance(
+        &self,
+        mut neighbors: Vec<usize>,
+        apex_point_index: usize,
+        points: &DBSCANPoints<'a, N, E>,
+        timers: &mut DBScanTimers,
+    ) -> Vec<usize> {
+        timers.local_neighbor_filter_timer.reset_start();
+        let query_point = &points.quad_points[apex_point_index];
+        neighbors.retain(|&i| self.is_within_max_distance(&points.quad_points[i], query_point));
+        timers.local_neighbor_filter_timer.stop(false);
+        neighbors
+    }
+
+    fn is_extension_core_point(
+        &self,
+        neighbors: &[usize],
+        current_center_point_index: usize,
+        points: &DBSCANPoints<'a, N, E>,
+        timers: &mut DBScanTimers,
+    ) -> bool {
+        timers.inner_intensity_calculation.reset_start();
+        let mut neighbor_intensity_total: u64 = neighbors
+            .iter()
+            .map(|&i| points.prefiltered_peaks[i].intensity())
+            .sum();
+
+        neighbor_intensity_total +=
+            points.prefiltered_peaks[current_center_point_index].intensity();
+        timers.inner_intensity_calculation.stop(false);
+
+        neighbors.len() >= self.min_n && neighbor_intensity_total >= self.min_intensity
+    }
+
+    /// This is mean to apply additional filter logic that considers
+    /// elements that are not only represented by the 'space' of the points
+    /// or the intensity.
+    ///
+    /// Some examples might be if every point represents say ... a chromatogram
+    /// one could pass a function that checks if the chromatograms a high correlation.
+    /// Because two might share the same point in space, intensity is not really
+    /// relevant but co-elution might be critical.
+    fn apply_filter_fun(
+        &self,
+        local_neighbors: Vec<usize>,
+        point_index: usize,
+        points: &DBSCANPoints<'a, N, E>,
+        filter_fun_cache: &mut Option<FilterFunCache>,
+    ) -> Vec<usize> {
+        if let Some(cache) = filter_fun_cache {
+            local_neighbors
+                .into_iter()
+                .filter(|&i| {
+                    cache.get(i, point_index).unwrap_or_else(|| {
+                        let res = (self.filter_fun.unwrap())(
+                            &points.prefiltered_peaks[i],
+                            &points.prefiltered_peaks[point_index],
+                        );
+                        cache.set(i, point_index, res);
+                        res
+                    })
+                })
+                .collect()
+        } else {
+            local_neighbors
+        }
+    }
+
+    fn filter_unassigned(
+        &self,
+        mut neighbors: Vec<usize>,
+        cluster_labels: &ClusterLabels,
+    ) -> Vec<usize> {
+        neighbors.retain(|&i| matches!(cluster_labels.get(i), ClusterLabel::Unassigned));
+        neighbors
+    }
+
+    fn filter_by_local_intensity_and_distance(
+        &self,
+        mut neighbors: Vec<usize>,
+        neighbor_index: usize,
+        points: &DBSCANPoints<'a, N, E>,
+        timers: &mut DBScanTimers,
+    ) -> Vec<usize> {
+        timers.local_neighbor_filter_timer.reset_start();
+        let query_intensity = points.prefiltered_peaks[neighbor_index].intensity();
+        let query_point = &points.quad_points[neighbor_index];
+
+        neighbors.retain(|&i| {
+            let going_downhill = points.prefiltered_peaks[i].intensity() <= query_intensity;
+            let within_distance = self.is_within_max_distance(&points.quad_points[i], query_point);
+            going_downhill && within_distance
+        });
+
+        timers.local_neighbor_filter_timer.stop(false);
+        neighbors
+    }
+
+    fn is_within_max_distance(
+        &self,
+        p: &NDPoint<N>,
+        query_point: &NDPoint<N>,
+    ) -> bool {
+        p.values
+            .iter()
+            .zip(query_point.values)
+            .zip(self.max_extension_distances.iter())
+            .all(|((p, q), max_dist)| (p - q).abs() <= *max_dist)
     }
 }
 
