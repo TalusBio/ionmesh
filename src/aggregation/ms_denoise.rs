@@ -135,44 +135,6 @@ fn _denoise_denseframe(
     denoised_frame
 }
 
-fn _denoise_dia_frame(
-    frame: Frame,
-    min_n: usize,
-    min_intensity: u64,
-    dia_frame_info: &DIAFrameInfo,
-    ims_converter: &timsrust::Scan2ImConverter,
-    mz_converter: &timsrust::Tof2MzConverter,
-    mz_scaling: f64,
-    max_mz_extension: f64,
-    ims_scaling: f32,
-    max_ims_extension: f32,
-) -> Vec<DenseFrameWindow> {
-    let window_group = dia_frame_info
-        .get_dia_frame_window_group(frame.index)
-        .unwrap();
-    let frame_windows = dia_frame_info
-        .split_frame(&frame, window_group)
-        .expect("Only DIA frames should be passed to this function");
-
-    frame_windows
-        .into_iter()
-        .map(|frame_window| {
-            denoise_frame_slice(
-                &frame_window,
-                ims_converter,
-                mz_converter,
-                dia_frame_info,
-                min_n,
-                min_intensity,
-                mz_scaling,
-                max_mz_extension,
-                ims_scaling,
-                max_ims_extension,
-            )
-        })
-        .collect::<Vec<_>>()
-}
-
 fn denoise_frame_slice(
     frame_window: &FrameSlice,
     ims_converter: &timsrust::Scan2ImConverter,
@@ -323,7 +285,9 @@ impl<'a> Denoiser<'a, Frame, Vec<DenseFrameWindow>, Converters, Option<usize>>
 
         let frame_window_slices = self.dia_frame_info.split_frame_windows(&elems);
         let mut out = Vec::with_capacity(frame_window_slices.len());
-        for sv in frame_window_slices {
+        let num_windows = frame_window_slices.len();
+        for (i, sv) in frame_window_slices.iter().enumerate() {
+            info!("Denoising window {}/{}", i + 1, num_windows);
             let progbar = indicatif::ProgressBar::new(sv.len() as u64);
             let denoised_elements: Vec<DenseFrameWindow> = sv
                 .into_par_iter()

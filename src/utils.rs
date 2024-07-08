@@ -94,6 +94,12 @@ impl ContextTimer {
     }
 }
 
+/// Applies a function to all elements within a certain distance of each element.
+///
+/// Provided a slice of elements (assumed to be sorted by the key function),
+/// a key function. For every element in the slice, a function will be applied
+/// with the indices of the first and last element within the distance of the
+/// current element.
 pub fn within_distance_apply<T, R: Clone, W>(
     elems: &[T],
     key: &dyn Fn(&T) -> R,
@@ -105,6 +111,8 @@ where
     T: Copy,
     W: Default + Copy,
 {
+    // TODO: rename all internal variables ... they made sense before this
+    // was a generic function.
     let mut prefiltered_peaks_bool: Vec<W> = vec![W::default(); elems.len()];
 
     let mut i_left = 0;
