@@ -92,104 +92,22 @@ pub fn aggregate_clusters<
     keep_unclustered: bool,
 ) -> Vec<R> {
     let cluster_vecs: Vec<G> = if cfg!(feature = "par_dataprep") {
-        let mut timer =
-            utils::ContextTimer::new("dbscan_generic::par_aggregation", true, log_level);
-        let out: Vec<(usize, T)> = cluster_labels
-            .iter()
-            .enumerate()
-            .filter_map(|(point_index, x)| match x {
-                ClusterLabel::Cluster(cluster_id) => {
-                    let cluster_idx = *cluster_id as usize - 1;
-                    let tmp: Option<(usize, T)> = Some((cluster_idx, elements[point_index]));
-                    tmp
-                },
-                _ => None,
-            })
-            .collect();
-
-        let run_closure =
-            |chunk: Vec<(usize, T)>| _inner(&chunk, tot_clusters as usize, &def_aggregator);
-        let chunk_size = (out.len() / rayon::current_num_threads()) / 2;
-        let chunk_size = chunk_size.max(1);
-        let out2 = out
-            .into_par_iter()
-            .chunks(chunk_size)
-            .map(run_closure)
-            .reduce(Vec::new, |l, r| {
-                if l.is_empty() {
-                    r
-                } else {
-                    l.into_iter()
-                        .zip(r)
-                        .map(|(l, r)| match (l, r) {
-                            (Some(l), Some(r)) => {
-                                let o = l.combine(r);
-                                Some(o)
-                            },
-                            (Some(l), None) => Some(l),
-                            (None, Some(r)) => Some(r),
-                            (None, None) => None,
-                        })
-                        .collect::<Vec<_>>()
-                }
-            });
-
-        let mut cluster_vecs = out2.into_iter().flatten().collect::<Vec<_>>();
-
-        let unclustered_elems: Vec<usize> = cluster_labels
-            .iter()
-            .enumerate()
-            .filter(|(_, x)| match x {
-                ClusterLabel::Unassigned => true,
-                ClusterLabel::Noise => keep_unclustered,
-                _ => false,
-            })
-            .map(|(i, _elem)| i)
-            .collect();
-
-        // if unclustered_elems.len() > 0 {
-        //     log::debug!("Total Orig elems: {}", cluster_labels.len());
-        //     log::debug!("Unclustered elems: {}", unclustered_elems.len());
-        //     log::debug!("Clustered elems: {}", cluster_vecs.len());
-        // }
-
-        let unclustered_elems = unclustered_elems
-            .iter()
-            .map(|i| {
-                let mut oe = def_aggregator();
-                oe.add(&elements[*i]);
-                oe
-            })
-            .collect::<Vec<_>>();
-
-        cluster_vecs.extend(unclustered_elems);
-
-        timer.stop(true);
-        cluster_vecs
+        parallel_aggregate_clusters(
+            tot_clusters,
+            cluster_labels,
+            elements,
+            def_aggregator,
+            log_level,
+            keep_unclustered,
+        )
     } else {
-        let mut cluster_vecs: Vec<G> = Vec::with_capacity(tot_clusters as usize);
-        let mut unclustered_points: Vec<G> = Vec::new();
-        for _ in 0..tot_clusters {
-            cluster_vecs.push(def_aggregator());
-        }
-        for (point_index, cluster_label) in cluster_labels.iter().enumerate() {
-            match cluster_label {
-                ClusterLabel::Cluster(cluster_id) => {
-                    let cluster_idx = *cluster_id as usize - 1;
-                    cluster_vecs[cluster_idx].add(&(elements[point_index]));
-                },
-                ClusterLabel::Noise => {
-                    if keep_unclustered {
-                        let mut oe = def_aggregator();
-                        oe.add(&elements[point_index]);
-                        unclustered_points.push(oe);
-                    }
-                },
-                _ => {},
-            }
-        }
-        cluster_vecs.extend(unclustered_points);
-        cluster_vecs
+        serial_aggregate_clusters(
+            tot_clusters,
+            cluster_labels,
+            elements,
+            def_aggregator,
+            keep_unclustered,
+        )
     };
 
     let mut timer =
@@ -201,6 +119,131 @@ pub fn aggregate_clusters<
     timer.stop(true);
 
     out
+}
+
+fn parallel_aggregate_clusters<
+    T: HasIntensity + Send + Clone + Copy,
+    G: Sync + Send + ClusterAggregator<T, R>,
+    R: Send,
+    F: Fn() -> G + Send + Sync,
+>(
+    tot_clusters: u64,
+    cluster_labels: Vec<ClusterLabel<u64>>,
+    elements: &[T],
+    def_aggregator: &F,
+    log_level: utils::LogLevel,
+    keep_unclustered: bool,
+) -> Vec<G> {
+    let mut timer = utils::ContextTimer::new("dbscan_generic::par_aggregation", true, log_level);
+    let out: Vec<(usize, T)> = cluster_labels
+        .iter()
+        .enumerate()
+        .filter_map(|(point_index, x)| match x {
+            ClusterLabel::Cluster(cluster_id) => {
+                let cluster_idx = *cluster_id as usize - 1;
+                let tmp: Option<(usize, T)> = Some((cluster_idx, elements[point_index]));
+                tmp
+            },
+            _ => None,
+        })
+        .collect();
+
+    let run_closure =
+        |chunk: Vec<(usize, T)>| _inner(&chunk, tot_clusters as usize, &def_aggregator);
+    let chunk_size = (out.len() / rayon::current_num_threads()) / 2;
+    let chunk_size = chunk_size.max(1);
+    let out2 = out
+        .into_par_iter()
+        .chunks(chunk_size)
+        .map(run_closure)
+        .reduce(Vec::new, |l, r| {
+            if l.is_empty() {
+                r
+            } else {
+                l.into_iter()
+                    .zip(r)
+                    .map(|(l, r)| match (l, r) {
+                        (Some(l), Some(r)) => {
+                            let o = l.combine(r);
+                            Some(o)
+                        },
+                        (Some(l), None) => Some(l),
+                        (None, Some(r)) => Some(r),
+                        (None, None) => None,
+                    })
+                    .collect::<Vec<_>>()
+            }
+        });
+
+    let mut cluster_vecs = out2.into_iter().flatten().collect::<Vec<_>>();
+
+    let unclustered_elems: Vec<usize> = cluster_labels
+        .iter()
+        .enumerate()
+        .filter(|(_, x)| match x {
+            ClusterLabel::Unassigned => true,
+            ClusterLabel::Noise => keep_unclustered,
+            _ => false,
+        })
+        .map(|(i, _elem)| i)
+        .collect();
+
+    // if unclustered_elems.len() > 0 {
+    //     log::debug!("Total Orig elems: {}", cluster_labels.len());
+    //     log::debug!("Unclustered elems: {}", unclustered_elems.len());
+    //     log::debug!("Clustered elems: {}", cluster_vecs.len());
+    // }
+
+    let unclustered_elems = unclustered_elems
+        .iter()
+        .map(|i| {
+            let mut oe = def_aggregator();
+            oe.add(&elements[*i]);
+            oe
+        })
+        .collect::<Vec<_>>();
+
+    cluster_vecs.extend(unclustered_elems);
+
+    timer.stop(true);
+    cluster_vecs
+}
+
+fn serial_aggregate_clusters<
+    T: HasIntensity + Send + Clone + Copy,
+    G: Sync + Send + ClusterAggregator<T, R>,
+    R: Send,
+    F: Fn() -> G + Send + Sync,
+>(
+    tot_clusters: u64,
+    cluster_labels: Vec<ClusterLabel<u64>>,
+    elements: &[T],
+    def_aggregator: &F,
+    keep_unclustered: bool,
+) -> Vec<G> {
+    let mut cluster_vecs: Vec<G> = Vec::with_capacity(tot_clusters as usize);
+    let mut unclustered_points: Vec<G> = Vec::new();
+    for _ in 0..tot_clusters {
+        cluster_vecs.push(def_aggregator());
+    }
+    for (point_index, cluster_label) in cluster_labels.iter().enumerate() {
+        match cluster_label {
+            ClusterLabel::Cluster(cluster_id) => {
+                let cluster_idx = *cluster_id as usize - 1;
+                cluster_vecs[cluster_idx].add(&(elements[point_index]));
+            },
+            ClusterLabel::Noise => {
+                if keep_unclustered {
+                    let mut oe = def_aggregator();
+                    oe.add(&elements[point_index]);
+                    unclustered_points.push(oe);
+                }
+            },
+            _ => {},
+        }
+    }
+    cluster_vecs.extend(unclustered_points);
+    cluster_vecs
 }
 
 fn _inner<T: Copy, G: ClusterAggregator<T, R>, R>(
