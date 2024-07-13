@@ -1,3 +1,8 @@
+use std::fmt;
+use std::ops::Index;
+use std::slice::SliceIndex;
+
+use rand::seq::index;
 pub use timsrust::Frame;
 pub use timsrust::FrameType;
 pub use timsrust::{
@@ -5,7 +10,8 @@ pub use timsrust::{
 };
 
 use crate::ms::tdf::{DIAFrameInfo, ScanRange};
-use crate::space::space_generics::HasIntensity;
+use crate::space::space_generics::NDPoint;
+use crate::space::space_generics::{AsNDPointsAtIndex, HasIntensity, IntenseAtIndex};
 
 use log::info;
 
@@ -30,6 +36,25 @@ pub struct RawTimsPeak {
     pub scan_index: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct RawTimsPeakReference<'a> {
+    pub intensity: &'a u32,
+    pub tof_index: &'a u32,
+    pub scan_index: &'a usize,
+}
+
+impl HasIntensity for RawTimsPeak {
+    fn intensity(&self) -> u64 {
+        self.intensity as u64
+    }
+}
+
+impl<'a> HasIntensity for RawTimsPeakReference<'a> {
+    fn intensity(&self) -> u64 {
+        *self.intensity as u64
+    }
+}
+
 fn _check_peak_sanity(peak: &TimsPeak) {
     debug_assert!(peak.intensity > 0);
     debug_assert!(peak.mz > 0.);
@@ -42,6 +67,58 @@ pub enum SortingOrder {
     Mz,
     Mobility,
     Intensity,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ScanNumberType {
+    Global(usize),
+    Local(usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MaxBounds {
+    requested: usize,
+    limit: usize,
+    local_limit: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ScanOutOfBoundsError {
+    Global(MaxBounds),
+    Local(MaxBounds),
+}
+
+impl ScanOutOfBoundsError {
+    pub fn local_limit(&self) -> usize {
+        match self {
+            ScanOutOfBoundsError::Global(x) => x.local_limit,
+            ScanOutOfBoundsError::Local(x) => x.local_limit,
+        }
+    }
+}
+
+impl fmt::Display for ScanOutOfBoundsError {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter,
+    ) -> std::fmt::Result {
+        match self {
+            ScanOutOfBoundsError::Global(x) => {
+                write!(
+                    f,
+                    "Global scan number out of bounds. Requested: {}, Limit: {}",
+                    x.requested, x.limit
+                )
+            },
+            ScanOutOfBoundsError::Local(x) => {
+                write!(
+                    f,
+                    "Local scan number out of bounds. Requested: {}, Limit: {}",
+                    x.requested, x.limit
+                )
+            },
+        }
+    }
 }
 
 /// Information on the context of a window in a frame.
@@ -64,8 +141,8 @@ pub trait FramePointTolerance {
     ) -> (u32, u32);
     fn scan_range(
         &self,
-        scan_index: usize,
-    ) -> (usize, usize);
+        scan_index: ScanNumberType,
+    ) -> (ScanNumberType, ScanNumberType);
 }
 
 struct AbsoluteFramePointTolerance {
@@ -87,13 +164,24 @@ impl FramePointTolerance for AbsoluteFramePointTolerance {
 
     fn scan_range(
         &self,
-        scan_index: usize,
-    ) -> (usize, usize) {
-        let scan_tolerance = self.scan_tolerance;
-        (
-            scan_index.saturating_sub(scan_tolerance),
-            scan_index + scan_tolerance,
-        )
+        scan_index: ScanNumberType,
+    ) -> (ScanNumberType, ScanNumberType) {
+        match scan_index {
+            ScanNumberType::Global(x) => {
+                let scan_tolerance = self.scan_tolerance;
+                (
+                    ScanNumberType::Global(x.saturating_sub(scan_tolerance)),
+                    ScanNumberType::Global(x + scan_tolerance),
+                )
+            },
+            ScanNumberType::Local(x) => {
+                let scan_tolerance = self.scan_tolerance;
+                (
+                    ScanNumberType::Local(x.saturating_sub(scan_tolerance)),
+                    ScanNumberType::Local(x + scan_tolerance),
+                )
+            },
+        }
     }
 }
 
@@ -198,7 +286,6 @@ impl<'a> FrameSlice<'a> {
         slice_window_info: Option<MsMsFrameSliceWindowInfo>,
     ) -> FrameSlice<'a> {
         let scan_offsets = &frame.scan_offsets[scan_start..=scan_end];
-        let scan_start = scan_offsets[0];
 
         let indprt_start = scan_offsets[0];
         let indptr_end = *scan_offsets.last().expect("Scan range is empty");
@@ -237,16 +324,18 @@ impl<'a> FrameSlice<'a> {
         &self,
         local_index: usize,
     ) -> usize {
+        debug_assert!(local_index < self.tof_indices.len());
         let search_val = self.scan_offsets[0] + local_index;
         let loc = self
             .scan_offsets
             .binary_search_by(|x| x.partial_cmp(&search_val).unwrap());
+
         let local_scan_index = match loc {
             Ok(mut x) => {
-                while x > 0 && self.scan_offsets[x - 1] >= search_val {
-                    x -= 1;
+                while self.scan_offsets[x] == search_val {
+                    x += 1;
                 }
-                x
+                x - 1
             },
             Err(x) => x - 1,
         };
@@ -257,8 +346,8 @@ impl<'a> FrameSlice<'a> {
         let mut scan_numbers = Vec::with_capacity(self.tof_indices.len());
         let curr_scan = self.scan_start;
 
-        for (scan_index, index_offset) in self.scan_offsets[1..].iter().enumerate() {
-            let num_tofs = index_offset - self.scan_offsets[scan_index];
+        for (scan_index, index_offsets) in self.scan_offsets.windows(2).enumerate() {
+            let num_tofs = index_offsets[1] - index_offsets[0];
             scan_numbers.extend(vec![curr_scan + scan_index; num_tofs]);
         }
 
@@ -270,21 +359,70 @@ impl<'a> FrameSlice<'a> {
                 last_scan = *scan;
             }
 
-            debug_assert!(scan_numbers[0] == self.scan_start);
+            // debug_assert_eq!(scan_numbers[0], self.scan_start);
+            debug_assert!(scan_numbers[0] >= self.scan_start);
             debug_assert!(scan_numbers.len() == self.tof_indices.len());
-            debug_assert_eq!(
-                scan_numbers.last().unwrap(),
-                &(self.scan_offsets.len() - 1 + self.scan_start)
+            debug_assert!(
+                scan_numbers.last().unwrap() <= &(self.scan_offsets.len() - 1 + self.scan_start)
             );
         }
         scan_numbers
     }
 
+    /// Get the tof indices and intensities at a scan number.
+    ///
+    /// Returns a tuple.
+    /// The first element is another tuple of the tof indices and intensities at the scan number.
+    /// The second element is the offset of the first local tof index in the scan.
+    ///
     pub fn tof_intensities_at_scan(
         &self,
-        scan_number: usize,
+        scan_number: ScanNumberType,
+    ) -> Result<((&[u32], &[u32]), usize), ScanOutOfBoundsError> {
+        let local_scan_number = self.scan_number_to_local(scan_number)?;
+        Ok(self.tof_intensities_at_local_scan(local_scan_number))
+    }
+
+    pub fn scan_number_to_local(
+        &self,
+        scan_number: ScanNumberType,
+    ) -> Result<usize, ScanOutOfBoundsError> {
+        match scan_number {
+            ScanNumberType::Global(x) => {
+                if x < self.scan_start {
+                    Err(ScanOutOfBoundsError::Global(MaxBounds {
+                        requested: x,
+                        limit: self.scan_start,
+                        local_limit: 0,
+                    }))
+                } else if x >= self.scan_start + self.scan_offsets.len() {
+                    Err(ScanOutOfBoundsError::Global(MaxBounds {
+                        requested: x,
+                        limit: self.scan_start + self.scan_offsets.len(),
+                        local_limit: self.scan_offsets.len() - 1,
+                    }))
+                } else {
+                    Ok(x - self.scan_start)
+                }
+            },
+            ScanNumberType::Local(x) => {
+                if x >= self.scan_offsets.len() {
+                    Err(ScanOutOfBoundsError::Local(MaxBounds {
+                        requested: x,
+                        limit: self.scan_offsets.len(),
+                        local_limit: self.scan_offsets.len() - 1,
+                    }))
+                } else {
+                    Ok(x)
+                }
+            },
+        }
+    }
+
+    fn tof_intensities_at_local_scan(
+        &self,
+        scan_index: usize,
     ) -> ((&[u32], &[u32]), usize) {
-        let scan_index = scan_number - self.scan_start;
         let offset_offset = self.scan_offsets[0];
         let scan_start = self.scan_offsets[scan_index] - offset_offset;
         let scan_end = self.scan_offsets[scan_index + 1] - offset_offset;
@@ -293,17 +431,18 @@ impl<'a> FrameSlice<'a> {
         ((tof_indices, intensities), scan_start)
     }
 
-    pub fn matching_range_at_scan<T>(
+    pub fn tof_range_in_tolerance_at_scan<T>(
         &self,
         tof_index: i32,
-        scan_number: usize,
+        scan_number: ScanNumberType,
         tolerance: &T,
-    ) -> Option<(Range, usize)>
+    ) -> Result<Option<Range>, ScanOutOfBoundsError>
     where
         T: FramePointTolerance,
     {
         // TODO implement later a two pointer approach for sorted slices of tof indices.
-        let ((tof_indices, _), start_indptr) = self.tof_intensities_at_scan(scan_number);
+        let ((tof_indices, _), local_tof_index_start) =
+            self.tof_intensities_at_scan(scan_number)?;
         let tof_len = tof_indices.len();
         let (start, end) = tolerance.tof_index_range(tof_index as u32);
         let tof_index_start = tof_indices.binary_search_by(|x| x.partial_cmp(&start).unwrap());
@@ -319,13 +458,14 @@ impl<'a> FrameSlice<'a> {
         };
 
         if tof_index_start >= tof_len {
-            return None;
+            return Ok(None);
         };
 
         let tof_index_end = match tof_index_end {
-            Ok(x) => x,
+            Ok(x) => x, // On this branch we dont add more bc tof indices are unique.
             Err(mut x) => {
                 while x < tof_len && tof_indices[x] < end {
+                    println!("tof_indices[x]: {}, x: {}", tof_indices[x], x);
                     x += 1;
                 }
                 x
@@ -333,16 +473,19 @@ impl<'a> FrameSlice<'a> {
         };
 
         if tof_index_end > tof_index_start {
-            Some(((tof_index_start, tof_index_end), start_indptr))
+            Ok(Some((
+                tof_index_start + local_tof_index_start,
+                tof_index_end + local_tof_index_start,
+            )))
         } else {
-            None
+            Ok(None)
         }
     }
 
     pub fn matching_rangeset<T>(
         &self,
         tof_index: i32,
-        scan_number: usize,
+        scan_number: ScanNumberType,
         tolerance: &T,
     ) -> Option<RangeSet>
     where
@@ -354,14 +497,27 @@ impl<'a> FrameSlice<'a> {
         };
 
         let scan_range = tolerance.scan_range(scan_number);
-        for scan_number in scan_range.0..scan_range.1 {
-            if let Some(range_offset) =
-                self.matching_range_at_scan(tof_index, scan_number, tolerance)
-            {
-                ranges.ranges.push((
-                    range_offset.0 .0 - range_offset.1,
-                    range_offset.0 .1 - range_offset.1,
-                ));
+        let local_start = match self.scan_number_to_local(scan_range.0) {
+            Ok(x) => x,
+            Err(x) => x.local_limit(),
+        };
+        let local_end = match self.scan_number_to_local(scan_range.1) {
+            Ok(x) => x,
+            Err(x) => x.local_limit(),
+        };
+
+        for scan_number in local_start..local_end {
+            let tmp = self.tof_range_in_tolerance_at_scan(
+                tof_index,
+                ScanNumberType::Local(scan_number),
+                tolerance,
+            );
+
+            match tmp {
+                Ok(Some(range_offset)) => {
+                    ranges.ranges.push(range_offset);
+                },
+                _ => (),
             }
         }
 
@@ -374,6 +530,236 @@ impl<'a> FrameSlice<'a> {
         } else {
             Some(ranges)
         }
+    }
+}
+
+// Tests for the FrameSlice
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_frame() -> Frame {
+        Frame {
+            index: 0,
+            scan_offsets: vec![0, 0, 0, 0, 0, 3, 5, 6],
+            tof_indices: vec![100, 101, 102, 10, 20, 30],
+            intensities: vec![123, 111, 12, 3, 4, 1],
+            rt: 65.34,
+            frame_type: FrameType::MS1,
+        }
+    }
+
+    #[test]
+    fn test_frame_slice() {
+        let frame = sample_frame();
+        let frame_slice = FrameSlice::slice_frame(&frame, 3, 5, None);
+
+        assert_eq!(frame_slice.scan_offsets, &[0, 0, 3]);
+        assert_eq!(frame_slice.tof_indices, &[100, 101, 102]);
+        assert_eq!(frame_slice.intensities, &[123, 111, 12]);
+        assert_eq!(frame_slice.parent_frame_index, 0);
+        assert_eq!(frame_slice.rt, 65.34);
+        assert_eq!(frame_slice.frame_type, FrameType::MS1);
+        assert_eq!(frame_slice.scan_start, 0);
+    }
+
+    #[test]
+    fn test_global_scan_at_index() {
+        let frame = sample_frame();
+        let frame_slice = FrameSlice::slice_frame(&frame, 3, 5, None);
+
+        assert_eq!(frame_slice.tof_indices, &[100, 101, 102]);
+        assert_eq!(frame_slice.global_scan_at_index(0), 4);
+        assert_eq!(frame_slice.global_scan_at_index(1), 4);
+        assert_eq!(frame_slice.global_scan_at_index(2), 4);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_global_scan_at_index_oob_fails() {
+        // these should fail ... test that it fails.
+        let frame = sample_frame();
+        let frame_slice = FrameSlice::slice_frame(&frame, 3, 5, None);
+        assert_eq!(frame_slice.tof_indices, &[100, 101, 102]);
+        frame_slice.global_scan_at_index(3);
+    }
+
+    #[test]
+    fn test_explode_scan_numbers() {
+        let frame = sample_frame();
+        let frame_slice = FrameSlice::slice_frame(&frame, 3, 5, None);
+        assert_eq!(frame_slice.tof_indices, &[100, 101, 102]);
+        assert_eq!(frame_slice.scan_offsets, &[0, 0, 3]);
+        assert_eq!(frame_slice.explode_scan_numbers(), vec![4, 4, 4]);
+    }
+
+    #[test]
+    fn test_tof_intensities_at_scan() {
+        let frame = sample_frame();
+        let frame_slice = FrameSlice::slice_frame(&frame, 3, 5, None);
+
+        assert_eq!(frame_slice.tof_indices, &[100, 101, 102]);
+        assert_eq!(frame_slice.scan_offsets, &[0, 0, 3]);
+        assert_eq!(frame_slice.intensities, &[123, 111, 12]);
+
+        let arg_expects = vec![
+            (
+                ScanNumberType::Global(4),
+                Ok(((vec![100, 101, 102], vec![123, 111, 12]), 0)),
+            ),
+            (
+                ScanNumberType::Local(1),
+                Ok(((vec![100, 101, 102], vec![123, 111, 12]), 0)),
+            ),
+            (
+                ScanNumberType::Global(2),
+                Err(ScanOutOfBoundsError::Global(MaxBounds {
+                    requested: 2,
+                    limit: 3,
+                    local_limit: 0,
+                })),
+            ),
+            (ScanNumberType::Global(3), Ok(((Vec::new(), Vec::new()), 0))),
+            (ScanNumberType::Local(0), Ok(((Vec::new(), Vec::new()), 0))),
+        ];
+
+        for (arg, expect) in arg_expects {
+            println!("arg: {:?}", arg);
+            let val = frame_slice.tof_intensities_at_scan(arg);
+            match (val, expect) {
+                (Ok(x), Ok(y)) => {
+                    assert_eq!(x.0 .0, y.0 .0);
+                    assert_eq!(x.0 .1, y.0 .1);
+                    assert_eq!(x.1, y.1);
+                },
+                (Err(x), Err(y)) => {
+                    assert_eq!(x, y);
+                },
+                (Ok(x), Err(y)) => panic!("Mismatch {:?} vs {:?}", x, y),
+                (Err(x), Ok(y)) => panic!("Mismatch {:?} vs {:?}", x, y),
+            }
+        }
+    }
+
+    #[test]
+    fn test_tof_range_in_tolerance_at_scan() {
+        let frame = sample_frame();
+        let frame_slice = FrameSlice::slice_frame(&frame, 3, 7, None);
+
+        assert_eq!(frame_slice.tof_indices, &[100, 101, 102, 10, 20, 30]);
+        assert_eq!(frame_slice.scan_offsets, &[0, 0, 3, 5, 6]);
+        assert_eq!(frame_slice.intensities, &[123, 111, 12, 3, 4, 1]);
+
+        let tolerance = AbsoluteFramePointTolerance {
+            tof_index_tolerance: 1,
+            scan_tolerance: 1,
+        };
+
+        let param_expect_vec = vec![
+            (10, ScanNumberType::Global(5), Ok(Some((3, 4)))),
+            (1, ScanNumberType::Global(5), Ok(None)),
+            (10, ScanNumberType::Global(4), Ok(None)),
+            (100, ScanNumberType::Global(4), Ok(Some((0, 1)))),
+            (101, ScanNumberType::Global(4), Ok(Some((0, 2)))),
+            (102, ScanNumberType::Global(4), Ok(Some((1, 3)))),
+            (100, ScanNumberType::Global(3), Ok(None)),
+            (100, ScanNumberType::Global(5), Ok(None)),
+            (
+                100,
+                ScanNumberType::Global(2),
+                Err(ScanOutOfBoundsError::Global(MaxBounds {
+                    requested: 2,
+                    limit: 3,
+                    local_limit: 0,
+                })),
+            ),
+            (
+                100,
+                ScanNumberType::Global(1),
+                Err(ScanOutOfBoundsError::Global(MaxBounds {
+                    requested: 1,
+                    limit: 3,
+                    local_limit: 0,
+                })),
+            ),
+            (
+                100,
+                ScanNumberType::Global(0),
+                Err(ScanOutOfBoundsError::Global(MaxBounds {
+                    requested: 0,
+                    limit: 3,
+                    local_limit: 0,
+                })),
+            ),
+        ];
+        for (tof_index, scan_number, expect) in param_expect_vec {
+            println!("tof_index: {}, scan_number: {:?}", tof_index, scan_number);
+            let val =
+                frame_slice.tof_range_in_tolerance_at_scan(tof_index, scan_number, &tolerance);
+
+            match (val, expect) {
+                (Ok(Some(x)), Ok(Some(y))) => {
+                    assert_eq!(x, y);
+                },
+                (Ok(None), Ok(None)) => (),
+                (Err(x), Err(y)) => {
+                    assert_eq!(x, y);
+                },
+                (Ok(x), Ok(None)) => panic!("Mismatch {:?} vs {:?}", x, expect),
+                (Ok(None), Ok(x)) => panic!("Mismatch {:?} vs {:?}", x, expect),
+                (Err(x), Ok(y)) => panic!("Mismatch {:?} vs {:?}", x, y),
+                (Ok(x), Err(y)) => panic!("Mismatch {:?} vs {:?}", x, y),
+            }
+        }
+    }
+
+    fn sample_ms2_frame() -> Frame {
+        Frame {
+            index: 0,
+            scan_offsets: vec![0, 0, 3, 5, 6],
+            tof_indices: vec![100, 101, 102, 10, 20, 30],
+            intensities: vec![123, 111, 12, 3, 4, 1],
+            rt: 65.34,
+            frame_type: FrameType::MS2(timsrust::AcquisitionType::DIAPASEF),
+        }
+    }
+}
+
+impl<'a> IntenseAtIndex<RawTimsPeak> for FrameSlice<'a> {
+    fn get_intense_at_index(
+        &self,
+        index: usize,
+    ) -> RawTimsPeak {
+        let intensity = self.intensities[index];
+        let tof_index = self.tof_indices[index];
+        let scan_index = self.global_scan_at_index(index);
+
+        let out = RawTimsPeak {
+            intensity,
+            tof_index,
+            scan_index,
+        };
+
+        out
+    }
+}
+
+impl<'a> AsNDPointsAtIndex<3> for FrameSlice<'a> {
+    fn get_ndpoint(
+        &self,
+        index: usize,
+    ) -> NDPoint<3> {
+        let intensity = self.intensities[index];
+        let tof_index = self.tof_indices[index];
+        let scan_index = self.global_scan_at_index(index);
+
+        NDPoint {
+            values: [tof_index as f32, scan_index as f32, intensity as f32],
+        }
+    }
+
+    fn num_ndpoints(&self) -> usize {
+        self.intensities.len()
     }
 }
 

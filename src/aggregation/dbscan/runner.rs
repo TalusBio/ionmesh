@@ -2,11 +2,10 @@ use crate::space::space_generics::NDPointConverter;
 use crate::space::space_generics::{
     AsNDPointsAtIndex, HasIntensity, IntenseAtIndex, NDPoint, QueriableIndexedPoints,
 };
+use std::marker::PhantomData;
+
 use crate::utils;
 use indicatif::ProgressIterator;
-
-use rayon::prelude::*;
-use serde_json::value::Index;
 
 use crate::aggregation::aggregators::ClusterLabel;
 use crate::aggregation::dbscan::utils::FilterFunCache;
@@ -219,14 +218,15 @@ struct DBSCANRunner<'a, const N: usize, C, E> {
 
 struct DBSCANPoints<'a, const N: usize, E, PP, QP>
 where
-    E: HasIntensity,
-    PP: IntenseAtIndex<E> + std::ops::Index<usize, Output = E> + std::marker::Send + ?Sized,
+    PP: IntenseAtIndex<E> + std::marker::Send + ?Sized,
     QP: AsNDPointsAtIndex<N> + ?Sized,
+    E: HasIntensity,
 {
     prefiltered_peaks: &'a PP, // &'a Vec<E>,
     intensity_sorted_indices: &'a Vec<(usize, u64)>,
     indexed_points: &'a (dyn QueriableIndexedPoints<'a, N, usize> + std::marker::Sync),
     quad_points: &'a QP, // [NDPoint<N>],
+    _marker: PhantomData<E>,
 }
 
 impl<'a, 'b: 'a, const N: usize, C, E> DBSCANRunner<'a, N, C, E>
@@ -242,13 +242,16 @@ where
         quad_points: &'b QP, //[NDPoint<N>], // trait impl AsNDPointAtIndex<usize, Output=NDPoint<N>>
     ) -> ClusterLabels
     where
-        PP: IntenseAtIndex<E> + ?Sized,
+        PP: IntenseAtIndex<E> + Send + Sync + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
     {
         let usize_filterfun = match self.filter_fun {
             Some(filterfun) => {
                 let cl = |a: &usize, b: &usize| {
-                    filterfun(&prefiltered_peaks[*a], &prefiltered_peaks[*b])
+                    filterfun(
+                        &prefiltered_peaks.get_intense_at_index(*a),
+                        &prefiltered_peaks.get_intense_at_index(*b),
+                    )
                 };
                 let bind = Some(cl);
                 bind
@@ -263,6 +266,7 @@ where
             intensity_sorted_indices,
             indexed_points,
             quad_points,
+            _marker: PhantomData,
         };
         // Q: if filter fun is required ... why is it an option?
         state = self.process_points(state, &points);
@@ -293,7 +297,7 @@ where
         points: &DBSCANPoints<'a, N, E, PP, QP>,
     ) -> DBSCANRunnerState
     where
-        PP: IntenseAtIndex<E> + ?Sized,
+        PP: IntenseAtIndex<E> + Send + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
     {
         let my_progbar =
@@ -326,7 +330,7 @@ where
         timers: &mut DBScanTimers,
         cc_metrics: &mut CandidateCountMetrics,
     ) where
-        PP: IntenseAtIndex<E> + ?Sized,
+        PP: IntenseAtIndex<E> + Send + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
     {
         if cluster_labels.get(point_index) != ClusterLabel::Unassigned {
@@ -364,13 +368,12 @@ where
         cc_metrics: &mut CandidateCountMetrics,
     ) -> Vec<usize>
     where
-        PP: IntenseAtIndex<E> + ?Sized,
+        PP: IntenseAtIndex<E> + Send + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
     {
         timers.outer_loop_nn_timer.reset_start();
-        let query_elems = self
-            .converter
-            .convert_to_bounds_query(&points.quad_points.get_ndpoint(point_index));
+        let binding = points.quad_points.get_ndpoint(point_index);
+        let query_elems = self.converter.convert_to_bounds_query(&binding);
         let mut candidate_neighbors = points
             .indexed_points
             .query_ndrange(&query_elems.0, query_elems.1)
@@ -391,8 +394,8 @@ where
                 Some(res) => res,
                 None => {
                     let res = (self.filter_fun.unwrap())(
-                        &points.prefiltered_peaks[*i],
-                        &points.prefiltered_peaks[point_index],
+                        &points.prefiltered_peaks.get_intense_at_index(*i),
+                        &points.prefiltered_peaks.get_intense_at_index(point_index),
                     );
                     tmp.set(*i, point_index, res);
                     res
@@ -419,12 +422,12 @@ where
         timers: &mut DBScanTimers,
     ) -> bool
     where
-        PP: IntenseAtIndex<E> + ?Sized,
+        PP: IntenseAtIndex<E> + Send + ?Sized,
     {
         timers.outer_intensity_calculation.reset_start();
         let neighbor_intensity_total = neighbors
             .iter()
-            .map(|i| prefiltered_peaks[*i].intensity())
+            .map(|i| prefiltered_peaks.intensity_at_index(*i))
             .sum::<u64>();
         timers.outer_intensity_calculation.stop(false);
         return neighbor_intensity_total >= self.min_intensity;
@@ -439,7 +442,7 @@ where
         filter_fun_cache: &mut Option<FilterFunCache>,
         timers: &mut DBScanTimers,
     ) where
-        PP: IntenseAtIndex<E> + ?Sized,
+        PP: IntenseAtIndex<E> + Send + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
     {
         cluster_labels.set_new_cluster(apex_point_index);
@@ -490,13 +493,12 @@ where
         timers: &mut DBScanTimers,
     ) -> Vec<usize>
     where
-        PP: IntenseAtIndex<E> + ?Sized,
+        PP: IntenseAtIndex<E> + Send + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
     {
         timers.inner_loop_nn_timer.reset_start();
-        let inner_query_elems = self
-            .converter
-            .convert_to_bounds_query(&points.quad_points.get_ndpoint(neighbor_index));
+        let binding = points.quad_points.get_ndpoint(neighbor_index);
+        let inner_query_elems = self.converter.convert_to_bounds_query(&binding);
         let local_neighbors: Vec<usize> = points
             .indexed_points
             .query_ndrange(&inner_query_elems.0, inner_query_elems.1)
@@ -518,7 +520,7 @@ where
         timers: &mut DBScanTimers,
     ) -> Vec<usize>
     where
-        PP: IntenseAtIndex<E> + ?Sized,
+        PP: IntenseAtIndex<E> + Send + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
     {
         let filtered = self.apply_filter_fun(
@@ -551,7 +553,7 @@ where
         timers: &mut DBScanTimers,
     ) -> Vec<usize>
     where
-        PP: IntenseAtIndex<E> + ?Sized,
+        PP: IntenseAtIndex<E> + Send + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
     {
         timers.local_neighbor_filter_timer.reset_start();
@@ -571,17 +573,18 @@ where
         timers: &mut DBScanTimers,
     ) -> bool
     where
-        PP: IntenseAtIndex<E> + ?Sized,
+        PP: IntenseAtIndex<E> + Send + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
     {
         timers.inner_intensity_calculation.reset_start();
         let mut neighbor_intensity_total: u64 = neighbors
             .iter()
-            .map(|&i| points.prefiltered_peaks[i].intensity())
+            .map(|&i| points.prefiltered_peaks.intensity_at_index(i))
             .sum();
 
-        neighbor_intensity_total +=
-            points.prefiltered_peaks[current_center_point_index].intensity();
+        neighbor_intensity_total += points
+            .prefiltered_peaks
+            .intensity_at_index(current_center_point_index);
         timers.inner_intensity_calculation.stop(false);
 
         neighbors.len() >= self.min_n && neighbor_intensity_total >= self.min_intensity
@@ -603,7 +606,7 @@ where
         filter_fun_cache: &mut Option<FilterFunCache>,
     ) -> Vec<usize>
     where
-        PP: IntenseAtIndex<E> + ?Sized,
+        PP: IntenseAtIndex<E> + Send + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
     {
         if let Some(cache) = filter_fun_cache {
@@ -612,8 +615,8 @@ where
                 .filter(|&i| {
                     cache.get(i, point_index).unwrap_or_else(|| {
                         let res = (self.filter_fun.unwrap())(
-                            &points.prefiltered_peaks[i],
-                            &points.prefiltered_peaks[point_index],
+                            &points.prefiltered_peaks.get_intense_at_index(i),
+                            &points.prefiltered_peaks.get_intense_at_index(point_index),
                         );
                         cache.set(i, point_index, res);
                         res
@@ -642,15 +645,15 @@ where
         timers: &mut DBScanTimers,
     ) -> Vec<usize>
     where
-        PP: IntenseAtIndex<E> + ?Sized,
+        PP: IntenseAtIndex<E> + Send + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
     {
         timers.local_neighbor_filter_timer.reset_start();
-        let query_intensity = points.prefiltered_peaks[neighbor_index].intensity();
+        let query_intensity = points.prefiltered_peaks.intensity_at_index(neighbor_index);
         let query_point = &points.quad_points.get_ndpoint(neighbor_index);
 
         neighbors.retain(|&i| {
-            let going_downhill = points.prefiltered_peaks[i].intensity() <= query_intensity;
+            let going_downhill = points.prefiltered_peaks.intensity_at_index(i) <= query_intensity;
             let within_distance =
                 self.is_within_max_distance(&points.quad_points.get_ndpoint(i), query_point);
             going_downhill && within_distance
@@ -677,7 +680,7 @@ pub fn _dbscan<
     'a,
     const N: usize,
     C: NDPointConverter<E, N>,
-    E: Sync + HasIntensity,
+    E: Sync + Copy + HasIntensity,
     T: QueriableIndexedPoints<'a, N, usize> + std::marker::Sync,
 >(
     indexed_points: &'a T,

@@ -99,7 +99,7 @@ impl<const D: usize> NDBoundary<D> {
 
 // #[derive(Debug, Clone, Copy)]
 // Oddly enough ... adding copy makes it slower ...
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct NDPoint<const DIMENSIONALITY: usize> {
     pub values: [f32; DIMENSIONALITY],
 }
@@ -121,7 +121,7 @@ pub trait AsNDPointsAtIndex<const D: usize> {
     fn get_ndpoint(
         &self,
         index: usize,
-    ) -> &NDPoint<D>;
+    ) -> NDPoint<D>;
     fn num_ndpoints(&self) -> usize;
 }
 
@@ -129,8 +129,8 @@ impl<const D: usize> AsNDPointsAtIndex<D> for [NDPoint<D>] {
     fn get_ndpoint(
         &self,
         index: usize,
-    ) -> &NDPoint<D> {
-        &self[index]
+    ) -> NDPoint<D> {
+        self[index]
     }
 
     fn num_ndpoints(&self) -> usize {
@@ -145,7 +145,7 @@ pub trait HasIntensity: Sync + Send {
     }
 }
 
-pub trait IntenseAtIndex<T>: Index<usize, Output = T> + Send + Sync
+pub trait IntenseAtIndex<T>
 where
     T: HasIntensity,
 {
@@ -153,17 +153,31 @@ where
         &self,
         index: usize,
     ) -> u64 {
-        self[index].intensity()
+        self.get_intense_at_index(index).intensity()
     }
     fn weight_at_index(
         &self,
         index: usize,
     ) -> u64 {
-        self[index].weight()
+        self.get_intense_at_index(index).weight()
     }
+    fn get_intense_at_index(
+        &self,
+        index: usize,
+    ) -> T;
 }
 
-impl<T> IntenseAtIndex<T> for [T] where T: HasIntensity {}
+impl<T> IntenseAtIndex<T> for [T]
+where
+    T: HasIntensity + Copy,
+{
+    fn get_intense_at_index(
+        &self,
+        index: usize,
+    ) -> T {
+        self[index]
+    }
+}
 
 pub trait TraceLike<R: std::convert::Into<f64>> {
     fn get_mz(&self) -> f64;
