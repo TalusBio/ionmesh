@@ -1,5 +1,3 @@
-use std::ops::Index;
-
 #[derive(Debug, Clone, Copy)]
 pub struct NDBoundary<const DIMENSIONALITY: usize> {
     pub starts: [f32; DIMENSIONALITY],
@@ -145,37 +143,51 @@ pub trait HasIntensity: Sync + Send {
     }
 }
 
-pub trait IntenseAtIndex<T>
+pub trait IntenseAtIndex {
+    fn intensity_at_index(
+        &self,
+        index: usize,
+    ) -> u64;
+    fn weight_at_index(
+        &self,
+        index: usize,
+    ) -> u64 {
+        self.intensity_at_index(index)
+    }
+}
+
+impl<T> IntenseAtIndex for [T]
 where
-    T: HasIntensity,
+    T: HasIntensity + Copy,
 {
     fn intensity_at_index(
         &self,
         index: usize,
     ) -> u64 {
-        self.get_intense_at_index(index).intensity()
+        self[index].intensity()
     }
-    fn weight_at_index(
+}
+
+pub trait DistantAtIndex<T> {
+    fn distance_at_indices(
         &self,
         index: usize,
-    ) -> u64 {
-        self.get_intense_at_index(index).weight()
-    }
-    fn get_intense_at_index(
-        &self,
-        index: usize,
+        other: usize,
     ) -> T;
 }
 
-impl<T> IntenseAtIndex<T> for [T]
-where
-    T: HasIntensity + Copy,
-{
-    fn get_intense_at_index(
+impl<const N: usize> DistantAtIndex<f32> for [NDPoint<N>] {
+    fn distance_at_indices(
         &self,
         index: usize,
-    ) -> T {
-        self[index]
+        other: usize,
+    ) -> f32 {
+        let mut sum = 0.0;
+        for i in 0..N {
+            let diff = self[index].values[i] - self[other].values[i];
+            sum += diff * diff;
+        }
+        sum.sqrt()
     }
 }
 
@@ -203,27 +215,27 @@ pub trait NDPointConverter<T, const D: usize> {
         let boundary = NDBoundary::from_ndpoints(&points);
         (points, boundary)
     }
-    fn convert_to_bounds_query<'a>(
-        &self,
-        point: &'a NDPoint<D>,
-    ) -> (NDBoundary<D>, Option<&'a NDPoint<D>>) {
-        let bounds = NDBoundary::new(
-            point
-                .values
-                .iter()
-                .map(|x| *x - 1.)
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap(),
-            point
-                .values
-                .iter()
-                .map(|x| *x + 1.)
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap(),
-        );
+}
 
-        (bounds, Some(point))
-    }
+pub fn convert_to_bounds_query<'a, const D: usize>(
+    point: &'a NDPoint<D>
+) -> (NDBoundary<D>, Option<&'a NDPoint<D>>) {
+    let bounds = NDBoundary::new(
+        point
+            .values
+            .iter()
+            .map(|x| *x - 1.)
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap(),
+        point
+            .values
+            .iter()
+            .map(|x| *x + 1.)
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap(),
+    );
+
+    (bounds, Some(point))
 }

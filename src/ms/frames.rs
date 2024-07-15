@@ -725,23 +725,36 @@ mod tests {
     }
 }
 
-impl<'a> IntenseAtIndex<RawTimsPeak> for FrameSlice<'a> {
-    fn get_intense_at_index(
+impl<'a> IntenseAtIndex for FrameSlice<'a> {
+    fn intensity_at_index(
         &self,
         index: usize,
-    ) -> RawTimsPeak {
-        let intensity = self.intensities[index];
-        let tof_index = self.tof_indices[index];
-        let scan_index = self.global_scan_at_index(index);
-
-        let out = RawTimsPeak {
-            intensity,
-            tof_index,
-            scan_index,
-        };
-
-        out
+    ) -> u64 {
+        self.intensities[index] as u64
     }
+    fn weight_at_index(
+        &self,
+        index: usize,
+    ) -> u64 {
+        self.intensities[index] as u64
+    }
+
+    // fn get_intense_at_index(
+    //     &self,
+    //     index: usize,
+    // ) -> RawTimsPeak {
+    //     let intensity = self.intensities[index];
+    //     let tof_index = self.tof_indices[index];
+    //     let scan_index = self.global_scan_at_index(index);
+
+    //     let out = RawTimsPeak {
+    //         intensity,
+    //         tof_index,
+    //         scan_index,
+    //     };
+
+    //     out
+    // }
 }
 
 impl<'a> AsNDPointsAtIndex<3> for FrameSlice<'a> {

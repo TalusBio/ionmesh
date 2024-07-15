@@ -1,6 +1,7 @@
 use crate::space::space_generics::NDPointConverter;
 use crate::space::space_generics::{
-    AsNDPointsAtIndex, HasIntensity, IntenseAtIndex, NDPoint, QueriableIndexedPoints,
+    convert_to_bounds_query, AsNDPointsAtIndex, DistantAtIndex, HasIntensity, IntenseAtIndex,
+    NDPoint, QueriableIndexedPoints,
 };
 use std::marker::PhantomData;
 
@@ -207,51 +208,78 @@ impl DBSCANRunnerState {
     }
 }
 
-struct DBSCANRunner<'a, const N: usize, C, E> {
+struct DBSCANRunner<'a, const N: usize, D> {
     min_n: usize,
     min_intensity: u64,
-    filter_fun: Option<&'a (dyn Fn(&E, &E) -> bool + Send + Sync)>,
-    converter: C,
+    filter_fun: Option<&'a (dyn Fn(&D) -> bool + Send + Sync)>,
     progress: bool,
     max_extension_distances: &'a [f32; N],
 }
 
-struct DBSCANPoints<'a, const N: usize, E, PP, QP>
+struct DBSCANPoints<'a, const N: usize, PP, QP, D, E>
 where
-    PP: IntenseAtIndex<E> + std::marker::Send + ?Sized,
+    PP: IntenseAtIndex + std::marker::Send + ?Sized,
     QP: AsNDPointsAtIndex<N> + ?Sized,
-    E: HasIntensity,
+    D: DistantAtIndex<E>,
 {
     prefiltered_peaks: &'a PP, // &'a Vec<E>,
     intensity_sorted_indices: &'a Vec<(usize, u64)>,
     indexed_points: &'a (dyn QueriableIndexedPoints<'a, N, usize> + std::marker::Sync),
     quad_points: &'a QP, // [NDPoint<N>],
-    _marker: PhantomData<E>,
+    dist: D,
+    _phantom_metric: PhantomData<E>,
 }
 
-impl<'a, 'b: 'a, const N: usize, C, E> DBSCANRunner<'a, N, C, E>
+impl<'a, const N: usize, PP, QQ, D, E> DBSCANPoints<'a, N, PP, QQ, D, E>
 where
-    C: NDPointConverter<E, N>,
-    E: Sync + HasIntensity,
+    PP: IntenseAtIndex + std::marker::Send + ?Sized,
+    QQ: AsNDPointsAtIndex<N> + ?Sized,
+    D: DistantAtIndex<E>,
 {
-    fn run<PP, QP>(
+    fn get_intensity_at_index(
+        &self,
+        index: usize,
+    ) -> u64 {
+        self.prefiltered_peaks.intensity_at_index(index)
+    }
+
+    fn get_ndpoint_at_index(
+        &self,
+        index: usize,
+    ) -> NDPoint<N> {
+        self.quad_points.get_ndpoint(index)
+    }
+
+    fn get_distance_at_indices(
+        &self,
+        a: usize,
+        b: usize,
+    ) -> E {
+        self.dist.distance_at_indices(a, b)
+    }
+}
+
+impl<'a, 'b: 'a, const N: usize, D> DBSCANRunner<'a, N, D>
+where
+    D: Sync,
+{
+    fn run<PP, QP, DAI>(
         &self,
         prefiltered_peaks: &'b PP, // Vec<E>, // trait impl Index<usize, Output=E>
         intensity_sorted_indices: &'b Vec<(usize, u64)>,
         indexed_points: &'b (dyn QueriableIndexedPoints<'a, N, usize> + std::marker::Sync),
         quad_points: &'b QP, //[NDPoint<N>], // trait impl AsNDPointAtIndex<usize, Output=NDPoint<N>>
+        distance_calculator: DAI,
     ) -> ClusterLabels
     where
-        PP: IntenseAtIndex<E> + Send + Sync + ?Sized,
+        PP: IntenseAtIndex + Send + Sync + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
+        DAI: DistantAtIndex<D> + Send + Sync,
     {
         let usize_filterfun = match self.filter_fun {
             Some(filterfun) => {
                 let cl = |a: &usize, b: &usize| {
-                    filterfun(
-                        &prefiltered_peaks.get_intense_at_index(*a),
-                        &prefiltered_peaks.get_intense_at_index(*b),
-                    )
+                    filterfun(&distance_calculator.distance_at_indices(*a, *b))
                 };
                 let bind = Some(cl);
                 bind
@@ -261,12 +289,13 @@ where
 
         let mut state = DBSCANRunnerState::new(intensity_sorted_indices.len(), usize_filterfun);
 
-        let points: DBSCANPoints<N, E, PP, QP> = DBSCANPoints {
+        let points: DBSCANPoints<N, PP, QP, DAI, D> = DBSCANPoints {
             prefiltered_peaks,
             intensity_sorted_indices,
             indexed_points,
             quad_points,
-            _marker: PhantomData,
+            dist: distance_calculator,
+            _phantom_metric: PhantomData,
         };
         // Q: if filter fun is required ... why is it an option?
         state = self.process_points(state, &points);
@@ -291,14 +320,15 @@ where
         state.cluster_labels
     }
 
-    fn process_points<PP, QP>(
+    fn process_points<PP, QP, DAI>(
         &self,
         mut state: DBSCANRunnerState,
-        points: &DBSCANPoints<'a, N, E, PP, QP>,
+        points: &DBSCANPoints<'a, N, PP, QP, DAI, D>,
     ) -> DBSCANRunnerState
     where
-        PP: IntenseAtIndex<E> + Send + ?Sized,
+        PP: IntenseAtIndex + Send + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
+        DAI: DistantAtIndex<D> + Send + Sync,
     {
         let my_progbar =
             state.create_progress_bar(points.intensity_sorted_indices.len(), self.progress);
@@ -321,17 +351,18 @@ where
     }
 
     /// This method gets applied to every point in decreasing intensity order.
-    fn process_single_point<PP, QP>(
+    fn process_single_point<PP, QP, DAI>(
         &self,
         point_index: usize,
-        points: &DBSCANPoints<'a, N, E, PP, QP>,
+        points: &DBSCANPoints<'a, N, PP, QP, DAI, D>,
         cluster_labels: &mut ClusterLabels,
         filter_fun_cache: &mut Option<FilterFunCache>,
         timers: &mut DBScanTimers,
         cc_metrics: &mut CandidateCountMetrics,
     ) where
-        PP: IntenseAtIndex<E> + Send + ?Sized,
+        PP: IntenseAtIndex + Send + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
+        DAI: DistantAtIndex<D> + Send + Sync,
     {
         if cluster_labels.get(point_index) != ClusterLabel::Unassigned {
             return;
@@ -359,21 +390,22 @@ where
         );
     }
 
-    fn find_main_loop_neighbors<PP, QP>(
+    fn find_main_loop_neighbors<PP, QP, DAI>(
         &self,
         point_index: usize,
-        points: &DBSCANPoints<'a, N, E, PP, QP>,
+        points: &DBSCANPoints<'a, N, PP, QP, DAI, D>,
         filter_fun_cache: &mut Option<FilterFunCache>,
         timers: &mut DBScanTimers,
         cc_metrics: &mut CandidateCountMetrics,
     ) -> Vec<usize>
     where
-        PP: IntenseAtIndex<E> + Send + ?Sized,
+        PP: IntenseAtIndex + Send + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
+        DAI: DistantAtIndex<D> + Send + Sync,
     {
         timers.outer_loop_nn_timer.reset_start();
         let binding = points.quad_points.get_ndpoint(point_index);
-        let query_elems = self.converter.convert_to_bounds_query(&binding);
+        let query_elems = convert_to_bounds_query(&binding);
         let mut candidate_neighbors = points
             .indexed_points
             .query_ndrange(&query_elems.0, query_elems.1)
@@ -394,8 +426,7 @@ where
                 Some(res) => res,
                 None => {
                     let res = (self.filter_fun.unwrap())(
-                        &points.prefiltered_peaks.get_intense_at_index(*i),
-                        &points.prefiltered_peaks.get_intense_at_index(point_index),
+                        &points.get_distance_at_indices(*i, point_index),
                     );
                     tmp.set(*i, point_index, res);
                     res
@@ -422,7 +453,7 @@ where
         timers: &mut DBScanTimers,
     ) -> bool
     where
-        PP: IntenseAtIndex<E> + Send + ?Sized,
+        PP: IntenseAtIndex + Send + ?Sized,
     {
         timers.outer_intensity_calculation.reset_start();
         let neighbor_intensity_total = neighbors
@@ -433,17 +464,18 @@ where
         return neighbor_intensity_total >= self.min_intensity;
     }
 
-    fn main_loop_expand_cluster<PP, QP>(
+    fn main_loop_expand_cluster<PP, QP, DAI>(
         &self,
         apex_point_index: usize,
         neighbors: Vec<usize>,
-        points: &DBSCANPoints<'a, N, E, PP, QP>,
+        points: &DBSCANPoints<'a, N, PP, QP, DAI, D>,
         cluster_labels: &mut ClusterLabels,
         filter_fun_cache: &mut Option<FilterFunCache>,
         timers: &mut DBScanTimers,
     ) where
-        PP: IntenseAtIndex<E> + Send + ?Sized,
+        PP: IntenseAtIndex + Send + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
+        DAI: DistantAtIndex<D> + Send + Sync,
     {
         cluster_labels.set_new_cluster(apex_point_index);
         let mut seed_set: Vec<usize> = neighbors;
@@ -486,19 +518,20 @@ where
         }
     }
 
-    fn find_local_neighbors<PP, QP>(
+    fn find_local_neighbors<PP, QP, DAI>(
         &self,
         neighbor_index: usize,
-        points: &DBSCANPoints<'a, N, E, PP, QP>,
+        points: &DBSCANPoints<'a, N, PP, QP, DAI, D>,
         timers: &mut DBScanTimers,
     ) -> Vec<usize>
     where
-        PP: IntenseAtIndex<E> + Send + ?Sized,
+        PP: IntenseAtIndex + Send + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
+        DAI: DistantAtIndex<D> + Send + Sync,
     {
         timers.inner_loop_nn_timer.reset_start();
         let binding = points.quad_points.get_ndpoint(neighbor_index);
-        let inner_query_elems = self.converter.convert_to_bounds_query(&binding);
+        let inner_query_elems = convert_to_bounds_query(&binding);
         let local_neighbors: Vec<usize> = points
             .indexed_points
             .query_ndrange(&inner_query_elems.0, inner_query_elems.1)
@@ -509,19 +542,20 @@ where
         local_neighbors
     }
 
-    fn filter_neighbors_inner_loop<PP, QP>(
+    fn filter_neighbors_inner_loop<PP, QP, DAI>(
         &self,
         local_neighbors: Vec<usize>,
         cluster_apex_point_index: usize,
         current_center_point_index: usize,
-        points: &DBSCANPoints<'a, N, E, PP, QP>,
+        points: &DBSCANPoints<'a, N, PP, QP, DAI, D>,
         cluster_labels: &ClusterLabels,
         filter_fun_cache: &mut Option<FilterFunCache>,
         timers: &mut DBScanTimers,
     ) -> Vec<usize>
     where
-        PP: IntenseAtIndex<E> + Send + ?Sized,
+        PP: IntenseAtIndex + Send + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
+        DAI: DistantAtIndex<D> + Send + Sync,
     {
         let filtered = self.apply_filter_fun(
             local_neighbors,
@@ -545,16 +579,17 @@ where
         )
     }
 
-    fn filter_by_apex_distance<PP, QP>(
+    fn filter_by_apex_distance<PP, QP, DAI>(
         &self,
         mut neighbors: Vec<usize>,
         apex_point_index: usize,
-        points: &DBSCANPoints<'a, N, E, PP, QP>,
+        points: &DBSCANPoints<'a, N, PP, QP, DAI, D>,
         timers: &mut DBScanTimers,
     ) -> Vec<usize>
     where
-        PP: IntenseAtIndex<E> + Send + ?Sized,
+        PP: IntenseAtIndex + Send + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
+        DAI: DistantAtIndex<D> + Send + Sync,
     {
         timers.local_neighbor_filter_timer.reset_start();
         let query_point = &points.quad_points.get_ndpoint(apex_point_index);
@@ -565,16 +600,17 @@ where
         neighbors
     }
 
-    fn is_extension_core_point<PP, QP>(
+    fn is_extension_core_point<PP, QP, DAI>(
         &self,
         neighbors: &[usize],
         current_center_point_index: usize,
-        points: &DBSCANPoints<'a, N, E, PP, QP>,
+        points: &DBSCANPoints<'a, N, PP, QP, DAI, D>,
         timers: &mut DBScanTimers,
     ) -> bool
     where
-        PP: IntenseAtIndex<E> + Send + ?Sized,
+        PP: IntenseAtIndex + Send + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
+        DAI: DistantAtIndex<D> + Send + Sync,
     {
         timers.inner_intensity_calculation.reset_start();
         let mut neighbor_intensity_total: u64 = neighbors
@@ -598,16 +634,17 @@ where
     /// one could pass a function that checks if the chromatograms a high correlation.
     /// Because two might share the same point in space, intensity is not really
     /// relevant but co-elution might be critical.
-    fn apply_filter_fun<PP, QP>(
+    fn apply_filter_fun<PP, QP, DAI>(
         &self,
         local_neighbors: Vec<usize>,
         point_index: usize,
-        points: &DBSCANPoints<'a, N, E, PP, QP>,
+        points: &DBSCANPoints<'a, N, PP, QP, DAI, D>,
         filter_fun_cache: &mut Option<FilterFunCache>,
     ) -> Vec<usize>
     where
-        PP: IntenseAtIndex<E> + Send + ?Sized,
+        PP: IntenseAtIndex + Send + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
+        DAI: DistantAtIndex<D> + Send + Sync,
     {
         if let Some(cache) = filter_fun_cache {
             local_neighbors
@@ -615,8 +652,7 @@ where
                 .filter(|&i| {
                     cache.get(i, point_index).unwrap_or_else(|| {
                         let res = (self.filter_fun.unwrap())(
-                            &points.prefiltered_peaks.get_intense_at_index(i),
-                            &points.prefiltered_peaks.get_intense_at_index(point_index),
+                            &points.get_distance_at_indices(i, point_index),
                         );
                         cache.set(i, point_index, res);
                         res
@@ -637,16 +673,17 @@ where
         neighbors
     }
 
-    fn filter_by_local_intensity_and_distance<PP, QP>(
+    fn filter_by_local_intensity_and_distance<PP, QP, DAI>(
         &self,
         mut neighbors: Vec<usize>,
         neighbor_index: usize,
-        points: &DBSCANPoints<'a, N, E, PP, QP>,
+        points: &DBSCANPoints<'a, N, PP, QP, DAI, D>,
         timers: &mut DBScanTimers,
     ) -> Vec<usize>
     where
-        PP: IntenseAtIndex<E> + Send + ?Sized,
+        PP: IntenseAtIndex + Send + ?Sized,
         QP: AsNDPointsAtIndex<N> + ?Sized,
+        DAI: DistantAtIndex<D> + Send + Sync,
     {
         timers.local_neighbor_filter_timer.reset_start();
         let query_intensity = points.prefiltered_peaks.intensity_at_index(neighbor_index);
@@ -682,6 +719,7 @@ pub fn _dbscan<
     C: NDPointConverter<E, N>,
     E: Sync + Copy + HasIntensity,
     T: QueriableIndexedPoints<'a, N, usize> + std::marker::Sync,
+    D: Send + Sync,
 >(
     indexed_points: &'a T,
     prefiltered_peaks: &'a [E],
@@ -689,15 +727,13 @@ pub fn _dbscan<
     min_n: usize,
     min_intensity: u64,
     intensity_sorted_indices: &'a Vec<(usize, u64)>,
-    filter_fun: Option<&'a (dyn Fn(&E, &E) -> bool + Send + Sync)>,
-    converter: C,
+    filter_fun: Option<&'a (dyn Fn(&D) -> bool + Send + Sync)>,
     progress: bool,
     max_extension_distances: &'a [f32; N],
 ) -> ClusterLabels {
     let runner = DBSCANRunner {
         min_n,
         min_intensity,
-        converter,
         progress,
         filter_fun: filter_fun,
         max_extension_distances,
@@ -708,6 +744,7 @@ pub fn _dbscan<
         intensity_sorted_indices,
         indexed_points,
         quad_points,
+        indexed_points,
     );
 
     cluster_labels

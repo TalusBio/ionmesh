@@ -79,7 +79,7 @@ impl ClusterAggregator<TimsPeak, TimsPeak> for TimsPeakAggregator {
 }
 
 pub fn aggregate_clusters<
-    T: HasIntensity + Send + Clone + Copy,
+    T: Send + Clone + Copy,
     G: Sync + Send + ClusterAggregator<T, R>,
     R: Send,
     F: Fn() -> G + Send + Sync,
@@ -122,7 +122,7 @@ pub fn aggregate_clusters<
 }
 
 fn parallel_aggregate_clusters<
-    T: HasIntensity + Send + Clone + Copy,
+    T: Send + Clone + Copy,
     G: Sync + Send + ClusterAggregator<T, R>,
     R: Send,
     F: Fn() -> G + Send + Sync,
@@ -210,7 +210,7 @@ fn parallel_aggregate_clusters<
 }
 
 fn serial_aggregate_clusters<
-    T: HasIntensity + Send + Clone + Copy,
+    T: Send + Clone + Copy,
     G: Sync + Send + ClusterAggregator<T, R>,
     R: Send,
     F: Fn() -> G + Send + Sync,

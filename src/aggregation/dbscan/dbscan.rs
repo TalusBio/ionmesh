@@ -15,7 +15,7 @@ use crate::aggregation::dbscan::runner::_dbscan;
 fn reassign_centroid<
     'a,
     const N: usize,
-    T: HasIntensity + Send + Clone + Copy,
+    T: Send + Clone + Copy,
     C: NDPointConverter<R, N>,
     I: QueriableIndexedPoints<'a, N, usize> + std::marker::Sync,
     G: Sync + Send + ClusterAggregator<T, R>,
