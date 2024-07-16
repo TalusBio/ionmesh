@@ -4,8 +4,10 @@ use crate::aggregation::chromatograms::{
 };
 use crate::aggregation::dbscan::dbscan::dbscan_generic;
 use crate::ms::frames::DenseFrameWindow;
-use crate::space::space_generics::NDBoundary;
-use crate::space::space_generics::{HasIntensity, NDPoint, NDPointConverter, TraceLike};
+use crate::space::space_generics::{
+    DistantAtIndex, HasIntensity, NDPoint, NDPointConverter, TraceLike,
+};
+use crate::space::space_generics::{IntenseAtIndex, NDBoundary};
 use crate::utils;
 use crate::utils::RollingSDCalculator;
 
@@ -429,6 +431,25 @@ fn _flatten_denseframe_vec(denseframe_windows: Vec<DenseFrameWindow>) -> Vec<Tim
         .collect::<Vec<_>>()
 }
 
+impl IntenseAtIndex for Vec<TimeTimsPeak> {
+    fn intensity_at_index(
+        &self,
+        index: usize,
+    ) -> u64 {
+        self[index].intensity
+    }
+}
+
+impl DistantAtIndex<f32> for Vec<TimeTimsPeak> {
+    fn distance_at_indices(
+        &self,
+        index: usize,
+        other: usize,
+    ) -> f32 {
+        panic!("I dont think this is called ever ...");
+    }
+}
+
 // Needed to specify the generic in dbscan_generic
 type FFTimeTimsPeak = fn(&TimeTimsPeak, &TimeTimsPeak) -> bool;
 
@@ -478,7 +499,7 @@ fn _combine_single_window_traces(
             quad_low_high: window_quad_low_high,
             btree_chromatogram: BTreeChromatogram::new_lazy(rt_binsize),
         },
-        None::<&(dyn Fn(&TimeTimsPeak, &TimeTimsPeak) -> bool + Send + Sync)>,
+        None::<&(dyn Fn(&f32) -> bool + Send + Sync)>,
         None,
         false,
         &max_extension_distances,
@@ -624,30 +645,6 @@ impl NDPointConverter<BaseTrace, 3> for BaseTraceConverter {
             ],
         }
     }
-
-    fn convert_to_bounds_query<'a>(
-        &self,
-        point: &'a NDPoint<3>,
-    ) -> (NDBoundary<3>, Option<&'a NDPoint<3>>) {
-        const NUM_DIMENTIONS: usize = 3;
-        // let range_center = (point.values[1] + point.values[2]) / 2.;
-        let mut starts = point.values;
-        let mut ends = point.values;
-        for i in 0..NUM_DIMENTIONS {
-            starts[i] -= 1.;
-            ends[i] += 1.;
-        }
-
-        // // KEY =                 [-------]
-        // // Allowed ends =            [------]
-        // // Allowed starts =  [------]
-
-        // ends[1] = range_center;
-        // starts[2] = range_center;
-
-        let bounds = NDBoundary::new(starts, ends);
-        (bounds, Some(point))
-    }
 }
 
 struct PseudoScanBackConverter {
@@ -699,6 +696,42 @@ impl Default for PseudoscanGenerationConfig {
     }
 }
 
+impl IntenseAtIndex for Vec<BaseTrace> {
+    fn intensity_at_index(
+        &self,
+        index: usize,
+    ) -> u64 {
+        self[index].intensity
+    }
+}
+
+struct BaseTraceDistance {
+    quad_diff: f32,
+    iou: f32,
+    cosine: f32,
+}
+
+impl DistantAtIndex<BaseTraceDistance> for Vec<BaseTrace> {
+    fn distance_at_indices(
+        &self,
+        index: usize,
+        other: usize,
+    ) -> BaseTraceDistance {
+        let quad_diff = (self[index].quad_center - self[other].quad_center).abs();
+        let iou = self[index].rt_iou(&self[other]);
+        // Q: What can cause an error here??
+        let cosine = self[index]
+            .chromatogram
+            .cosine_similarity(&self[other].chromatogram)
+            .unwrap();
+        BaseTraceDistance {
+            quad_diff,
+            iou,
+            cosine,
+        }
+    }
+}
+
 pub fn combine_pseudospectra(
     traces: Vec<BaseTrace>,
     config: PseudoscanGenerationConfig,
@@ -716,19 +749,12 @@ pub fn combine_pseudospectra(
 
     const IOU_THRESH: f32 = 0.1;
     const COSINE_THRESH: f32 = 0.8;
-    let extra_filter_fun = |x: &BaseTrace, y: &BaseTrace| {
-        let close_in_quad = (x.quad_center - y.quad_center).abs() < 5.0;
-        if !close_in_quad {
-            return false;
-        }
+    let extra_filter_fun = |x: &BaseTraceDistance| {
+        let close_in_quad = (x.quad_diff).abs() < 5.0;
+        let within_iou_tolerance = x.iou > IOU_THRESH;
+        let within_cosine_tolerance = x.cosine > COSINE_THRESH;
 
-        let iou = x.rt_iou(y);
-        let within_iou_tolerance = iou > IOU_THRESH;
-
-        let cosine = x.chromatogram.cosine_similarity(&y.chromatogram).unwrap();
-        let within_cosine_tolerance = cosine > COSINE_THRESH;
-
-        within_iou_tolerance && within_cosine_tolerance
+        return close_in_quad && within_iou_tolerance && within_cosine_tolerance;
     };
 
     let back_converter = PseudoScanBackConverter {

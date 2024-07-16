@@ -2,6 +2,7 @@ use crate::aggregation::aggregators::TimsPeakAggregator;
 use crate::aggregation::converters::{BypassDenseFrameBackConverter, DenseFrameConverter};
 use crate::aggregation::dbscan::dbscan::dbscan_generic;
 use crate::ms::frames::{DenseFrame, TimsPeak};
+use crate::space::space_generics::{DistantAtIndex, IntenseAtIndex};
 use crate::utils::within_distance_apply;
 
 // <FF: Send + Sync + Fn(&TimsPeak, &TimsPeak) -> bool>
@@ -50,7 +51,7 @@ pub fn dbscan_denseframe(
         min_n,
         min_intensity,
         TimsPeakAggregator::default,
-        None::<&(dyn Fn(&TimsPeak, &TimsPeak) -> bool + Send + Sync)>,
+        None::<&(dyn Fn(&f32) -> bool + Send + Sync)>,
         None,
         true,
         &[max_mz_extension as f32, max_ims_extension],
@@ -63,5 +64,30 @@ pub fn dbscan_denseframe(
         rt: out_rt,
         frame_type: out_frame_type,
         sorted: None,
+    }
+}
+
+impl IntenseAtIndex for Vec<TimsPeak> {
+    fn intensity_at_index(
+        &self,
+        index: usize,
+    ) -> u64 {
+        self[index].intensity as u64
+    }
+}
+
+impl DistantAtIndex<f32> for Vec<TimsPeak> {
+    fn distance_at_indices(
+        &self,
+        index: usize,
+        other: usize,
+    ) -> f32 {
+        panic!("I dont think this is called ever ...");
+        let mut sum = 0.0;
+        let diff_mz = (self[index].mz - self[other].mz) as f32;
+        sum += diff_mz * diff_mz;
+        let diff_ims = self[index].mobility - self[other].mobility;
+        sum += diff_ims * diff_ims;
+        sum.sqrt()
     }
 }

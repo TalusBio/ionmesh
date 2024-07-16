@@ -1,12 +1,15 @@
 use crate::aggregation::aggregators::{aggregate_clusters, ClusterAggregator, ClusterLabel};
 use crate::space::kdtree::RadiusKDTree;
-use crate::space::space_generics::{HasIntensity, NDPointConverter, QueriableIndexedPoints};
+use crate::space::space_generics::{
+    convert_to_bounds_query, DistantAtIndex, HasIntensity, IntenseAtIndex, NDPointConverter,
+    QueriableIndexedPoints,
+};
 use crate::utils;
 use log::{debug, info, trace};
 use rayon::prelude::*;
 use std::ops::Add;
 
-use crate::aggregation::dbscan::runner::_dbscan;
+use crate::aggregation::dbscan::runner::dbscan_label_clusters;
 
 // Pretty simple function ... it uses every passed centroid, converts it to a point
 // and generates a new centroid that aggregates all the points in its range.
@@ -35,7 +38,7 @@ fn reassign_centroid<
 
     for centroid in centroids {
         let query_point = centroid_converter.convert(&centroid);
-        let mut query_elems = centroid_converter.convert_to_bounds_query(&query_point);
+        let mut query_elems = convert_to_bounds_query(&query_point);
         query_elems.0.expand(expansion_factors);
 
         // trace!("Querying for Centroid: {:?}", query_elems.1);
@@ -66,6 +69,7 @@ pub fn dbscan_generic<
     G: Sync + Send + ClusterAggregator<T, R>,
     T: HasIntensity + Send + Clone + Copy + Sync,
     F: Fn() -> G + Send + Sync,
+    D: Send + Sync,
     const N: usize,
 >(
     converter: C,
@@ -73,12 +77,15 @@ pub fn dbscan_generic<
     min_n: usize,
     min_intensity: u64,
     def_aggregator: F,
-    extra_filter_fun: Option<&(dyn Fn(&T, &T) -> bool + Send + Sync)>,
+    extra_filter_fun: Option<&(dyn Fn(&D) -> bool + Send + Sync)>,
     log_level: Option<utils::LogLevel>,
     keep_unclustered: bool,
     max_extension_distances: &[f32; N],
     back_converter: Option<C2>,
-) -> Vec<R> {
+) -> Vec<R>
+where
+    Vec<T>: IntenseAtIndex + DistantAtIndex<D>,
+{
     let show_progress = log_level.is_some();
     let log_level = match log_level {
         Some(x) => x,
@@ -110,15 +117,14 @@ pub fn dbscan_generic<
     i_timer.stop(true);
 
     let mut i_timer = timer.start_sub_timer("dbscan");
-    let cluster_labels = _dbscan(
+    let cluster_labels = dbscan_label_clusters(
         &tree,
         &prefiltered_peaks,
-        &ndpoints,
+        ndpoints.as_slice(),
         min_n,
         min_intensity,
         &intensity_sorted_indices,
         extra_filter_fun,
-        converter,
         show_progress,
         max_extension_distances,
     );

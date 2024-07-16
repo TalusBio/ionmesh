@@ -89,12 +89,11 @@ RAYON_NUM_THREADS=4 # will set the number of threads to use in rayon
 4. Add targeted extraction.
 5. Add detection of MS1 features + notched search instead of wide window search.
 6. Clean up some of the features and decide what aggregation steps use interal paralellism. (in some steps making multiple aggregations in paralle is better than doing parallel operations within the aggregation).
-  - Fix nomenclature ... I dont like how it is not consistent (indexed, indexer, index are using interchangeably ...).
 7. Compilation warning cleanup.
 8. Clean up dead/commented out code.
 9. Refactor `max_extension_distances` argument in the generic dbscan implementation to prevent the errors that might arise from mixing up the dimensions.
     - Should that be a propoerty of the converter?
-10. Commit to f32/f64 in specific places ... instead of the harder to maintain generic types.
+      - There is no longer a converter there ... so nope
 11. Add CICD to distribute the pre-compiled binaries.
 12. Add semver checks to the CICD pipeline.
 13. Add IMS output to the sage report.
@@ -107,4 +106,8 @@ RAYON_NUM_THREADS=4 # will set the number of threads to use in rayon
 
 ## Where are we at?
 
-- Ids are pretty close to the equivalent DDA runs with the correct parameters ... They do seem good via manual inspection but the number of ids is low compared to peptide-centric searches.
+- Ids are pretty close to the equivalent DDA runs with the correct parameters ...
+   - Emphasis in right parameters ... they do seem to vary quite a bit depending on
+     the intrument/method/sample. I am working on improve this.
+- Spectra quality does seem good via manual inspection but the number of ids
+  is low compared to peptide-centric searches.
