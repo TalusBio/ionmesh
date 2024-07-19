@@ -1,19 +1,34 @@
 use core::panic;
+use std::ops::Index;
 
+use crate::aggregation::dbscan::dbscan::dbscan_aggregate;
 use crate::aggregation::dbscan::denseframe_dbscan::dbscan_denseframe;
+use crate::ms::frames::frames::RawTimsPeak;
 use crate::ms::frames::Converters;
 use crate::ms::frames::DenseFrame;
 use crate::ms::frames::DenseFrameWindow;
 use crate::ms::frames::FrameSlice;
+use crate::ms::frames::TimsPeak;
 use crate::ms::tdf;
 use crate::ms::tdf::DIAFrameInfo;
+use crate::space::space_generics::AsNDPointsAtIndex;
+use crate::space::space_generics::DistantAtIndex;
+use crate::space::space_generics::IntenseAtIndex;
+use crate::space::space_generics::NDPoint;
+use crate::space::space_generics::QueriableIndexedPoints;
 use crate::utils;
+use timsrust::ConvertableIndex;
 
 use indicatif::ParallelProgressIterator;
 use log::{info, trace, warn};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use timsrust::Frame;
+
+use super::aggregators::aggregate_clusters;
+use super::aggregators::ClusterAggregator;
+use super::aggregators::TimsPeakAggregator;
+use super::dbscan::runner::dbscan_label_clusters;
 
 // TODO I can probably split the ms1 and ms2 ...
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
@@ -133,6 +148,319 @@ fn _denoise_denseframe(
     }
 
     denoised_frame
+}
+
+#[derive(Debug)]
+struct FrameSliceWindow<'a> {
+    window: &'a [FrameSlice<'a>],
+    reference_index: usize,
+    cum_lengths: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MaybeIntenseRawPeak {
+    intensity: u32,
+    tof_index: u32,
+    scan_index: usize,
+    weight_only: bool,
+}
+
+impl FrameSliceWindow<'_> {
+    fn new<'a>(window: &'a [FrameSlice<'a>]) -> FrameSliceWindow<'a> {
+        let cum_lengths = window
+            .iter()
+            .map(|x| x.num_ndpoints())
+            .scan(0, |acc, x| {
+                *acc += x;
+                Some(*acc)
+            })
+            .collect();
+        FrameSliceWindow {
+            window,
+            reference_index: window.len() / 2,
+            cum_lengths,
+        }
+    }
+    fn get_window_index(
+        &self,
+        index: usize,
+    ) -> (usize, usize) {
+        let mut pos = 0;
+        for (i, cum_length) in self.cum_lengths.iter().enumerate() {
+            if index < *cum_length {
+                pos = i;
+                break;
+            }
+        }
+        let within_window_index = index - self.cum_lengths[pos];
+        (pos, within_window_index)
+    }
+}
+
+impl Index<usize> for FrameSliceWindow<'_> {
+    type Output = MaybeIntenseRawPeak;
+
+    fn index(
+        &self,
+        index: usize,
+    ) -> &Self::Output {
+        let (pos, within_window_index) = self.get_window_index(index);
+        let tmp = self.window[pos];
+        let (tof, int) = tmp.tof_int_at_index(within_window_index);
+        let foo = MaybeIntenseRawPeak {
+            intensity: int,
+            tof_index: tof,
+            scan_index: tmp.global_scan_at_index(within_window_index),
+            weight_only: pos != self.reference_index,
+        };
+        &foo
+    }
+}
+
+impl IntenseAtIndex for FrameSliceWindow<'_> {
+    fn intensity_at_index(
+        &self,
+        index: usize,
+    ) -> u64 {
+        let (pos, within_window_index) = self.get_window_index(index);
+        if pos == self.reference_index {
+            self.window[self.reference_index].intensity_at_index(within_window_index)
+        } else {
+            0
+        }
+    }
+
+    fn weight_at_index(
+        &self,
+        index: usize,
+    ) -> u64 {
+        let (pos, within_window_index) = self.get_window_index(index);
+        self.window[pos].weight_at_index(within_window_index)
+    }
+}
+
+impl<'a> QueriableIndexedPoints<'a, 2, usize> for FrameSliceWindow<'a> {
+    fn query_ndpoint(
+        &'a self,
+        point: &NDPoint<2>,
+    ) -> Vec<&'a usize> {
+        let mut out = Vec::new();
+        for (i, (frame, cum_length)) in self.window.iter().zip(self.cum_lengths).enumerate() {
+            let local_outs = frame.query_ndpoint(point);
+            for ii in local_outs {
+                out.push(&(ii + cum_length));
+            }
+        }
+        out
+    }
+
+    fn query_ndrange(
+        &'a self,
+        boundary: &crate::space::space_generics::NDBoundary<2>,
+        reference_point: Option<&NDPoint<2>>,
+    ) -> Vec<&'a usize> {
+        let mut out = Vec::new();
+        for (i, (frame, cum_length)) in self.window.iter().zip(self.cum_lengths).enumerate() {
+            let local_outs = frame.query_ndrange(boundary, reference_point);
+            for ii in local_outs {
+                out.push(&(ii + cum_length));
+            }
+        }
+        out
+    }
+}
+
+impl DistantAtIndex<f32> for FrameSliceWindow<'_> {
+    fn distance_at_indices(
+        &self,
+        index: usize,
+        other: usize,
+    ) -> f32 {
+        let (pos, within_window_index) = self.get_window_index(index);
+        let (pos_other, within_window_index_other) = self.get_window_index(other);
+        panic!("unimplemented");
+        0.
+    }
+}
+
+impl AsNDPointsAtIndex<2> for FrameSliceWindow<'_> {
+    fn get_ndpoint(
+        &self,
+        index: usize,
+    ) -> NDPoint<2> {
+        let (pos, within_window_index) = self.get_window_index(index);
+        self.window[pos].get_ndpoint(within_window_index)
+    }
+
+    fn num_ndpoints(&self) -> usize {
+        self.cum_lengths.last().unwrap().clone()
+    }
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+pub struct RawWeightedTimsPeakAggregator {
+    pub cumulative_weighted_cluster_tof: u64,
+    pub cumulative_weighted_cluster_scan: u64,
+    pub cumulative_cluster_weight: u64,
+    pub cumulative_cluster_intensity: u64,
+    pub num_peaks: u64,
+    pub num_intense_peaks: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RawScaleTimsPeak {
+    intensity: f64,
+    tof_index: f64,
+    scan_index: f64,
+    npeaks: u64,
+}
+
+impl RawScaleTimsPeak {
+    fn to_timspeak(
+        &self,
+        mz_converter: &timsrust::Tof2MzConverter,
+        ims_converter: &timsrust::Scan2ImConverter,
+    ) -> TimsPeak {
+        TimsPeak {
+            intensity: self.intensity as u32,
+            mz: mz_converter.convert(self.tof_index),
+            mobility: ims_converter.convert(self.scan_index) as f32,
+            npeaks: self.npeaks as u32,
+        }
+    }
+}
+
+impl ClusterAggregator<MaybeIntenseRawPeak, RawScaleTimsPeak> for RawWeightedTimsPeakAggregator {
+    // Calculate the weight-weighted average of the cluster
+    // for mz and ims. The intensity is kept as is.
+    fn add(
+        &mut self,
+        elem: &MaybeIntenseRawPeak,
+    ) {
+        self.cumulative_cluster_intensity +=
+            if elem.weight_only { 0 } else { elem.intensity } as u64;
+        self.cumulative_cluster_weight += elem.intensity as u64;
+        self.cumulative_weighted_cluster_tof += elem.tof_index as u64 * elem.intensity as u64;
+        self.cumulative_weighted_cluster_scan += elem.scan_index as u64 * elem.intensity as u64;
+        self.num_peaks += 1;
+        if !elem.weight_only {
+            self.num_intense_peaks += 1;
+        };
+    }
+
+    fn aggregate(&self) -> RawScaleTimsPeak {
+        // Use raw
+        RawScaleTimsPeak {
+            intensity: self.cumulative_cluster_intensity as f64,
+            tof_index: self.cumulative_weighted_cluster_tof as f64
+                / self.cumulative_cluster_weight as f64,
+            scan_index: self.cumulative_weighted_cluster_scan as f64
+                / self.cumulative_cluster_weight as f64,
+            npeaks: self.num_intense_peaks,
+        }
+    }
+
+    fn combine(
+        self,
+        other: Self,
+    ) -> Self {
+        Self {
+            cumulative_weighted_cluster_tof: self.cumulative_weighted_cluster_tof
+                + other.cumulative_weighted_cluster_tof,
+            cumulative_weighted_cluster_scan: self.cumulative_weighted_cluster_scan
+                + other.cumulative_weighted_cluster_scan,
+            cumulative_cluster_weight: self.cumulative_cluster_weight
+                + other.cumulative_cluster_weight,
+            cumulative_cluster_intensity: self.cumulative_cluster_intensity
+                + other.cumulative_cluster_intensity,
+            num_peaks: self.num_peaks + other.num_peaks,
+            num_intense_peaks: self.num_intense_peaks + other.num_intense_peaks,
+        }
+    }
+}
+
+fn denoise_frame_slice_window(
+    frameslice_window: &[FrameSlice],
+    ims_converter: &timsrust::Scan2ImConverter,
+    mz_converter: &timsrust::Tof2MzConverter,
+    dia_frame_info: &DIAFrameInfo,
+    min_n: usize,
+    min_intensity: u64,
+    mz_scaling: f64,
+    max_mz_extension: f64,
+    ims_scaling: f32,
+    max_ims_extension: f32,
+) -> DenseFrameWindow {
+    let timer = utils::ContextTimer::new("dbscan_dfs", true, utils::LogLevel::TRACE);
+    let fsw = FrameSliceWindow::new(frameslice_window);
+    // dbscan_aggregate(
+    //     &fsw,
+    //     &fsw,
+    //     &fsw,
+    //     timer,
+    //     min_n,
+    //     min_intensity,
+    //     TimsPeakAggregator::default,
+    //     None::<&(dyn Fn(&f32) -> bool + Send + Sync)>,
+    //     utils::LogLevel::TRACE,
+    //     false,
+    //     &[max_mz_extension as f32, max_ims_extension],
+    //     false,
+    // );
+
+    let mut intensity_sorted_indices = frameslice_window
+        .iter()
+        .map(|x| x.intensities)
+        .flat_map(|x| x)
+        .enumerate()
+        .map(|(i, x)| (i, *x as u64))
+        .collect::<Vec<_>>();
+
+    intensity_sorted_indices.par_sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+    let mut i_timer = timer.start_sub_timer("dbscan");
+    let cluster_labels = dbscan_label_clusters(
+        &fsw,
+        &fsw,
+        &fsw,
+        min_n,
+        min_intensity,
+        &intensity_sorted_indices,
+        None::<&(dyn Fn(&f32) -> bool + Send + Sync)>,
+        false,
+        &[10., 100.],
+    );
+    i_timer.stop(true);
+
+    let centroids = aggregate_clusters(
+        cluster_labels.num_clusters,
+        cluster_labels.cluster_labels,
+        &fsw,
+        &RawWeightedTimsPeakAggregator::default,
+        utils::LogLevel::TRACE,
+        false,
+    );
+
+    let out = DenseFrameWindow {
+        frame: DenseFrame {
+            raw_peaks: centroids
+                .into_iter()
+                .map(|x| x.to_timspeak(mz_converter, ims_converter))
+                .collect(),
+            index: 0,
+            rt: 0.,
+            frame_type: timsrust::FrameType::MS2(timsrust::AcquisitionType::DIAPASEF),
+            sorted: None,
+        },
+        ims_min: 0.,
+        ims_max: 0.,
+        mz_start: 0.,
+        mz_end: 0.,
+        group_id: 0,
+        quad_group_id: 0,
+    };
+
+    out
 }
 
 fn denoise_frame_slice(
@@ -290,11 +618,12 @@ impl<'a> Denoiser<'a, Frame, Vec<DenseFrameWindow>, Converters, Option<usize>>
             info!("Denoising window {}/{}", i + 1, num_windows);
             let progbar = indicatif::ProgressBar::new(sv.len() as u64);
             let denoised_elements: Vec<DenseFrameWindow> = sv
-                .into_par_iter()
+                .as_slice()
+                .par_windows(3)
                 .progress_with(progbar)
-                .map(|x| {
-                    denoise_frame_slice(
-                        &x,
+                .map(|rt_window_of_slices| {
+                    denoise_frame_slice_window(
+                        rt_window_of_slices,
                         &self.ims_converter,
                         &self.mz_converter,
                         &self.dia_frame_info,

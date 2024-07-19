@@ -486,7 +486,7 @@ fn _combine_single_window_traces(
     // TODO make dbscan_generic a runner-class
     let out_traces: Vec<BaseTrace> = dbscan_generic(
         converter,
-        prefiltered_peaks,
+        &prefiltered_peaks,
         min_n,
         min_intensity.into(),
         || TraceAggregator {
@@ -770,7 +770,7 @@ pub fn combine_pseudospectra(
 
     let foo: Vec<PseudoSpectrum> = dbscan_generic(
         converter,
-        traces,
+        &traces,
         config.min_n.into(),
         config.min_neighbor_intensity.into(),
         PseudoSpectrumAggregator::default,

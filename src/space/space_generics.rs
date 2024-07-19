@@ -204,14 +204,14 @@ pub trait NDPointConverter<T, const D: usize> {
         &self,
         elem: &T,
     ) -> NDPoint<D>;
-    fn convert_vec(
+    fn convert_iter<IT>(
         &self,
-        elems: &[T],
-    ) -> (Vec<NDPoint<D>>, NDBoundary<D>) {
-        let points = elems
-            .iter()
-            .map(|elem| self.convert(elem))
-            .collect::<Vec<_>>();
+        elems: IT,
+    ) -> (Vec<NDPoint<D>>, NDBoundary<D>)
+    where
+        IT: ExactSizeIterator<Item = T>,
+    {
+        let points = elems.map(|elem| self.convert(&elem)).collect::<Vec<_>>();
         let boundary = NDBoundary::from_ndpoints(&points);
         (points, boundary)
     }

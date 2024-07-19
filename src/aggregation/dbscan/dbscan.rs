@@ -1,13 +1,13 @@
 use crate::aggregation::aggregators::{aggregate_clusters, ClusterAggregator, ClusterLabel};
 use crate::space::kdtree::RadiusKDTree;
 use crate::space::space_generics::{
-    convert_to_bounds_query, DistantAtIndex, HasIntensity, IntenseAtIndex, NDPointConverter,
-    QueriableIndexedPoints,
+    convert_to_bounds_query, AsNDPointsAtIndex, DistantAtIndex, HasIntensity, IntenseAtIndex,
+    NDPoint, NDPointConverter, QueriableIndexedPoints,
 };
-use crate::utils;
+use crate::utils::{self, ContextTimer};
 use log::{debug, info, trace};
 use rayon::prelude::*;
-use std::ops::Add;
+use std::ops::{Add, Index};
 
 use crate::aggregation::dbscan::runner::dbscan_label_clusters;
 
@@ -23,12 +23,13 @@ fn reassign_centroid<
     I: QueriableIndexedPoints<'a, N, usize> + std::marker::Sync,
     G: Sync + Send + ClusterAggregator<T, R>,
     R: Send,
+    RE: Send + Sync + Index<usize, Output = T> + ?Sized,
     F: Fn() -> G + Send + Sync,
 >(
     centroids: Vec<R>,
     indexed_points: &'a I,
     centroid_converter: C,
-    elements: &[T],
+    elements: &RE,
     def_aggregator: F,
     log_level: utils::LogLevel,
     expansion_factors: &[f32; N],
@@ -62,18 +63,38 @@ fn reassign_centroid<
 // TODO: rename prefiltered peaks argument!
 // TODO implement a version that takes a sparse distance matrix.
 
+impl<const N: usize> AsNDPointsAtIndex<N> for Vec<NDPoint<N>> {
+    fn get_ndpoint(
+        &self,
+        index: usize,
+    ) -> NDPoint<N> {
+        self[index]
+    }
+
+    fn num_ndpoints(&self) -> usize {
+        self.len()
+    }
+}
+
 pub fn dbscan_generic<
     C: NDPointConverter<T, N>,
     C2: NDPointConverter<R, N>,
     R: Send,
     G: Sync + Send + ClusterAggregator<T, R>,
     T: HasIntensity + Send + Clone + Copy + Sync,
+    RE: IntenseAtIndex
+        + DistantAtIndex<D>
+        + IntoIterator<Item = T>
+        + Send
+        + Sync
+        + Index<usize, Output = T>
+        + ?Sized,
     F: Fn() -> G + Send + Sync,
     D: Send + Sync,
     const N: usize,
 >(
     converter: C,
-    prefiltered_peaks: Vec<T>,
+    prefiltered_peaks: &RE,
     min_n: usize,
     min_intensity: u64,
     def_aggregator: F,
@@ -84,7 +105,7 @@ pub fn dbscan_generic<
     back_converter: Option<C2>,
 ) -> Vec<R>
 where
-    Vec<T>: IntenseAtIndex + DistantAtIndex<D>,
+    <RE as IntoIterator>::IntoIter: ExactSizeIterator,
 {
     let show_progress = log_level.is_some();
     let log_level = match log_level {
@@ -94,7 +115,7 @@ where
 
     let timer = utils::ContextTimer::new("dbscan_generic", true, log_level);
     let mut i_timer = timer.start_sub_timer("conversion");
-    let (ndpoints, boundary) = converter.convert_vec(&prefiltered_peaks);
+    let (ndpoints, boundary) = converter.convert_iter(prefiltered_peaks.into_iter());
     i_timer.stop(true);
 
     let mut i_timer = timer.start_sub_timer("tree");
@@ -106,9 +127,69 @@ where
     }
     i_timer.stop(true);
 
+    let centroids = dbscan_aggregate(
+        prefiltered_peaks,
+        &ndpoints,
+        &tree,
+        timer,
+        min_n,
+        min_intensity,
+        def_aggregator,
+        extra_filter_fun,
+        log_level,
+        keep_unclustered,
+        max_extension_distances,
+        show_progress,
+    );
+
+    match back_converter {
+        Some(bc) => reassign_centroid(
+            centroids,
+            &tree,
+            bc,
+            prefiltered_peaks,
+            &def_aggregator,
+            log_level,
+            max_extension_distances,
+        ),
+        None => centroids,
+    }
+}
+
+pub fn dbscan_aggregate<
+    'a,
+    const N: usize,
+    RE: IntenseAtIndex
+        + DistantAtIndex<D>
+        + IntoIterator<Item = T>
+        + Send
+        + Sync
+        + Index<usize, Output = T>
+        + ?Sized,
+    IND: QueriableIndexedPoints<'a, N, usize> + std::marker::Sync + Send,
+    NAI: AsNDPointsAtIndex<N> + std::marker::Sync + Send,
+    T: HasIntensity + Send + Clone + Copy + Sync,
+    D: Send + Sync,
+    G: Sync + Send + ClusterAggregator<T, R>,
+    R: Send,
+    F: Fn() -> G + Send + Sync,
+>(
+    prefiltered_peaks: &RE,
+    ndpoints: &NAI,
+    index: &IND,
+    timer: ContextTimer,
+    min_n: usize,
+    min_intensity: u64,
+    def_aggregator: F,
+    extra_filter_fun: Option<&(dyn Fn(&D) -> bool + Send + Sync)>,
+    log_level: utils::LogLevel,
+    keep_unclustered: bool,
+    max_extension_distances: &[f32; N],
+    show_progress: bool,
+) -> Vec<R> {
     let mut i_timer = timer.start_sub_timer("pre-sort");
     let mut intensity_sorted_indices = prefiltered_peaks
-        .iter()
+        .into_iter()
         .enumerate()
         .map(|(i, peak)| (i, peak.intensity()))
         .collect::<Vec<_>>();
@@ -118,9 +199,9 @@ where
 
     let mut i_timer = timer.start_sub_timer("dbscan");
     let cluster_labels = dbscan_label_clusters(
-        &tree,
-        &prefiltered_peaks,
-        ndpoints.as_slice(),
+        index,
+        prefiltered_peaks,
+        ndpoints,
         min_n,
         min_intensity,
         &intensity_sorted_indices,
@@ -133,22 +214,10 @@ where
     let centroids = aggregate_clusters(
         cluster_labels.num_clusters,
         cluster_labels.cluster_labels,
-        &prefiltered_peaks,
+        prefiltered_peaks,
         &def_aggregator,
         log_level,
         keep_unclustered,
     );
-
-    match back_converter {
-        Some(bc) => reassign_centroid(
-            centroids,
-            &tree,
-            bc,
-            &prefiltered_peaks,
-            &def_aggregator,
-            log_level,
-            max_extension_distances,
-        ),
-        None => centroids,
-    }
+    centroids
 }

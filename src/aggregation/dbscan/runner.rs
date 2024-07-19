@@ -721,7 +721,7 @@ pub fn dbscan_label_clusters<
     T: QueriableIndexedPoints<'a, N, usize> + Send + std::marker::Sync,
     PE: AsNDPointsAtIndex<N> + Send + Sync + ?Sized,
     D: Send + Sync,
-    E: HasIntensity + Send + Sync,
+    E: Send + Sync,
 >(
     indexed_points: &'a T,
     raw_elements: &'a RE,

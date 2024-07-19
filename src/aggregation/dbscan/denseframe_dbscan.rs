@@ -47,7 +47,7 @@ pub fn dbscan_denseframe(
     };
     let peak_vec: Vec<TimsPeak> = dbscan_generic(
         converter,
-        prefiltered_peaks,
+        &prefiltered_peaks,
         min_n,
         min_intensity,
         TimsPeakAggregator::default,

@@ -1,6 +1,7 @@
 use crate::ms::frames::TimsPeak;
-use crate::space::space_generics::HasIntensity;
+use crate::space::space_generics::{HasIntensity, IntenseAtIndex};
 use crate::utils;
+use std::ops::Index;
 
 use rayon::prelude::*;
 
@@ -80,13 +81,14 @@ impl ClusterAggregator<TimsPeak, TimsPeak> for TimsPeakAggregator {
 
 pub fn aggregate_clusters<
     T: Send + Clone + Copy,
+    RE: Index<usize, Output = T> + Sync + Send + ?Sized,
     G: Sync + Send + ClusterAggregator<T, R>,
     R: Send,
     F: Fn() -> G + Send + Sync,
 >(
     tot_clusters: u64,
     cluster_labels: Vec<ClusterLabel<u64>>,
-    elements: &[T],
+    elements: &RE,
     def_aggregator: &F,
     log_level: utils::LogLevel,
     keep_unclustered: bool,
@@ -123,13 +125,14 @@ pub fn aggregate_clusters<
 
 fn parallel_aggregate_clusters<
     T: Send + Clone + Copy,
+    RE: Index<usize, Output = T> + Sync + Send + ?Sized,
     G: Sync + Send + ClusterAggregator<T, R>,
     R: Send,
     F: Fn() -> G + Send + Sync,
 >(
     tot_clusters: u64,
     cluster_labels: Vec<ClusterLabel<u64>>,
-    elements: &[T],
+    elements: &RE,
     def_aggregator: &F,
     log_level: utils::LogLevel,
     keep_unclustered: bool,
@@ -211,13 +214,14 @@ fn parallel_aggregate_clusters<
 
 fn serial_aggregate_clusters<
     T: Send + Clone + Copy,
+    RE: Index<usize, Output = T> + Sync + Send + ?Sized,
     G: Sync + Send + ClusterAggregator<T, R>,
     R: Send,
     F: Fn() -> G + Send + Sync,
 >(
     tot_clusters: u64,
     cluster_labels: Vec<ClusterLabel<u64>>,
-    elements: &[T],
+    elements: &RE,
     def_aggregator: &F,
     keep_unclustered: bool,
 ) -> Vec<G> {
