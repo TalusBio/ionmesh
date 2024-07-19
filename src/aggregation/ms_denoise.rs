@@ -11,6 +11,7 @@ use crate::ms::frames::FrameSlice;
 use crate::ms::frames::TimsPeak;
 use crate::ms::tdf;
 use crate::ms::tdf::DIAFrameInfo;
+use crate::space::space_generics::AsAggregableAtIndex;
 use crate::space::space_generics::AsNDPointsAtIndex;
 use crate::space::space_generics::DistantAtIndex;
 use crate::space::space_generics::IntenseAtIndex;
@@ -197,15 +198,13 @@ impl FrameSliceWindow<'_> {
     }
 }
 
-impl Index<usize> for FrameSliceWindow<'_> {
-    type Output = MaybeIntenseRawPeak;
-
-    fn index(
+impl AsAggregableAtIndex<MaybeIntenseRawPeak> for FrameSliceWindow<'_> {
+    fn get_aggregable_at_index(
         &self,
         index: usize,
-    ) -> &Self::Output {
+    ) -> MaybeIntenseRawPeak {
         let (pos, within_window_index) = self.get_window_index(index);
-        let tmp = self.window[pos];
+        let tmp = &self.window[pos];
         let (tof, int) = tmp.tof_int_at_index(within_window_index);
         let foo = MaybeIntenseRawPeak {
             intensity: int,
@@ -213,7 +212,11 @@ impl Index<usize> for FrameSliceWindow<'_> {
             scan_index: tmp.global_scan_at_index(within_window_index),
             weight_only: pos != self.reference_index,
         };
-        &foo
+        foo
+    }
+
+    fn num_aggregable(&self) -> usize {
+        self.cum_lengths.last().unwrap().clone()
     }
 }
 
@@ -237,18 +240,23 @@ impl IntenseAtIndex for FrameSliceWindow<'_> {
         let (pos, within_window_index) = self.get_window_index(index);
         self.window[pos].weight_at_index(within_window_index)
     }
+
+    fn intensity_index_length(&self) -> usize {
+        self.cum_lengths.last().unwrap().clone()
+    }
 }
 
-impl<'a> QueriableIndexedPoints<'a, 2, usize> for FrameSliceWindow<'a> {
+impl<'a> QueriableIndexedPoints<'a, 2> for FrameSliceWindow<'a> {
     fn query_ndpoint(
         &'a self,
         point: &NDPoint<2>,
-    ) -> Vec<&'a usize> {
+    ) -> Vec<usize> {
         let mut out = Vec::new();
-        for (i, (frame, cum_length)) in self.window.iter().zip(self.cum_lengths).enumerate() {
+        for (i, (frame, cum_length)) in self.window.iter().zip(self.cum_lengths.iter()).enumerate()
+        {
             let local_outs = frame.query_ndpoint(point);
             for ii in local_outs {
-                out.push(&(ii + cum_length));
+                out.push(ii + cum_length);
             }
         }
         out
@@ -258,12 +266,13 @@ impl<'a> QueriableIndexedPoints<'a, 2, usize> for FrameSliceWindow<'a> {
         &'a self,
         boundary: &crate::space::space_generics::NDBoundary<2>,
         reference_point: Option<&NDPoint<2>>,
-    ) -> Vec<&'a usize> {
+    ) -> Vec<usize> {
         let mut out = Vec::new();
-        for (i, (frame, cum_length)) in self.window.iter().zip(self.cum_lengths).enumerate() {
+        for (i, (frame, cum_length)) in self.window.iter().zip(self.cum_lengths.iter()).enumerate()
+        {
             let local_outs = frame.query_ndrange(boundary, reference_point);
             for ii in local_outs {
-                out.push(&(ii + cum_length));
+                out.push(ii + cum_length);
             }
         }
         out
@@ -425,7 +434,7 @@ fn denoise_frame_slice_window(
         &fsw,
         min_n,
         min_intensity,
-        &intensity_sorted_indices,
+        intensity_sorted_indices,
         None::<&(dyn Fn(&f32) -> bool + Send + Sync)>,
         false,
         &[10., 100.],

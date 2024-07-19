@@ -572,6 +572,10 @@ impl<'a> IntenseAtIndex for FrameSlice<'a> {
         self.intensities[index] as u64
     }
 
+    fn intensity_index_length(&self) -> usize {
+        self.intensities.len()
+    }
+
     // fn get_intense_at_index(
     //     &self,
     //     index: usize,
@@ -608,11 +612,11 @@ impl<'a> AsNDPointsAtIndex<2> for FrameSlice<'a> {
     }
 }
 
-impl<'a> QueriableIndexedPoints<'a, 2, usize> for FrameSlice<'a> {
+impl<'a> QueriableIndexedPoints<'a, 2> for FrameSlice<'a> {
     fn query_ndpoint(
         &'a self,
         point: &NDPoint<2>,
-    ) -> Vec<&'a usize> {
+    ) -> Vec<usize> {
         let tof_index = point.values[0] as i32;
         let scan_index = point.values[1] as usize;
         let rangesets = self.matching_rangeset(
@@ -628,7 +632,7 @@ impl<'a> QueriableIndexedPoints<'a, 2, usize> for FrameSlice<'a> {
         if let Some(rangesets) = rangesets {
             for range in rangesets.ranges.iter() {
                 for i in range.0..range.1 {
-                    out.push(&i);
+                    out.push(i);
                 }
             }
         }
@@ -639,7 +643,7 @@ impl<'a> QueriableIndexedPoints<'a, 2, usize> for FrameSlice<'a> {
         &'a self,
         boundary: &NDBoundary<2>,
         reference_point: Option<&NDPoint<2>>,
-    ) -> Vec<&'a usize> {
+    ) -> Vec<usize> {
         let tol = AbsoluteFramePointTolerance {
             tof_index_tolerance: (boundary.widths[0] / 2.) as u32,
             scan_tolerance: (boundary.widths[1] / 2.) as usize,
@@ -654,7 +658,7 @@ impl<'a> QueriableIndexedPoints<'a, 2, usize> for FrameSlice<'a> {
         if let Some(rangesets) = rangesets {
             for range in rangesets.ranges.iter() {
                 for i in range.0..range.1 {
-                    out.push(&i);
+                    out.push(i);
                 }
             }
         }

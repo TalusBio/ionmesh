@@ -1,5 +1,5 @@
 use crate::ms::frames::TimsPeak;
-use crate::space::space_generics::{HasIntensity, IntenseAtIndex};
+use crate::space::space_generics::{AsAggregableAtIndex, HasIntensity, IntenseAtIndex};
 use crate::utils;
 use std::ops::Index;
 
@@ -81,7 +81,7 @@ impl ClusterAggregator<TimsPeak, TimsPeak> for TimsPeakAggregator {
 
 pub fn aggregate_clusters<
     T: Send + Clone + Copy,
-    RE: Index<usize, Output = T> + Sync + Send + ?Sized,
+    RE: AsAggregableAtIndex<T> + Sync + Send + ?Sized,
     G: Sync + Send + ClusterAggregator<T, R>,
     R: Send,
     F: Fn() -> G + Send + Sync,
@@ -125,7 +125,7 @@ pub fn aggregate_clusters<
 
 fn parallel_aggregate_clusters<
     T: Send + Clone + Copy,
-    RE: Index<usize, Output = T> + Sync + Send + ?Sized,
+    RE: AsAggregableAtIndex<T> + Sync + Send + ?Sized,
     G: Sync + Send + ClusterAggregator<T, R>,
     R: Send,
     F: Fn() -> G + Send + Sync,
@@ -144,7 +144,8 @@ fn parallel_aggregate_clusters<
         .filter_map(|(point_index, x)| match x {
             ClusterLabel::Cluster(cluster_id) => {
                 let cluster_idx = *cluster_id as usize - 1;
-                let tmp: Option<(usize, T)> = Some((cluster_idx, elements[point_index]));
+                let tmp: Option<(usize, T)> =
+                    Some((cluster_idx, elements.get_aggregable_at_index(point_index)));
                 tmp
             },
             _ => None,
@@ -201,7 +202,7 @@ fn parallel_aggregate_clusters<
         .iter()
         .map(|i| {
             let mut oe = def_aggregator();
-            oe.add(&elements[*i]);
+            oe.add(&elements.get_aggregable_at_index(*i));
             oe
         })
         .collect::<Vec<_>>();
@@ -214,7 +215,7 @@ fn parallel_aggregate_clusters<
 
 fn serial_aggregate_clusters<
     T: Send + Clone + Copy,
-    RE: Index<usize, Output = T> + Sync + Send + ?Sized,
+    RE: AsAggregableAtIndex<T> + Sync + Send + ?Sized,
     G: Sync + Send + ClusterAggregator<T, R>,
     R: Send,
     F: Fn() -> G + Send + Sync,
@@ -234,12 +235,12 @@ fn serial_aggregate_clusters<
         match cluster_label {
             ClusterLabel::Cluster(cluster_id) => {
                 let cluster_idx = *cluster_id as usize - 1;
-                cluster_vecs[cluster_idx].add(&(elements[point_index]));
+                cluster_vecs[cluster_idx].add(&(elements.get_aggregable_at_index(point_index)));
             },
             ClusterLabel::Noise => {
                 if keep_unclustered {
                     let mut oe = def_aggregator();
-                    oe.add(&elements[point_index]);
+                    oe.add(&elements.get_aggregable_at_index(point_index));
                     unclustered_points.push(oe);
                 }
             },

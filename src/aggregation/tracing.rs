@@ -5,7 +5,7 @@ use crate::aggregation::chromatograms::{
 use crate::aggregation::dbscan::dbscan::dbscan_generic;
 use crate::ms::frames::DenseFrameWindow;
 use crate::space::space_generics::{
-    DistantAtIndex, HasIntensity, NDPoint, NDPointConverter, TraceLike,
+    AsAggregableAtIndex, DistantAtIndex, HasIntensity, NDPoint, NDPointConverter, TraceLike,
 };
 use crate::space::space_generics::{IntenseAtIndex, NDBoundary};
 use crate::utils;
@@ -438,6 +438,23 @@ impl IntenseAtIndex for Vec<TimeTimsPeak> {
     ) -> u64 {
         self[index].intensity
     }
+
+    fn intensity_index_length(&self) -> usize {
+        self.len()
+    }
+}
+
+impl AsAggregableAtIndex<TimeTimsPeak> for Vec<TimeTimsPeak> {
+    fn get_aggregable_at_index(
+        &self,
+        index: usize,
+    ) -> TimeTimsPeak {
+        self[index]
+    }
+
+    fn num_aggregable(&self) -> usize {
+        self.len()
+    }
 }
 
 impl DistantAtIndex<f32> for Vec<TimeTimsPeak> {
@@ -702,6 +719,23 @@ impl IntenseAtIndex for Vec<BaseTrace> {
         index: usize,
     ) -> u64 {
         self[index].intensity
+    }
+
+    fn intensity_index_length(&self) -> usize {
+        self.len()
+    }
+}
+
+impl AsAggregableAtIndex<BaseTrace> for Vec<BaseTrace> {
+    fn get_aggregable_at_index(
+        &self,
+        index: usize,
+    ) -> BaseTrace {
+        self[index]
+    }
+
+    fn num_aggregable(&self) -> usize {
+        self.len()
     }
 }
 

@@ -2,7 +2,7 @@ use crate::aggregation::aggregators::TimsPeakAggregator;
 use crate::aggregation::converters::{BypassDenseFrameBackConverter, DenseFrameConverter};
 use crate::aggregation::dbscan::dbscan::dbscan_generic;
 use crate::ms::frames::{DenseFrame, TimsPeak};
-use crate::space::space_generics::{DistantAtIndex, IntenseAtIndex};
+use crate::space::space_generics::{AsAggregableAtIndex, DistantAtIndex, IntenseAtIndex};
 use crate::utils::within_distance_apply;
 
 // <FF: Send + Sync + Fn(&TimsPeak, &TimsPeak) -> bool>
@@ -73,6 +73,22 @@ impl IntenseAtIndex for Vec<TimsPeak> {
         index: usize,
     ) -> u64 {
         self[index].intensity as u64
+    }
+    fn intensity_index_length(&self) -> usize {
+        self.len()
+    }
+}
+
+impl AsAggregableAtIndex<TimsPeak> for Vec<TimsPeak> {
+    fn get_aggregable_at_index(
+        &self,
+        index: usize,
+    ) -> TimsPeak {
+        self[index]
+    }
+
+    fn num_aggregable(&self) -> usize {
+        self.len()
     }
 }
 

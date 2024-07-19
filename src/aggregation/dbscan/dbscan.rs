@@ -1,8 +1,8 @@
 use crate::aggregation::aggregators::{aggregate_clusters, ClusterAggregator, ClusterLabel};
 use crate::space::kdtree::RadiusKDTree;
 use crate::space::space_generics::{
-    convert_to_bounds_query, AsNDPointsAtIndex, DistantAtIndex, HasIntensity, IntenseAtIndex,
-    NDPoint, NDPointConverter, QueriableIndexedPoints,
+    convert_to_bounds_query, AsAggregableAtIndex, AsNDPointsAtIndex, DistantAtIndex, HasIntensity,
+    IntenseAtIndex, NDPoint, NDPointConverter, QueriableIndexedPoints,
 };
 use crate::utils::{self, ContextTimer};
 use log::{debug, info, trace};
@@ -20,10 +20,10 @@ fn reassign_centroid<
     const N: usize,
     T: Send + Clone + Copy,
     C: NDPointConverter<R, N>,
-    I: QueriableIndexedPoints<'a, N, usize> + std::marker::Sync,
+    I: QueriableIndexedPoints<'a, N> + std::marker::Sync,
     G: Sync + Send + ClusterAggregator<T, R>,
     R: Send,
-    RE: Send + Sync + Index<usize, Output = T> + ?Sized,
+    RE: Send + Sync + AsAggregableAtIndex<T> + ?Sized,
     F: Fn() -> G + Send + Sync,
 >(
     centroids: Vec<R>,
@@ -49,7 +49,7 @@ fn reassign_centroid<
         let mut aggregator = def_aggregator();
         let mut num_agg = 0;
         for neighbor in neighbors {
-            aggregator.add(&elements[*neighbor]);
+            aggregator.add(&elements.get_aggregable_at_index(neighbor));
             num_agg += 1;
         }
         trace!("Aggregated {} elements", num_agg);
@@ -87,7 +87,7 @@ pub fn dbscan_generic<
         + IntoIterator<Item = T>
         + Send
         + Sync
-        + Index<usize, Output = T>
+        + AsAggregableAtIndex<T>
         + ?Sized,
     F: Fn() -> G + Send + Sync,
     D: Send + Sync,
@@ -115,7 +115,7 @@ where
 
     let timer = utils::ContextTimer::new("dbscan_generic", true, log_level);
     let mut i_timer = timer.start_sub_timer("conversion");
-    let (ndpoints, boundary) = converter.convert_iter(prefiltered_peaks.into_iter());
+    let (ndpoints, boundary) = converter.convert_aggregables(prefiltered_peaks);
     i_timer.stop(true);
 
     let mut i_timer = timer.start_sub_timer("tree");
@@ -134,7 +134,7 @@ where
         timer,
         min_n,
         min_intensity,
-        def_aggregator,
+        &def_aggregator,
         extra_filter_fun,
         log_level,
         keep_unclustered,
@@ -159,14 +159,8 @@ where
 pub fn dbscan_aggregate<
     'a,
     const N: usize,
-    RE: IntenseAtIndex
-        + DistantAtIndex<D>
-        + IntoIterator<Item = T>
-        + Send
-        + Sync
-        + Index<usize, Output = T>
-        + ?Sized,
-    IND: QueriableIndexedPoints<'a, N, usize> + std::marker::Sync + Send,
+    RE: IntenseAtIndex + DistantAtIndex<D> + AsAggregableAtIndex<T> + Send + Sync + ?Sized,
+    IND: QueriableIndexedPoints<'a, N> + std::marker::Sync + Send,
     NAI: AsNDPointsAtIndex<N> + std::marker::Sync + Send,
     T: HasIntensity + Send + Clone + Copy + Sync,
     D: Send + Sync,
@@ -174,27 +168,22 @@ pub fn dbscan_aggregate<
     R: Send,
     F: Fn() -> G + Send + Sync,
 >(
-    prefiltered_peaks: &RE,
-    ndpoints: &NAI,
-    index: &IND,
+    prefiltered_peaks: &'a RE,
+    ndpoints: &'a NAI,
+    index: &'a IND,
     timer: ContextTimer,
     min_n: usize,
     min_intensity: u64,
     def_aggregator: F,
-    extra_filter_fun: Option<&(dyn Fn(&D) -> bool + Send + Sync)>,
+    extra_filter_fun: Option<&'a (dyn Fn(&D) -> bool + Send + Sync)>,
     log_level: utils::LogLevel,
     keep_unclustered: bool,
-    max_extension_distances: &[f32; N],
+    max_extension_distances: &'a [f32; N],
     show_progress: bool,
 ) -> Vec<R> {
     let mut i_timer = timer.start_sub_timer("pre-sort");
-    let mut intensity_sorted_indices = prefiltered_peaks
-        .into_iter()
-        .enumerate()
-        .map(|(i, peak)| (i, peak.intensity()))
-        .collect::<Vec<_>>();
+    let intensity_sorted_indices = prefiltered_peaks.intensity_sorted_indices();
 
-    intensity_sorted_indices.par_sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
     i_timer.stop(true);
 
     let mut i_timer = timer.start_sub_timer("dbscan");
@@ -204,7 +193,7 @@ pub fn dbscan_aggregate<
         ndpoints,
         min_n,
         min_intensity,
-        &intensity_sorted_indices,
+        intensity_sorted_indices,
         extra_filter_fun,
         show_progress,
         max_extension_distances,

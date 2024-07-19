@@ -1,3 +1,5 @@
+use rayon::prelude::ParallelSliceMut;
+
 #[derive(Debug, Clone, Copy)]
 pub struct NDBoundary<const DIMENSIONALITY: usize> {
     pub starts: [f32; DIMENSIONALITY],
@@ -102,17 +104,16 @@ pub struct NDPoint<const DIMENSIONALITY: usize> {
     pub values: [f32; DIMENSIONALITY],
 }
 
-// Q: is there any instance where T is not usize?
-pub trait QueriableIndexedPoints<'a, const N: usize, T> {
+pub trait QueriableIndexedPoints<'a, const N: usize> {
     fn query_ndpoint(
         &'a self,
         point: &NDPoint<N>,
-    ) -> Vec<&'a T>;
+    ) -> Vec<usize>;
     fn query_ndrange(
         &'a self,
         boundary: &NDBoundary<N>,
         reference_point: Option<&NDPoint<N>>,
-    ) -> Vec<&'a T>;
+    ) -> Vec<usize>;
 }
 
 pub trait AsNDPointsAtIndex<const D: usize> {
@@ -154,6 +155,28 @@ pub trait IntenseAtIndex {
     ) -> u64 {
         self.intensity_at_index(index)
     }
+    fn intensity_index_length(&self) -> usize;
+    fn intensity_sorted_indices(&self) -> Vec<(usize, u64)> {
+        let mut indices: Vec<(usize, u64)> = (0..self.intensity_index_length())
+            .map(|i| (i, self.intensity_at_index(i)))
+            .collect();
+        indices.par_sort_unstable_by_key(|&x| x.1);
+        indices
+    }
+}
+
+pub trait AsAggregableAtIndex<T>
+where
+    // T: HasIntensity + Copy,
+    // I am not sure how I want to express this in the type system.
+    T: Copy,
+{
+    fn get_aggregable_at_index(
+        &self,
+        index: usize,
+    ) -> T;
+
+    fn num_aggregable(&self) -> usize;
 }
 
 impl<T> IntenseAtIndex for [T]
@@ -165,6 +188,9 @@ where
         index: usize,
     ) -> u64 {
         self[index].intensity()
+    }
+    fn intensity_index_length(&self) -> usize {
+        self.len()
     }
 }
 
@@ -204,14 +230,17 @@ pub trait NDPointConverter<T, const D: usize> {
         &self,
         elem: &T,
     ) -> NDPoint<D>;
-    fn convert_iter<IT>(
+    fn convert_aggregables<IT>(
         &self,
-        elems: IT,
+        elems: &IT,
     ) -> (Vec<NDPoint<D>>, NDBoundary<D>)
     where
-        IT: ExactSizeIterator<Item = T>,
+        IT: AsAggregableAtIndex<T> + ?Sized,
+        T: Copy,
     {
-        let points = elems.map(|elem| self.convert(&elem)).collect::<Vec<_>>();
+        let points = (0..elems.num_aggregable())
+            .map(|i| self.convert(&elems.get_aggregable_at_index(i)))
+            .collect::<Vec<_>>();
         let boundary = NDBoundary::from_ndpoints(&points);
         (points, boundary)
     }

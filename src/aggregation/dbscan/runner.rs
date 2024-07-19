@@ -1,8 +1,8 @@
-use crate::space::space_generics::NDPointConverter;
 use crate::space::space_generics::{
     convert_to_bounds_query, AsNDPointsAtIndex, DistantAtIndex, HasIntensity, IntenseAtIndex,
     NDPoint, QueriableIndexedPoints,
 };
+use crate::space::space_generics::{AsAggregableAtIndex, NDPointConverter};
 use std::marker::PhantomData;
 use std::ops::Index;
 
@@ -224,8 +224,8 @@ where
     DAI: DistantAtIndex<E> + ?Sized,
 {
     raw_elements: &'a PP, // &'a Vec<E>,
-    intensity_sorted_indices: &'a Vec<(usize, u64)>,
-    indexed_points: &'a (dyn QueriableIndexedPoints<'a, N, usize> + std::marker::Sync),
+    intensity_sorted_indices: Vec<(usize, u64)>,
+    indexed_points: &'a (dyn QueriableIndexedPoints<'a, N> + std::marker::Sync),
     projected_elements: &'a PE, // [NDPoint<N>],
     raw_dist: &'a DAI,
     _phantom_metric: PhantomData<E>,
@@ -267,8 +267,8 @@ where
     fn run<PP, PE, DAI>(
         &self,
         raw_elements: &'b PP, // Vec<E>, // trait impl Index<usize, Output=E>
-        intensity_sorted_indices: &'b Vec<(usize, u64)>,
-        indexed_points: &'b (dyn QueriableIndexedPoints<'a, N, usize> + std::marker::Sync),
+        intensity_sorted_indices: Vec<(usize, u64)>,
+        indexed_points: &'b (dyn QueriableIndexedPoints<'a, N> + std::marker::Sync),
         projected_elements: &'b PE, //[NDPoint<N>], // trait impl AsNDPointAtIndex<usize, Output=NDPoint<N>>
         raw_distance_calculator: &'b DAI,
     ) -> ClusterLabels
@@ -292,7 +292,7 @@ where
 
         let points: DBSCANPoints<N, PP, PE, DAI, D> = DBSCANPoints {
             raw_elements,
-            intensity_sorted_indices,
+            intensity_sorted_indices: intensity_sorted_indices,
             indexed_points,
             projected_elements,
             raw_dist: raw_distance_calculator,
@@ -411,7 +411,7 @@ where
             .indexed_points
             .query_ndrange(&query_elems.0, query_elems.1)
             .iter()
-            .map(|x| **x)
+            .map(|x| *x)
             .collect::<Vec<_>>();
         timers.outer_loop_nn_timer.stop(false);
 
@@ -537,7 +537,7 @@ where
             .indexed_points
             .query_ndrange(&inner_query_elems.0, inner_query_elems.1)
             .iter_mut()
-            .map(|x| **x)
+            .map(|x| *x)
             .collect::<Vec<_>>();
         timers.inner_loop_nn_timer.stop(false);
         local_neighbors
@@ -717,18 +717,18 @@ where
 pub fn dbscan_label_clusters<
     'a,
     const N: usize,
-    RE: IntenseAtIndex + DistantAtIndex<D> + Send + Sync + Index<usize, Output = E> + ?Sized,
-    T: QueriableIndexedPoints<'a, N, usize> + Send + std::marker::Sync,
+    RE: IntenseAtIndex + DistantAtIndex<D> + Send + Sync + AsAggregableAtIndex<E> + ?Sized,
+    T: QueriableIndexedPoints<'a, N> + Send + std::marker::Sync,
     PE: AsNDPointsAtIndex<N> + Send + Sync + ?Sized,
     D: Send + Sync,
-    E: Send + Sync,
+    E: Send + Sync + Copy,
 >(
     indexed_points: &'a T,
     raw_elements: &'a RE,
     projected_elements: &'a PE, // [NDPoint<N>],
     min_n: usize,
     min_intensity: u64,
-    intensity_sorted_indices: &'a Vec<(usize, u64)>,
+    intensity_sorted_indices: Vec<(usize, u64)>,
     filter_fun: Option<&'a (dyn Fn(&D) -> bool + Send + Sync)>,
     progress: bool,
     max_extension_distances: &'a [f32; N],
