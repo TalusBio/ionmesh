@@ -76,6 +76,19 @@ There are a couple of features for development.
 RUST_LOG=info # will change the log level ... levels are standard (info, debug, warn, error, trace)
 RUST_BACKTRACE=1 # will show a backtrace on panic
 RAYON_NUM_THREADS=4 # will set the number of threads to use in rayon
+
+IONMESH_DEBUG_JSON_PATH
+    # Will save some intermeriate results
+    # as json into that dir
+IONMESH_DEBUG_JSON_FREQUENCY
+    # Will control the frequency with which results are saved.
+    # 1 means every iteration, 2 every other, etc.
+    # They are done pseudo-randomly.
+IONMESH_PROFILE_NUM_WINDOWS
+    # Will control the number of frame groups that will be used.
+    # If this is a diapasef run, it means a it will run only X
+    # quad isolation windows. For diagonal, it will run X diagonal
+    # windows.
 ```
 
 ## Roadmap

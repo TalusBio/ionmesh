@@ -161,6 +161,17 @@ pub trait IntenseAtIndex {
             .map(|i| (i, self.intensity_at_index(i)))
             .collect();
         indices.par_sort_unstable_by_key(|&x| x.1);
+
+        debug_assert!(indices.len() == self.intensity_index_length());
+        if cfg!(debug_assertions) {
+            if indices.len() > 1 {
+                for i in 1..indices.len() {
+                    if indices[i - 1].1 > indices[i].1 {
+                        panic!("Indices are not sorted");
+                    }
+                }
+            }
+        }
         indices
     }
 }

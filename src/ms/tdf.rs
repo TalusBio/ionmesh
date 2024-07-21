@@ -265,6 +265,7 @@ impl DIAFrameInfo {
         for group in out.iter_mut() {
             group.sort_by(|a, b| a.rt.partial_cmp(&b.rt).unwrap());
         }
+        out.retain(|x| !x.is_empty());
 
         // Debug assert that the frames are sorted by rt
         if cfg!(debug_assertions) {

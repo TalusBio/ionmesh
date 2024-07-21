@@ -7,7 +7,7 @@ license = "Apache-2.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-timsrust = "0.2.2"
+timsrust = "= 0.2.2"
 
 # Serialization
 serde = { version = "1.0.193", features = ["derive"] }
@@ -32,6 +32,10 @@ toml = "0.8.8"
 
 [features]
 par_dataprep = []
+less_parallel = [] # Mostly for profiling reasons ... looking at flamegraphs is hard with rayon...
 
-# [profile.release]
+[profile.release]
+lto = "thin"
+panic = "abort"
+# codegen-units = 1
 # debug = true

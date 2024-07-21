@@ -3,6 +3,6 @@
 /tmp
 /run_1k
 /benchmark
+/debug_jsons
 traces_debug.csv
 pseudoscans_debug.json
-

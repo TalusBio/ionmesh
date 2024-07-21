@@ -209,7 +209,7 @@ impl TraceLike<f32> for BaseTrace {
 }
 
 pub fn combine_traces(
-    denseframe_windows: Vec<DenseFrameWindow>,
+    grouped_denseframe_windows: Vec<Vec<DenseFrameWindow>>,
     config: TracingConfig,
     rt_binsize: f32,
 ) -> Vec<BaseTrace> {
@@ -222,43 +222,37 @@ pub fn combine_traces(
 
     let mut timer = utils::ContextTimer::new("Tracing peaks in time", true, utils::LogLevel::INFO);
 
-    let mut grouped_windows: Vec<Vec<Option<Vec<DenseFrameWindow>>>> = Vec::new();
-    for dfw in denseframe_windows {
-        let dia_group = dfw.group_id;
-        let quad_group = dfw.quad_group_id;
-
-        while grouped_windows.len() <= dia_group {
-            grouped_windows.push(Vec::new());
-        }
-
-        while grouped_windows[dia_group].len() <= quad_group {
-            grouped_windows[dia_group].push(None);
-        }
-
-        if grouped_windows[dia_group][quad_group].is_none() {
-            grouped_windows[dia_group][quad_group] = Some(Vec::new());
-        } else {
-            grouped_windows[dia_group][quad_group]
-                .as_mut()
-                .unwrap()
-                .push(dfw);
-        }
-    }
-
-    // Flatten one level
-    let grouped_windows: Vec<Vec<DenseFrameWindow>> =
-        grouped_windows.into_iter().flatten().flatten().collect();
-
-    let grouped_windows: Vec<Vec<TimeTimsPeak>> = grouped_windows
+    let grouped_windows: Vec<Vec<TimeTimsPeak>> = grouped_denseframe_windows
         .into_iter()
         .map(_flatten_denseframe_vec)
         .collect();
 
     // Combine the traces
-    let out: Vec<BaseTrace> = grouped_windows
+    let out: Vec<BaseTrace> = if cfg!(feature = "less_parallel") {
+        warn!("Running in single-threaded mode");
+        grouped_windows
+            .into_iter()
+            .map(|x| {
+                combine_single_window_traces(
+                    x,
+                    config.mz_scaling.into(),
+                    config.max_mz_expansion_ratio,
+                    config.rt_scaling.into(),
+                    config.max_rt_expansion_ratio,
+                    config.ims_scaling.into(),
+                    config.max_ims_expansion_ratio,
+                    config.min_n.into(),
+                    config.min_neighbor_intensity,
+                    rt_binsize,
+                )
+            })
+            .flatten()
+            .collect()
+    } else {
+        grouped_windows
         .into_par_iter()
         .map(|x| {
-            _combine_single_window_traces(
+            combine_single_window_traces(
                 x,
                 config.mz_scaling.into(),
                 config.max_mz_expansion_ratio,
@@ -272,7 +266,8 @@ pub fn combine_traces(
             )
         })
         .flatten()
-        .collect();
+            .collect()
+    };
 
     info!("Total Combined traces: {}", out.len());
     timer.stop(true);
@@ -471,7 +466,7 @@ impl DistantAtIndex<f32> for Vec<TimeTimsPeak> {
 type FFTimeTimsPeak = fn(&TimeTimsPeak, &TimeTimsPeak) -> bool;
 
 // TODO maybe this can be a builder-> executor pattern
-fn _combine_single_window_traces(
+fn combine_single_window_traces(
     prefiltered_peaks: Vec<TimeTimsPeak>,
     mz_scaling: f64,
     max_mz_expansion_ratio: f32,
@@ -483,7 +478,7 @@ fn _combine_single_window_traces(
     min_intensity: u32,
     rt_binsize: f32,
 ) -> Vec<BaseTrace> {
-    debug!("Prefiltered peaks: {}", prefiltered_peaks.len());
+    info!("Peaks in window: {}", prefiltered_peaks.len());
     let converter: TimeTimsPeakConverter = TimeTimsPeakConverter {
         mz_scaling,
         rt_scaling,

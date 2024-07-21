@@ -1,8 +1,14 @@
+use log::info;
+use serde::Serialize;
 use std::fmt;
 use timsrust::{Frame, FrameType};
 
-use crate::space::space_generics::{
-    AsNDPointsAtIndex, IntenseAtIndex, NDBoundary, NDPoint, QueriableIndexedPoints,
+use crate::{
+    space::space_generics::{
+        convert_to_bounds_query, AsNDPointsAtIndex, IntenseAtIndex, NDBoundary, NDPoint,
+        QueriableIndexedPoints,
+    },
+    utils::binary_search_slice,
 };
 
 use super::FrameMsMsWindowInfo;
@@ -89,19 +95,35 @@ impl fmt::Display for ScanOutOfBoundsError {
 /// Additions for FrameSlice:
 ///    - scan_start       123  // The scan number of the first scan offset in the current window.
 ///    - slice_window_info Some(MsMsFrameSliceWindowInfo::SingleWindow(FrameMsMsWindow))
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FrameSlice<'a> {
-    pub scan_offsets: &'a [usize],
+    // pub scan_offsets: &'a [usize], // Timsrust changed this later ...
+    pub scan_offsets: &'a [u64],
     pub tof_indices: &'a [u32],
     pub intensities: &'a [u32],
     pub parent_frame_index: usize,
     pub rt: f64,
+
+    #[serde(skip)]
     pub frame_type: FrameType,
 
     // From this point on they are local implementations
     // Before they are used from the timsrust crate.
     pub scan_start: usize,
     pub slice_window_info: Option<MsMsFrameSliceWindowInfo>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ExpandedFrameSlice {
+    pub scan_numbers: Vec<usize>,
+    pub tof_indices: Vec<u32>,
+    pub intensities: Vec<u32>,
+    pub parent_frame_index: usize,
+    pub rt: f64,
+    pub slice_window_info: Option<MsMsFrameSliceWindowInfo>,
+
+    #[serde(skip)]
+    pub frame_type: FrameType,
 }
 
 impl<'a> FrameSlice<'a> {
@@ -113,8 +135,8 @@ impl<'a> FrameSlice<'a> {
     ) -> FrameSlice<'a> {
         let scan_offsets = &frame.scan_offsets[scan_start..=scan_end];
 
-        let indprt_start = scan_offsets[0];
-        let indptr_end = *scan_offsets.last().expect("Scan range is empty");
+        let indprt_start = scan_offsets[0] as usize;
+        let indptr_end = *scan_offsets.last().expect("Scan range is empty") as usize;
 
         let tof_indices = &frame.tof_indices[indprt_start..indptr_end];
         let intensities = &frame.intensities[indprt_start..indptr_end];
@@ -122,9 +144,16 @@ impl<'a> FrameSlice<'a> {
         debug_assert!(indptr_end - indprt_start == tof_indices.len());
         #[cfg(debug_assertions)]
         {
+            let init_offset = scan_offsets[0];
             for i in 1..(scan_offsets.len() - 1) {
                 debug_assert!(scan_offsets[i] <= scan_offsets[i + 1]);
-                debug_assert!((scan_offsets[i + 1] - scan_start) <= tof_indices.len());
+                debug_assert!(
+                    (scan_offsets[i + 1] - init_offset) <= tof_indices.len() as u64,
+                    "scan_offsets[i+1]: {}, init_offset: {}, tof_indices.len(): {}",
+                    scan_offsets[i + 1],
+                    init_offset,
+                    tof_indices.len()
+                );
             }
         }
 
@@ -151,7 +180,7 @@ impl<'a> FrameSlice<'a> {
         local_index: usize,
     ) -> usize {
         debug_assert!(local_index < self.tof_indices.len());
-        let search_val = self.scan_offsets[0] + local_index;
+        let search_val = self.scan_offsets[0] + local_index as u64;
         let loc = self
             .scan_offsets
             .binary_search_by(|x| x.partial_cmp(&search_val).unwrap());
@@ -174,7 +203,7 @@ impl<'a> FrameSlice<'a> {
 
         for (scan_index, index_offsets) in self.scan_offsets.windows(2).enumerate() {
             let num_tofs = index_offsets[1] - index_offsets[0];
-            scan_numbers.extend(vec![curr_scan + scan_index; num_tofs]);
+            scan_numbers.extend(vec![curr_scan + scan_index; num_tofs as usize]);
         }
 
         if cfg!(debug_assertions) {
@@ -250,8 +279,8 @@ impl<'a> FrameSlice<'a> {
         scan_index: usize,
     ) -> ((&[u32], &[u32]), usize) {
         let offset_offset = self.scan_offsets[0];
-        let scan_start = self.scan_offsets[scan_index] - offset_offset;
-        let scan_end = self.scan_offsets[scan_index + 1] - offset_offset;
+        let scan_start = (self.scan_offsets[scan_index] - offset_offset) as usize;
+        let scan_end = (self.scan_offsets[scan_index + 1] - offset_offset) as usize;
         let tof_indices = &self.tof_indices[scan_start..scan_end];
         let intensities = &self.intensities[scan_start..scan_end];
         ((tof_indices, intensities), scan_start)
@@ -366,6 +395,47 @@ impl<'a> FrameSlice<'a> {
     }
 }
 
+impl ExpandedFrameSlice {
+    pub fn from_frame_slice(frame_slice: &FrameSlice) -> ExpandedFrameSlice {
+        let parent_frame_index = frame_slice.parent_frame_index;
+        let rt = frame_slice.rt;
+        let slice_window_info = frame_slice.slice_window_info.clone();
+        let frame_type = frame_slice.frame_type;
+        let scan_numbers = frame_slice.explode_scan_numbers();
+
+        // Sort all arrays on the tof indices.
+        let mut zipped = frame_slice
+            .tof_indices
+            .iter()
+            .zip(frame_slice.intensities.iter())
+            .zip(scan_numbers.iter())
+            .collect::<Vec<_>>();
+
+        zipped.sort_unstable_by(|a, b| a.0 .0.cmp(&b.0 .0));
+
+        let (tof_indices, intensities, scan_numbers) = zipped.into_iter().fold(
+            (Vec::new(), Vec::new(), Vec::new()),
+            |(mut tof_indices, mut intensities, mut scan_numbers),
+             ((tof_index, intensity), scan_number)| {
+                tof_indices.push(*tof_index);
+                intensities.push(*intensity);
+                scan_numbers.push(*scan_number);
+                (tof_indices, intensities, scan_numbers)
+            },
+        );
+
+        ExpandedFrameSlice {
+            scan_numbers,
+            tof_indices,
+            intensities,
+            parent_frame_index,
+            rt,
+            slice_window_info,
+            frame_type,
+        }
+    }
+}
+
 // Tests for the FrameSlice
 #[cfg(test)]
 mod tests {
@@ -393,7 +463,7 @@ mod tests {
         assert_eq!(frame_slice.parent_frame_index, 0);
         assert_eq!(frame_slice.rt, 65.34);
         assert_eq!(frame_slice.frame_type, FrameType::MS1);
-        assert_eq!(frame_slice.scan_start, 0);
+        assert_eq!(frame_slice.scan_start, 3);
     }
 
     #[test]
@@ -558,6 +628,25 @@ mod tests {
     }
 }
 
+impl IntenseAtIndex for ExpandedFrameSlice {
+    fn intensity_at_index(
+        &self,
+        index: usize,
+    ) -> u64 {
+        self.intensities[index] as u64
+    }
+    fn weight_at_index(
+        &self,
+        index: usize,
+    ) -> u64 {
+        self.intensities[index] as u64
+    }
+
+    fn intensity_index_length(&self) -> usize {
+        self.intensities.len()
+    }
+}
+
 impl<'a> IntenseAtIndex for FrameSlice<'a> {
     fn intensity_at_index(
         &self,
@@ -594,6 +683,24 @@ impl<'a> IntenseAtIndex for FrameSlice<'a> {
     // }
 }
 
+impl AsNDPointsAtIndex<2> for ExpandedFrameSlice {
+    fn get_ndpoint(
+        &self,
+        index: usize,
+    ) -> NDPoint<2> {
+        let scan_index = self.scan_numbers[index];
+        let tof_index = self.tof_indices[index];
+
+        NDPoint {
+            values: [tof_index as f32, scan_index as f32],
+        }
+    }
+
+    fn num_ndpoints(&self) -> usize {
+        self.intensities.len()
+    }
+}
+
 impl<'a> AsNDPointsAtIndex<2> for FrameSlice<'a> {
     fn get_ndpoint(
         &self,
@@ -612,6 +719,47 @@ impl<'a> AsNDPointsAtIndex<2> for FrameSlice<'a> {
     }
 }
 
+impl QueriableIndexedPoints<'_, 2> for ExpandedFrameSlice {
+    fn query_ndpoint(
+        &self,
+        point: &NDPoint<2>,
+    ) -> Vec<usize> {
+        let query = convert_to_bounds_query(point);
+        self.query_ndrange(&query.0, query.1)
+    }
+
+    fn query_ndrange(
+        &self,
+        boundary: &NDBoundary<2>,
+        reference_point: Option<&NDPoint<2>>,
+    ) -> Vec<usize> {
+        // TODO implement passing information on the mz tolerance ...
+        // info!("Querying frame slice with boundary: {:?}", boundary);
+        // let tol = AbsoluteFramePointTolerance {
+        //     tof_index_tolerance: (boundary.widths[0] / 2.) as u32,
+        //     scan_tolerance: (boundary.widths[1] / 2.) as usize,
+        // };
+        const SCAN_NUMBER_TOLERANCE: usize = 10;
+        let scan_left = (boundary.starts[1] as usize).saturating_sub(SCAN_NUMBER_TOLERANCE);
+        let scan_right = (boundary.ends[1] as usize).saturating_add(SCAN_NUMBER_TOLERANCE);
+
+        let (left, right) = binary_search_slice(
+            &self.tof_indices,
+            |a, b| a.cmp(b),
+            boundary.starts[0] as u32,
+            boundary.ends[0] as u32,
+        );
+        let mut out = Vec::new();
+        for i in left..right {
+            let scan_i = self.scan_numbers[i];
+            if scan_i >= scan_left && scan_i <= scan_right {
+                out.push(i);
+            }
+        }
+        out
+    }
+}
+
 impl<'a> QueriableIndexedPoints<'a, 2> for FrameSlice<'a> {
     fn query_ndpoint(
         &'a self,
@@ -623,8 +771,8 @@ impl<'a> QueriableIndexedPoints<'a, 2> for FrameSlice<'a> {
             tof_index,
             ScanNumberType::Global(scan_index),
             &AbsoluteFramePointTolerance {
-                tof_index_tolerance: 1,
-                scan_tolerance: 1,
+                tof_index_tolerance: 2,
+                scan_tolerance: 5,
             },
         );
 
@@ -644,9 +792,15 @@ impl<'a> QueriableIndexedPoints<'a, 2> for FrameSlice<'a> {
         boundary: &NDBoundary<2>,
         reference_point: Option<&NDPoint<2>>,
     ) -> Vec<usize> {
+        // TODO implement passing information on the mz tolerance ...
+        // info!("Querying frame slice with boundary: {:?}", boundary);
+        // let tol = AbsoluteFramePointTolerance {
+        //     tof_index_tolerance: (boundary.widths[0] / 2.) as u32,
+        //     scan_tolerance: (boundary.widths[1] / 2.) as usize,
+        // };
         let tol = AbsoluteFramePointTolerance {
-            tof_index_tolerance: (boundary.widths[0] / 2.) as u32,
-            scan_tolerance: (boundary.widths[1] / 2.) as usize,
+            tof_index_tolerance: (boundary.widths[0] * 2.) as u32,
+            scan_tolerance: (boundary.widths[1] * 10.) as usize,
         };
         let rangesets = self.matching_rangeset(
             boundary.centers[0] as i32,
@@ -759,7 +913,7 @@ impl RangeSet {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum MsMsFrameSliceWindowInfo {
     WindowGroup(usize),
     SingleWindow(FrameMsMsWindowInfo),

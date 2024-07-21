@@ -1,6 +1,9 @@
-use log::{debug, info, trace};
+use log::{debug, info, trace, warn};
 use num::cast::AsPrimitive;
-use std::time::{Duration, Instant};
+use std::{
+    cmp::Ordering,
+    time::{Duration, Instant},
+};
 
 pub struct ContextTimer {
     start: Instant,
@@ -392,6 +395,96 @@ pub fn get_stats(data: &[f64]) -> Stats {
         min: sd_calc.get_min(),
         max: sd_calc.get_max(),
     }
+}
+
+/// This has been shamelessly copied from sage.
+/// https://github.com/lazear/sage/blob/93a9a8a7c9f717238fc6c582c0dd501a56159be7/crates/sage/src/database.rs#L498
+/// Althought it really feels like this should be in the standard lib.
+///
+/// Usage:
+/// ```rust
+/// let data = [1.0, 1.5, 1.5, 1.5, 1.5, 2.0, 2.5, 3.0, 3.0, 3.5, 4.0];
+/// let (left, right) = binary_search_slice(&data, |a: &f64, b| a.total_cmp(b), 1.5, 3.25);
+/// assert!(data[left] <= 1.5);
+/// assert!(data[right] > 3.25);
+/// assert_eq!(
+///     &data[left..right],
+///     &[1.0, 1.5, 1.5, 1.5, 1.5, 2.0, 2.5, 3.0, 3.0]
+/// );
+/// ```
+///
+#[inline]
+pub fn binary_search_slice<T, F, S>(
+    slice: &[T],
+    key: F,
+    low: S,
+    high: S,
+) -> (usize, usize)
+where
+    F: Fn(&T, &S) -> Ordering,
+{
+    let left_idx = match slice.binary_search_by(|a| key(a, &low)) {
+        Ok(idx) | Err(idx) => {
+            let mut idx = idx.saturating_sub(1);
+            while idx > 0 && key(&slice[idx], &low) != Ordering::Less {
+                idx -= 1;
+            }
+            idx
+        },
+    };
+
+    let right_idx = match slice[left_idx..].binary_search_by(|a| key(a, &high)) {
+        Ok(idx) | Err(idx) => {
+            let mut idx = idx + left_idx;
+            while idx < slice.len() && key(&slice[idx], &high) != Ordering::Greater {
+                idx = idx.saturating_add(1);
+            }
+            idx.min(slice.len())
+        },
+    };
+    (left_idx, right_idx)
+}
+
+/// Serializes to json the object if debug assertions are
+/// enabled and an env variable with the frequency is set.
+/// the env variable should be named `IONMESH_DEBUG_JSON_FREQUENCY`
+/// Also derive the bath to ave to from the env variable `IONMESH_DEBUG_JSON_PATH`
+/// which is created if it does not exist.
+/// The object is serialized to a file named `{name}.json`
+pub fn maybe_save_json_if_debugging<T>(
+    obj: &T,
+    name: &str,
+    force: bool,
+) -> bool
+where
+    T: serde::Serialize,
+{
+    if cfg!(debug_assertions) {
+        let freq = std::env::var("IONMESH_DEBUG_JSON_FREQUENCY");
+        if let Ok(freq) = freq {
+            let freq = freq.parse::<usize>().unwrap();
+            if force || (freq > 0) {
+                if force || (rand::random::<usize>() % freq == 0) {
+                    let json = serde_json::to_string_pretty(obj).unwrap();
+                    let path = std::env::var("IONMESH_DEBUG_JSON_PATH");
+                    let path = if let Ok(path) = path {
+                        if !std::path::Path::new(&path).exists() {
+                            std::fs::create_dir_all(&path).unwrap();
+                        }
+                        std::path::Path::new(&path).join(format!("{}.json", name))
+                    } else {
+                        warn!("IONMESH_DEBUG_JSON_PATH not set, saving to current directory");
+                        std::path::Path::new(".").join(format!("{}.json", name))
+                    };
+                    info!("Saving json to {:?}", path);
+
+                    std::fs::write(path, json).unwrap();
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 #[cfg(test)]

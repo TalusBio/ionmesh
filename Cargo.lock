@@ -1263,15 +1263,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c8640c5d730cb13ebd907d8d04b52f55ac9a2eec55b440c8892f40d56c76c1d"
 
 [[package]]
-name = "memmap2"
-version = "0.9.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe751422e4a8caa417e13c3ea66452215d7d63e19e604f4980461212f3ae1322"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2326,14 +2317,13 @@ dependencies = [
 
 [[package]]
 name = "timsrust"
-version = "0.2.4"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9301709a549fabb2d79f564c528b0af5ca0002bdf0055341cfcc07950a44290b"
+checksum = "7a0791ad8b3836b6a582b1bfb563c04d0e09acdaf85e45c16d3158a0bcb164b6"
 dependencies = [
  "bytemuck",
  "byteorder",
  "linreg",
- "memmap2",
  "parquet",
  "rayon",
  "rusqlite",

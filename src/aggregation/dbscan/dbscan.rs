@@ -88,6 +88,7 @@ pub fn dbscan_generic<
         + Send
         + Sync
         + AsAggregableAtIndex<T>
+        + std::fmt::Debug
         + ?Sized,
     F: Fn() -> G + Send + Sync,
     D: Send + Sync,
@@ -159,8 +160,14 @@ where
 pub fn dbscan_aggregate<
     'a,
     const N: usize,
-    RE: IntenseAtIndex + DistantAtIndex<D> + AsAggregableAtIndex<T> + Send + Sync + ?Sized,
-    IND: QueriableIndexedPoints<'a, N> + std::marker::Sync + Send,
+    RE: IntenseAtIndex
+        + DistantAtIndex<D>
+        + AsAggregableAtIndex<T>
+        + Send
+        + Sync
+        + std::fmt::Debug
+        + ?Sized,
+    IND: QueriableIndexedPoints<'a, N> + std::marker::Sync + Send + std::fmt::Debug,
     NAI: AsNDPointsAtIndex<N> + std::marker::Sync + Send,
     T: HasIntensity + Send + Clone + Copy + Sync,
     D: Send + Sync,

@@ -1,3 +1,4 @@
+use serde::Serialize;
 use timsrust::{ConvertableIndex, Frame, Scan2ImConverter, Tof2MzConverter};
 
 use crate::ms::{
@@ -16,7 +17,7 @@ fn check_peak_sanity(peak: &TimsPeak) {
     debug_assert!(peak.npeaks > 0);
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DenseFrameWindow {
     pub frame: DenseFrame,
     pub ims_min: f32,
@@ -99,7 +100,7 @@ impl DenseFrame {
             let num_tofs = index_offset - last_scan_offset;
 
             let ims = ims_converter.convert(scan_index as u32) as f32;
-            expanded_scan_indices.extend(vec![ims; num_tofs]);
+            expanded_scan_indices.extend(vec![ims; num_tofs as usize]);
             last_scan_offset = *index_offset;
         }
 
@@ -153,10 +154,10 @@ impl DenseFrame {
                 info!("frame_window.scan_start: {}", frame_window.scan_start);
             }
             debug_assert!(ims >= 0.0);
-            expanded_scan_indices.extend(vec![ims; num_tofs]);
+            expanded_scan_indices.extend(vec![ims; num_tofs as usize]);
             last_scan_offset = *index_offset;
         }
-        debug_assert!(last_scan_offset == frame_window.tof_indices.len());
+        debug_assert!(last_scan_offset as usize == frame_window.tof_indices.len());
 
         let peaks = expanded_scan_indices
             .iter()

@@ -1,3 +1,4 @@
+use serde::Serialize;
 pub use timsrust::Frame;
 pub use timsrust::FrameType;
 pub use timsrust::{
@@ -6,7 +7,7 @@ pub use timsrust::{
 
 use crate::space::space_generics::HasIntensity;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct TimsPeak {
     pub intensity: u32,
     pub mz: f64,
@@ -48,17 +49,22 @@ impl<'a> HasIntensity for RawTimsPeakReference<'a> {
 
 #[derive(Debug, Clone, Copy)]
 pub enum SortingOrder {
+    None,
     Mz,
     Mobility,
     Intensity,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DenseFrame {
     pub raw_peaks: Vec<TimsPeak>,
     pub index: usize,
     pub rt: f64,
+
+    #[serde(skip_serializing)]
     pub frame_type: FrameType,
+
+    #[serde(skip_serializing)]
     pub sorted: Option<SortingOrder>,
 }
 
@@ -66,7 +72,7 @@ pub struct DenseFrame {
 ///
 /// This adds to a frame slice the context of the what isolation was used
 /// to generate the frame slice.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FrameMsMsWindowInfo {
     pub mz_start: f32,
     pub mz_end: f32,
