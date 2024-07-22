@@ -254,7 +254,12 @@ impl<
         let mut mag_a = T::default();
         let mut mag_b = T::default();
         for i in 0..NBINS {
-            let other_index = i + other_vs_self_offset as usize;
+            let other_index = i as i32 + other_vs_self_offset;
+            if other_index < 0 {
+                continue;
+            }
+
+            let other_index = other_index as usize;
             if other_index >= other.chromatogram.len() {
                 continue;
             }

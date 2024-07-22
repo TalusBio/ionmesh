@@ -1,3 +1,4 @@
+use core::fmt::Debug;
 use core::panic;
 use serde::{Deserialize, Serialize};
 
@@ -19,7 +20,7 @@ use crate::utils;
 use crate::utils::maybe_save_json_if_debugging;
 
 use indicatif::ParallelProgressIterator;
-use log::{info, trace, warn};
+use log::{debug, info, trace, warn};
 use rayon::prelude::*;
 use timsrust::Frame;
 
@@ -163,20 +164,6 @@ fn denoise_frame_slice_window(
     let ref_frame_parent_index = fsw.window[fsw.reference_index].parent_frame_index;
     let saved_first =
         maybe_save_json_if_debugging(&fsw, &*format!("fsw_{}", ref_frame_parent_index), false);
-    // dbscan_aggregate(
-    //     &fsw,
-    //     &fsw,
-    //     &fsw,
-    //     timer,
-    //     min_n,
-    //     min_intensity,
-    //     TimsPeakAggregator::default,
-    //     None::<&(dyn Fn(&f32) -> bool + Send + Sync)>,
-    //     utils::LogLevel::TRACE,
-    //     false,
-    //     &[max_mz_extension as f32, max_ims_extension],
-    //     false,
-    // );
 
     let mut intensity_sorted_indices = Vec::with_capacity(fsw.num_ndpoints());
     for i in 0..fsw.num_ndpoints() {
@@ -184,7 +171,16 @@ fn denoise_frame_slice_window(
         let intensity = fsw.intensity_at_index(i);
         intensity_sorted_indices.push((i, intensity));
     }
-    intensity_sorted_indices.par_sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    intensity_sorted_indices.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    if cfg!(debug_assertions) {
+        // I know this should be obviously always true, but I dont trust myself
+        // and thinking about orderings.
+        let mut last_intensity = u64::MAX;
+        for (_i, intensity) in intensity_sorted_indices.iter() {
+            assert!(*intensity <= last_intensity);
+            last_intensity = *intensity;
+        }
+    }
 
     let mut i_timer = timer.start_sub_timer("dbscan");
     let cluster_labels = dbscan_label_clusters(
@@ -329,7 +325,7 @@ where
     where
         Self: Sync,
     {
-        info!("Denoising {} frames", elems.len());
+        debug!("Denoising {} frames", elems.len());
         // randomly viz 1/200 frames
         // Selecting a slice of 1/200 frames
 
@@ -417,7 +413,7 @@ impl<'a> Denoiser<'a, Frame, Vec<DenseFrameWindow>, Converters, Option<usize>>
     where
         Self: Sync,
     {
-        info!("Denoising {} frames", elems.len());
+        info!("Denoising (centroiding) {} frames", elems.len());
 
         let mut frame_window_slices = self.dia_frame_info.split_frame_windows(&elems);
 
@@ -429,6 +425,12 @@ impl<'a> Denoiser<'a, Frame, Vec<DenseFrameWindow>, Converters, Option<usize>>
             log::warn!("Profiling: Only processing {} windows", num_windows);
             frame_window_slices.truncate(num_windows);
         }
+
+        // This warning reders to denoise_frame_slice_window.
+        // to have them be not hard-coded I need a way to convert
+        // m/z space ranges to tof indices ... which is not exposed
+        // by timsrust ...
+        warn!("Using prototype function for denoising, scalings are hard-coded");
 
         let mut out = Vec::with_capacity(frame_window_slices.len());
         let num_windows = frame_window_slices.len();
@@ -470,16 +472,16 @@ impl<'a> Denoiser<'a, Frame, Vec<DenseFrameWindow>, Converters, Option<usize>>
                     .collect::<Vec<_>>()
             };
 
-            info!("Denoised {} frames", denoised_elements.len());
+            debug!("Denoised {} frames", denoised_elements.len());
             denoised_elements
                 .retain(|x| x.frame.raw_peaks.iter().map(|y| y.intensity).sum::<u32>() > 20);
-            info!("Retained {} frames", denoised_elements.len());
+            debug!("Retained {} frames", denoised_elements.len());
             let end_tot_peaks = denoised_elements
                 .iter()
                 .map(|x| x.frame.raw_peaks.len() as u64)
                 .sum::<u64>();
             let ratio = end_tot_peaks as f64 / start_tot_peaks as f64;
-            info!(
+            debug!(
                 "Start peaks: {}, End peaks: {} -> ratio: {:.2}",
                 start_tot_peaks, end_tot_peaks, ratio
             );

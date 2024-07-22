@@ -128,9 +128,9 @@ impl IntenseAtIndex for FrameSliceWindow<'_> {
     }
 }
 
-impl<'a> QueriableIndexedPoints<'a, 2> for FrameSliceWindow<'a> {
+impl<'a> QueriableIndexedPoints<2> for FrameSliceWindow<'a> {
     fn query_ndpoint(
-        &'a self,
+        &self,
         point: &NDPoint<2>,
     ) -> Vec<usize> {
         let mut out = Vec::new();
@@ -147,7 +147,7 @@ impl<'a> QueriableIndexedPoints<'a, 2> for FrameSliceWindow<'a> {
     }
 
     fn query_ndrange(
-        &'a self,
+        &self,
         boundary: &crate::space::space_generics::NDBoundary<2>,
         reference_point: Option<&NDPoint<2>>,
     ) -> Vec<usize> {

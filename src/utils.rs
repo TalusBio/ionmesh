@@ -2,6 +2,7 @@ use log::{debug, info, trace, warn};
 use num::cast::AsPrimitive;
 use std::{
     cmp::Ordering,
+    fmt::Debug,
     time::{Duration, Instant},
 };
 
@@ -397,19 +398,41 @@ pub fn get_stats(data: &[f64]) -> Stats {
     }
 }
 
-/// This has been shamelessly copied from sage.
+/// This has been shamelessly copied and very minorly modified from sage.
 /// https://github.com/lazear/sage/blob/93a9a8a7c9f717238fc6c582c0dd501a56159be7/crates/sage/src/database.rs#L498
 /// Althought it really feels like this should be in the standard lib.
 ///
 /// Usage:
 /// ```rust
-/// let data = [1.0, 1.5, 1.5, 1.5, 1.5, 2.0, 2.5, 3.0, 3.0, 3.5, 4.0];
+/// use ionmesh::utils::binary_search_slice;
+/// let data: [f64; 11]= [1.0, 1.5, 1.5, 1.5, 1.5, 2.0, 2.5, 3.0, 3.0, 3.5, 4.0];
 /// let (left, right) = binary_search_slice(&data, |a: &f64, b| a.total_cmp(b), 1.5, 3.25);
-/// assert!(data[left] <= 1.5);
+/// assert!(data[left] == 1.5);
 /// assert!(data[right] > 3.25);
 /// assert_eq!(
 ///     &data[left..right],
-///     &[1.0, 1.5, 1.5, 1.5, 1.5, 2.0, 2.5, 3.0, 3.0]
+///     &[1.5, 1.5, 1.5, 1.5, 2.0, 2.5, 3.0, 3.0]
+/// );
+/// let empty: [f64; 0] = [];
+/// let (left, right) = binary_search_slice(&empty, |a: &f64, b| a.total_cmp(b), 1.5, 3.25);
+/// assert_eq!(left, 0);
+/// assert_eq!(right, 0);
+/// let (left, right) = binary_search_slice(&data, |a: &f64, b| a.total_cmp(b), -100., -99.);
+/// assert_eq!(left, 0);
+/// assert_eq!(right, 0);
+/// assert_eq!(&data[left..right], &empty);
+/// let (left, right) = binary_search_slice(&data, |a: &f64, b| a.total_cmp(b), 100., 101.);
+/// assert_eq!(left, data.len());
+/// assert_eq!(right, data.len());
+/// assert_eq!(&data[left..right], &empty);
+/// let data: [f64; 7]= [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0];
+/// let (left, right) = binary_search_slice(&data, |a: &f64, b| a.total_cmp(b), 1.5, 3.25);
+/// assert!(data[left] == 1.5);
+/// assert!(data[right] > 3.25);
+/// assert!(data[right-1] < 3.25);
+/// assert_eq!(
+///     &data[left..right],
+///     &[1.5, 2.0, 2.5, 3.0]
 /// );
 /// ```
 ///
@@ -422,12 +445,22 @@ pub fn binary_search_slice<T, F, S>(
 ) -> (usize, usize)
 where
     F: Fn(&T, &S) -> Ordering,
+    T: Debug,
 {
     let left_idx = match slice.binary_search_by(|a| key(a, &low)) {
-        Ok(idx) | Err(idx) => {
-            let mut idx = idx.saturating_sub(1);
-            while idx > 0 && key(&slice[idx], &low) != Ordering::Less {
+        Ok(mut idx) | Err(mut idx) => {
+            if idx == slice.len() {
+                // This is very non-elegant ... pretty sure I need to split
+                // the ok-err cases to make a more elegant solution.
+                return (idx, idx);
+            }
+            let mut any_nonless = false;
+            while idx != 0 && key(&slice[idx], &low) != Ordering::Less {
+                any_nonless = true;
                 idx -= 1;
+            }
+            if any_nonless {
+                idx = idx.saturating_add(1);
             }
             idx
         },
@@ -441,6 +474,10 @@ where
             }
             idx.min(slice.len())
         },
+    };
+    if cfg!(debug_assertions) {
+        // This makes sure the slice is indexable by the indices.
+        let _foo = &slice[left_idx..right_idx];
     };
     (left_idx, right_idx)
 }

@@ -146,7 +146,7 @@ fn main() {
     }
 
     println!("traces: {:?}", traces.len());
-    traces.retain(|x| x.num_agg > 5);
+    traces.retain(|x| x.num_agg > 3);
     println!("traces: {:?}", traces.len());
     if traces.len() > 5 {
         println!("sample_trace: {:?}", traces[traces.len() - 4])

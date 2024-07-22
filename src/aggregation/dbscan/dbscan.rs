@@ -20,7 +20,7 @@ fn reassign_centroid<
     const N: usize,
     T: Send + Clone + Copy,
     C: NDPointConverter<R, N>,
-    I: QueriableIndexedPoints<'a, N> + std::marker::Sync,
+    I: QueriableIndexedPoints<N> + std::marker::Sync,
     G: Sync + Send + ClusterAggregator<T, R>,
     R: Send,
     RE: Send + Sync + AsAggregableAtIndex<T> + ?Sized,
@@ -167,7 +167,7 @@ pub fn dbscan_aggregate<
         + Sync
         + std::fmt::Debug
         + ?Sized,
-    IND: QueriableIndexedPoints<'a, N> + std::marker::Sync + Send + std::fmt::Debug,
+    IND: QueriableIndexedPoints<N> + std::marker::Sync + Send + std::fmt::Debug,
     NAI: AsNDPointsAtIndex<N> + std::marker::Sync + Send,
     T: HasIntensity + Send + Clone + Copy + Sync,
     D: Send + Sync,

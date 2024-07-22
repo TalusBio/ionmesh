@@ -260,16 +260,16 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
     }
 }
 
-impl<'a, const D: usize> QueriableIndexedPoints<'a, D> for RadiusKDTree<'a, usize, D> {
+impl<'a, const D: usize> QueriableIndexedPoints<D> for RadiusKDTree<'a, usize, D> {
     fn query_ndpoint(
-        &'a self,
+        &self,
         point: &NDPoint<D>,
     ) -> Vec<usize> {
         self.query(point).into_iter().map(|x| *x).collect()
     }
 
     fn query_ndrange(
-        &'a self,
+        &self,
         boundary: &NDBoundary<D>,
         reference_point: Option<&NDPoint<D>>,
     ) -> Vec<usize> {

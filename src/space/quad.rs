@@ -255,9 +255,9 @@ impl<'a, T> RadiusQuadTree<'a, T> {
 // TODO: rename count_neigh_monotonocally_increasing
 // because it can do more than just count neighbors....
 
-impl<'a> QueriableIndexedPoints<'a, 2> for RadiusQuadTree<'a, usize> {
+impl<'a> QueriableIndexedPoints<2> for RadiusQuadTree<'a, usize> {
     fn query_ndpoint(
-        &'a self,
+        &self,
         point: &NDPoint<2>,
     ) -> Vec<usize> {
         self.query(point)
@@ -267,7 +267,7 @@ impl<'a> QueriableIndexedPoints<'a, 2> for RadiusQuadTree<'a, usize> {
     }
 
     fn query_ndrange(
-        &'a self,
+        &self,
         boundary: &NDBoundary<2>,
         reference_point: Option<&NDPoint<2>>,
     ) -> Vec<usize> {

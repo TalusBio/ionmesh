@@ -719,7 +719,7 @@ impl<'a> AsNDPointsAtIndex<2> for FrameSlice<'a> {
     }
 }
 
-impl QueriableIndexedPoints<'_, 2> for ExpandedFrameSlice {
+impl QueriableIndexedPoints<2> for ExpandedFrameSlice {
     fn query_ndpoint(
         &self,
         point: &NDPoint<2>,
@@ -760,9 +760,9 @@ impl QueriableIndexedPoints<'_, 2> for ExpandedFrameSlice {
     }
 }
 
-impl<'a> QueriableIndexedPoints<'a, 2> for FrameSlice<'a> {
+impl<'a> QueriableIndexedPoints<2> for FrameSlice<'a> {
     fn query_ndpoint(
-        &'a self,
+        &self,
         point: &NDPoint<2>,
     ) -> Vec<usize> {
         let tof_index = point.values[0] as i32;
@@ -788,7 +788,7 @@ impl<'a> QueriableIndexedPoints<'a, 2> for FrameSlice<'a> {
     }
 
     fn query_ndrange(
-        &'a self,
+        &self,
         boundary: &NDBoundary<2>,
         reference_point: Option<&NDPoint<2>>,
     ) -> Vec<usize> {

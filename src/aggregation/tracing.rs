@@ -1,15 +1,17 @@
-use crate::aggregation::aggregators::ClusterAggregator;
+use crate::aggregation::aggregators::{aggregate_clusters, ClusterAggregator};
 use crate::aggregation::chromatograms::{
     BTreeChromatogram, ChromatogramArray, NUM_LOCAL_CHROMATOGRAM_BINS,
 };
 use crate::aggregation::dbscan::dbscan::dbscan_generic;
+use crate::aggregation::dbscan::runner::dbscan_label_clusters;
 use crate::ms::frames::DenseFrameWindow;
 use crate::space::space_generics::{
-    AsAggregableAtIndex, DistantAtIndex, HasIntensity, NDPoint, NDPointConverter, TraceLike,
+    AsAggregableAtIndex, AsNDPointsAtIndex, DistantAtIndex, HasIntensity, NDPoint,
+    NDPointConverter, QueriableIndexedPoints, TraceLike,
 };
 use crate::space::space_generics::{IntenseAtIndex, NDBoundary};
 use crate::utils;
-use crate::utils::RollingSDCalculator;
+use crate::utils::{binary_search_slice, RollingSDCalculator};
 
 use core::panic;
 use log::{debug, error, info, warn};
@@ -227,45 +229,34 @@ pub fn combine_traces(
         .map(_flatten_denseframe_vec)
         .collect();
 
+    let combine_lambda = |x: Vec<TimeTimsPeak>| {
+        combine_single_window_traces2(
+            x,
+            config.mz_scaling.into(),
+            config.max_mz_expansion_ratio,
+            config.rt_scaling.into(),
+            config.max_rt_expansion_ratio,
+            config.ims_scaling.into(),
+            config.max_ims_expansion_ratio,
+            config.min_n.into(),
+            config.min_neighbor_intensity,
+            rt_binsize,
+        )
+    };
+
     // Combine the traces
     let out: Vec<BaseTrace> = if cfg!(feature = "less_parallel") {
         warn!("Running in single-threaded mode");
         grouped_windows
             .into_iter()
-            .map(|x| {
-                combine_single_window_traces(
-                    x,
-                    config.mz_scaling.into(),
-                    config.max_mz_expansion_ratio,
-                    config.rt_scaling.into(),
-                    config.max_rt_expansion_ratio,
-                    config.ims_scaling.into(),
-                    config.max_ims_expansion_ratio,
-                    config.min_n.into(),
-                    config.min_neighbor_intensity,
-                    rt_binsize,
-                )
-            })
+            .map(combine_lambda)
             .flatten()
             .collect()
     } else {
         grouped_windows
-        .into_par_iter()
-        .map(|x| {
-            combine_single_window_traces(
-                x,
-                config.mz_scaling.into(),
-                config.max_mz_expansion_ratio,
-                config.rt_scaling.into(),
-                config.max_rt_expansion_ratio,
-                config.ims_scaling.into(),
-                config.max_ims_expansion_ratio,
-                config.min_n.into(),
-                config.min_neighbor_intensity,
-                rt_binsize,
-            )
-        })
-        .flatten()
+            .into_par_iter()
+            .map(combine_lambda)
+            .flatten()
             .collect()
     };
 
@@ -464,6 +455,313 @@ impl DistantAtIndex<f32> for Vec<TimeTimsPeak> {
 
 // Needed to specify the generic in dbscan_generic
 type FFTimeTimsPeak = fn(&TimeTimsPeak, &TimeTimsPeak) -> bool;
+
+#[derive(Debug)]
+struct TimeTimsPeakScaling {
+    mz_scaling: f32,
+    rt_scaling: f32,
+    ims_scaling: f32,
+    quad_scaling: f32,
+}
+
+#[derive(Debug)]
+struct QueriableTimeTimsPeaks {
+    peaks: Vec<TimeTimsPeak>,
+    min_bucket_mz_vals: Vec<f32>,
+    bucket_size: usize,
+    scalings: TimeTimsPeakScaling,
+}
+
+impl QueriableTimeTimsPeaks {
+    fn new(
+        mut peaks: Vec<TimeTimsPeak>,
+        scalings: TimeTimsPeakScaling,
+    ) -> Self {
+        const BUCKET_SIZE: usize = 16384;
+        // // Sort all of our theoretical fragments by m/z, from low to high
+        peaks.par_sort_unstable_by(|a, b| a.mz.partial_cmp(&b.mz).unwrap());
+
+        let mut min_bucket_mz_vals = peaks
+            .par_chunks_mut(BUCKET_SIZE)
+            .map(|bucket| {
+                let min = bucket[0].mz;
+                bucket.par_sort_unstable_by(|a, b| a.rt.partial_cmp(&b.rt).unwrap());
+                min as f32
+            })
+            .collect::<Vec<_>>();
+
+        // Get the max value of the last bucket
+        let max_bucket_mz = peaks[peaks.len().saturating_sub(BUCKET_SIZE)..peaks.len()]
+            .iter()
+            .max_by(|a, b| a.mz.partial_cmp(&b.mz).unwrap())
+            .unwrap()
+            .mz as f32;
+        min_bucket_mz_vals.push(max_bucket_mz);
+
+        QueriableTimeTimsPeaks {
+            peaks,
+            min_bucket_mz_vals,
+            bucket_size: BUCKET_SIZE,
+            scalings,
+        }
+    }
+
+    fn get_bucket_at(
+        &self,
+        index: usize,
+    ) -> Result<&[TimeTimsPeak], ()> {
+        let page_start = index * self.bucket_size;
+        if page_start >= self.peaks.len() {
+            return Err(());
+        }
+        let page_end = (page_start + self.bucket_size).min(self.peaks.len());
+        let tmp = &self.peaks[page_start..page_end];
+
+        if cfg!(debug_assertions) {
+            // Make sure all rts are sorted within the bucket
+            for i in 1..tmp.len() {
+                if tmp[i - 1].rt > tmp[i].rt {
+                    panic!("RTs are not sorted within the bucket");
+                }
+            }
+        }
+        Ok(tmp)
+    }
+
+    fn get_intensity_sorted_indices(&self) -> Vec<(usize, u64)> {
+        let mut indices: Vec<(usize, u64)> = (0..self.peaks.len())
+            .map(|i| (i, self.peaks[i].intensity))
+            .collect();
+        indices.par_sort_unstable_by_key(|&x| x.1);
+
+        debug_assert!(indices.len() == self.peaks.len());
+        if cfg!(debug_assertions) {
+            if indices.len() > 1 {
+                for i in 1..indices.len() {
+                    if indices[i - 1].1 > indices[i].1 {
+                        panic!("Indices are not sorted");
+                    }
+                }
+            }
+        }
+        indices
+    }
+}
+
+impl AsNDPointsAtIndex<3> for QueriableTimeTimsPeaks {
+    fn get_ndpoint(
+        &self,
+        index: usize,
+    ) -> NDPoint<3> {
+        NDPoint {
+            values: [
+                self.peaks[index].mz as f32,
+                self.peaks[index].rt,
+                self.peaks[index].ims,
+            ],
+        }
+    }
+
+    fn num_ndpoints(&self) -> usize {
+        self.peaks.len()
+    }
+}
+
+impl IntenseAtIndex for QueriableTimeTimsPeaks {
+    fn intensity_at_index(
+        &self,
+        index: usize,
+    ) -> u64 {
+        self.peaks[index].intensity
+    }
+
+    fn intensity_index_length(&self) -> usize {
+        self.peaks.len()
+    }
+}
+
+impl AsAggregableAtIndex<TimeTimsPeak> for QueriableTimeTimsPeaks {
+    fn get_aggregable_at_index(
+        &self,
+        index: usize,
+    ) -> TimeTimsPeak {
+        self.peaks[index]
+    }
+
+    fn num_aggregable(&self) -> usize {
+        self.peaks.len()
+    }
+}
+
+impl DistantAtIndex<f32> for QueriableTimeTimsPeaks {
+    fn distance_at_indices(
+        &self,
+        index: usize,
+        other: usize,
+    ) -> f32 {
+        let a = self.peaks[index];
+        let b = self.peaks[other];
+        let mz = (a.mz - b.mz) as f32 / self.scalings.mz_scaling;
+        let rt = (a.rt - b.rt) as f32 / self.scalings.rt_scaling;
+        let ims = (a.ims - b.ims) as f32 / self.scalings.ims_scaling;
+        (mz * mz + rt * rt + ims * ims).sqrt()
+    }
+}
+
+impl QueriableIndexedPoints<3> for QueriableTimeTimsPeaks {
+    fn query_ndpoint(
+        &self,
+        point: &NDPoint<3>,
+    ) -> Vec<usize> {
+        let boundary = NDBoundary::new(
+            [
+                (point.values[0] - self.scalings.mz_scaling) - f32::EPSILON,
+                (point.values[1] - self.scalings.rt_scaling),
+                (point.values[2] - self.scalings.ims_scaling) - f32::EPSILON,
+            ],
+            [
+                (point.values[0] + self.scalings.mz_scaling) + f32::EPSILON,
+                (point.values[1] + self.scalings.rt_scaling),
+                (point.values[2] + self.scalings.ims_scaling) + f32::EPSILON,
+            ],
+        );
+        let out = self.query_ndrange(&boundary, None);
+        out
+    }
+
+    fn query_ndrange(
+        &self,
+        boundary: &NDBoundary<3>,
+        reference_point: Option<&NDPoint<3>>,
+    ) -> Vec<usize> {
+        let mut out = Vec::new();
+        let mz_range = (boundary.starts[0], boundary.ends[0]);
+        let mz_range_f64 = (boundary.starts[0] as f64, boundary.ends[0] as f64);
+        let rt_range = (boundary.starts[1], boundary.ends[1]);
+        let ims_range = (boundary.starts[2], boundary.ends[2]);
+
+        let (bstart, bend) = binary_search_slice(
+            &self.min_bucket_mz_vals,
+            |a, b| a.total_cmp(b),
+            mz_range.0,
+            mz_range.1,
+        );
+
+        let bstart = bstart.saturating_sub(1);
+        let bend_new = bend.saturating_add(1).min(self.min_bucket_mz_vals.len());
+
+        for bnum in bstart..bend_new {
+            let c_bucket = self.get_bucket_at(bnum);
+            if c_bucket.is_err() {
+                continue;
+            }
+            let c_bucket = c_bucket.unwrap();
+            let page_start = bnum * self.bucket_size;
+
+            let (istart, iend) =
+                binary_search_slice(c_bucket, |a, b| a.rt.total_cmp(&b), rt_range.0, rt_range.1);
+
+            for (j, peak) in self.peaks[(istart + page_start)..(iend + page_start)]
+                .iter()
+                .enumerate()
+            {
+                debug_assert!(
+                    peak.rt >= rt_range.0 && peak.rt <= rt_range.1,
+                    "RT out of range -> {} {} {}; istart {}, page_starrt {}, j {}; window rts: {:?}",
+                    peak.rt,
+                    rt_range.0,
+                    rt_range.1,
+                    istart,
+                    page_start,
+                    j,
+                    &self.peaks[(j + istart + page_start).saturating_sub(5)
+                        ..(j + istart + page_start + 5).min(self.peaks.len())]
+                        .iter()
+                        .map(|x| x.rt)
+                        .collect::<Vec<f32>>()
+                );
+                if peak.ims >= ims_range.0 && peak.ims <= ims_range.1 {
+                    if peak.mz as f32 >= mz_range.0 && peak.mz as f32 <= mz_range.1 {
+                        out.push(j + istart + page_start);
+                    }
+                }
+            }
+        }
+
+        out
+    }
+}
+
+// QueriableIndexedPoints<N>
+
+fn combine_single_window_traces2(
+    prefiltered_peaks: Vec<TimeTimsPeak>,
+    mz_scaling: f64,
+    max_mz_expansion_ratio: f32,
+    rt_scaling: f64,
+    max_rt_expansion_ratio: f32,
+    ims_scaling: f64,
+    max_ims_expansion_ratio: f32,
+    min_n: usize,
+    min_intensity: u32,
+    rt_binsize: f32,
+) -> Vec<BaseTrace> {
+    let timer = utils::ContextTimer::new("dbscan_wt2", true, utils::LogLevel::DEBUG);
+    info!("Peaks in window: {}", prefiltered_peaks.len());
+    let scalings = TimeTimsPeakScaling {
+        mz_scaling: mz_scaling as f32,
+        rt_scaling: rt_scaling as f32,
+        ims_scaling: ims_scaling as f32,
+        quad_scaling: 1.,
+    };
+    let window_quad_low_high = (
+        prefiltered_peaks[0].quad_low_high.0,
+        prefiltered_peaks[0].quad_low_high.1,
+    );
+    let index = QueriableTimeTimsPeaks::new(prefiltered_peaks, scalings);
+    let intensity_sorted_indices = index.get_intensity_sorted_indices();
+    let max_extension_distances: [f32; 3] = [
+        max_mz_expansion_ratio * mz_scaling as f32,
+        max_rt_expansion_ratio * rt_scaling as f32,
+        max_ims_expansion_ratio * ims_scaling as f32,
+    ];
+
+    let mut i_timer = timer.start_sub_timer("dbscan");
+    let cluster_labels = dbscan_label_clusters(
+        &index,
+        &index,
+        &index,
+        min_n,
+        min_intensity.into(),
+        intensity_sorted_indices,
+        None::<&(dyn Fn(&f32) -> bool + Send + Sync)>,
+        true,
+        &max_extension_distances,
+    );
+
+    i_timer.stop(true);
+
+    let centroids = aggregate_clusters(
+        cluster_labels.num_clusters,
+        cluster_labels.cluster_labels,
+        &index,
+        &|| TraceAggregator {
+            mz: RollingSDCalculator::default(),
+            intensity: 0,
+            rt: RollingSDCalculator::default(),
+            ims: RollingSDCalculator::default(),
+            num_peaks: 0,
+            num_rt_peaks: 0,
+            quad_low_high: window_quad_low_high,
+            btree_chromatogram: BTreeChromatogram::new_lazy(rt_binsize),
+        },
+        utils::LogLevel::TRACE,
+        false,
+    );
+
+    debug!("Combined traces: {}", centroids.len());
+    centroids
+}
 
 // TODO maybe this can be a builder-> executor pattern
 fn combine_single_window_traces(

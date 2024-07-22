@@ -91,6 +91,19 @@ IONMESH_PROFILE_NUM_WINDOWS
     # windows.
 ```
 
+### Profiling
+
+Mostly notes to self but someone else might benefit ...
+
+```
+# Making a cool flamegraph of a run
+sudo RUST_LOG=debug CARGO_PROFILE_RELEASE_DEBUG=true IONMESH_PROFILE_NUM_WINDOWS=2 \
+    cargo flamegraph \
+    --output flamegraph_secondversion.svg \
+    --features less_parallel \
+    -- --config ./benchmark/default_ionmesh_config.toml benchmark/${MYFAVORITEFILE}.d -o tmp/
+```
+
 ## Roadmap
 
 1. Use aggregation metrics to re-score sage search.

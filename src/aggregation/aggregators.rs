@@ -181,33 +181,35 @@ fn parallel_aggregate_clusters<
 
     let mut cluster_vecs = out2.into_iter().flatten().collect::<Vec<_>>();
 
-    let unclustered_elems: Vec<usize> = cluster_labels
-        .iter()
-        .enumerate()
-        .filter(|(_, x)| match x {
-            ClusterLabel::Unassigned => true,
-            ClusterLabel::Noise => keep_unclustered,
-            _ => false,
-        })
-        .map(|(i, _elem)| i)
-        .collect();
+    if keep_unclustered {
+        let unclustered_elems: Vec<usize> = cluster_labels
+            .iter()
+            .enumerate()
+            .filter(|(_, x)| match x {
+                ClusterLabel::Unassigned => true, // Should there be any unassigned?
+                ClusterLabel::Noise => true,
+                ClusterLabel::Cluster(_) => false,
+            })
+            .map(|(i, _elem)| i)
+            .collect();
 
-    // if unclustered_elems.len() > 0 {
-    //     log::debug!("Total Orig elems: {}", cluster_labels.len());
-    //     log::debug!("Unclustered elems: {}", unclustered_elems.len());
-    //     log::debug!("Clustered elems: {}", cluster_vecs.len());
-    // }
+        // if unclustered_elems.len() > 0 {
+        //     log::debug!("Total Orig elems: {}", cluster_labels.len());
+        //     log::debug!("Unclustered elems: {}", unclustered_elems.len());
+        //     log::debug!("Clustered elems: {}", cluster_vecs.len());
+        // }
 
-    let unclustered_elems = unclustered_elems
-        .iter()
-        .map(|i| {
-            let mut oe = def_aggregator();
-            oe.add(&elements.get_aggregable_at_index(*i));
-            oe
-        })
-        .collect::<Vec<_>>();
+        let unclustered_elems = unclustered_elems
+            .iter()
+            .map(|i| {
+                let mut oe = def_aggregator();
+                oe.add(&elements.get_aggregable_at_index(*i));
+                oe
+            })
+            .collect::<Vec<_>>();
 
-    cluster_vecs.extend(unclustered_elems);
+        cluster_vecs.extend(unclustered_elems);
+    }
 
     timer.stop(true);
     cluster_vecs

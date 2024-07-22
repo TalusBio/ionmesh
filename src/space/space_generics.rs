@@ -104,13 +104,13 @@ pub struct NDPoint<const DIMENSIONALITY: usize> {
     pub values: [f32; DIMENSIONALITY],
 }
 
-pub trait QueriableIndexedPoints<'a, const N: usize> {
+pub trait QueriableIndexedPoints<const N: usize> {
     fn query_ndpoint(
-        &'a self,
+        &self,
         point: &NDPoint<N>,
     ) -> Vec<usize>;
     fn query_ndrange(
-        &'a self,
+        &self,
         boundary: &NDBoundary<N>,
         reference_point: Option<&NDPoint<N>>,
     ) -> Vec<usize>;
