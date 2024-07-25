@@ -1,8 +1,7 @@
+use crate::space::space_generics::AsAggregableAtIndex;
 use crate::space::space_generics::{
-    convert_to_bounds_query, AsNDPointsAtIndex, DistantAtIndex, HasIntensity, IntenseAtIndex,
-    NDBoundary, NDPoint, QueriableIndexedPoints,
+    AsNDPointsAtIndex, DistantAtIndex, IntenseAtIndex, NDBoundary, NDPoint, QueriableIndexedPoints,
 };
-use crate::space::space_generics::{AsAggregableAtIndex, NDPointConverter};
 use crate::utils;
 use core::fmt::Debug;
 use indicatif::ProgressIterator;

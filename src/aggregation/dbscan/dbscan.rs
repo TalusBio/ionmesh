@@ -1,12 +1,13 @@
 use crate::aggregation::aggregators::{aggregate_clusters, ClusterAggregator, ClusterLabel};
 use crate::space::kdtree::RadiusKDTree;
 use crate::space::space_generics::{
-    convert_to_bounds_query, AsAggregableAtIndex, AsNDPointsAtIndex, DistantAtIndex, HasIntensity,
-    IntenseAtIndex, NDPoint, NDPointConverter, QueriableIndexedPoints,
+    AsAggregableAtIndex, AsNDPointsAtIndex, DistantAtIndex, HasIntensity, IntenseAtIndex, NDPoint,
+    NDPointConverter, QueriableIndexedPoints,
 };
 use crate::utils::{self, ContextTimer};
 use log::{debug, info, trace};
 use rayon::prelude::*;
+use std::fmt::Debug;
 use std::ops::{Add, Index};
 
 use crate::aggregation::dbscan::runner::dbscan_label_clusters;
@@ -15,14 +16,14 @@ use crate::aggregation::dbscan::runner::dbscan_label_clusters;
 // and generates a new centroid that aggregates all the points in its range.
 // In contrast with the dbscan method, the elements in each cluster are not necessarily
 // mutually exclusive.
-fn reassign_centroid<
+pub fn reassign_centroid<
     'a,
     const N: usize,
-    T: Send + Clone + Copy,
+    T: Send + Clone + Copy + Debug,
     C: NDPointConverter<R, N>,
     I: QueriableIndexedPoints<N> + std::marker::Sync,
     G: Sync + Send + ClusterAggregator<T, R>,
-    R: Send,
+    R: Send + Debug,
     RE: Send + Sync + AsAggregableAtIndex<T> + ?Sized,
     F: Fn() -> G + Send + Sync,
 >(
@@ -33,26 +34,51 @@ fn reassign_centroid<
     def_aggregator: F,
     log_level: utils::LogLevel,
     expansion_factors: &[f32; N],
+    max_n: Option<usize>,
+    sort_lambda: Option<&dyn Fn(&R, &T, &T) -> std::cmp::Ordering>,
 ) -> Vec<R> {
     let mut timer = utils::ContextTimer::new("reassign_centroid", true, log_level);
+    info!("Reassigning centroids params: {:?}", expansion_factors);
+    info!("Reassign centroids: {}", centroids.len());
     let mut out = Vec::with_capacity(centroids.len());
 
     for centroid in centroids {
         let query_point = centroid_converter.convert(&centroid);
-        let mut query_elems = convert_to_bounds_query(&query_point);
-        query_elems.0.expand(expansion_factors);
+        let mut query_elems = indexed_points.convert_to_bounds_query(&query_point);
+        query_elems.0.expand_absolute(expansion_factors);
 
-        // trace!("Querying for Centroid: {:?}", query_elems.1);
-        // trace!("Querying for Boundary: {:?}", query_elems.0);
-        let neighbors = indexed_points.query_ndrange(&query_elems.0, query_elems.1);
-        // trace!("Found {} neighbors", neighbors.len());
-        let mut aggregator = def_aggregator();
-        let mut num_agg = 0;
-        for neighbor in neighbors {
-            aggregator.add(&elements.get_aggregable_at_index(neighbor));
-            num_agg += 1;
+        let mut neighbors: Vec<T> = indexed_points
+            .query_ndrange(&query_elems.0, query_elems.1)
+            .into_iter()
+            .map(|x| elements.get_aggregable_at_index(x))
+            .collect();
+
+        // Optionally sort by a passed function/lambda
+        if let Some(sort_lambda) = sort_lambda {
+            neighbors.sort_by(|a, b| sort_lambda(&centroid, a, b));
         }
-        trace!("Aggregated {} elements", num_agg);
+
+        // Optionally truncate the neighbors
+        if let Some(max_n) = max_n {
+            neighbors.truncate(max_n);
+        }
+
+        // 1/1000 show the first and last neighbor, as well as the centroid
+        if neighbors.len() > 0 {
+            if rand::random::<f32>() < 0.001 {
+                println!(
+                    "Centroid: {:?}, First: {:?}, Last: {:?}",
+                    centroid,
+                    neighbors[0],
+                    neighbors[neighbors.len() - 1]
+                );
+            }
+        }
+
+        let mut aggregator = def_aggregator();
+        for neighbor in neighbors {
+            aggregator.add(&neighbor);
+        }
         out.push(aggregator.aggregate());
     }
 
@@ -61,7 +87,6 @@ fn reassign_centroid<
 }
 
 // TODO: rename prefiltered peaks argument!
-// TODO implement a version that takes a sparse distance matrix.
 
 impl<const N: usize> AsNDPointsAtIndex<N> for Vec<NDPoint<N>> {
     fn get_ndpoint(
@@ -79,9 +104,9 @@ impl<const N: usize> AsNDPointsAtIndex<N> for Vec<NDPoint<N>> {
 pub fn dbscan_generic<
     C: NDPointConverter<T, N>,
     C2: NDPointConverter<R, N>,
-    R: Send,
+    R: Send + Debug,
     G: Sync + Send + ClusterAggregator<T, R>,
-    T: HasIntensity + Send + Clone + Copy + Sync,
+    T: HasIntensity + Send + Clone + Copy + Sync + Debug,
     RE: IntenseAtIndex
         + DistantAtIndex<D>
         + IntoIterator<Item = T>
@@ -152,6 +177,8 @@ where
             &def_aggregator,
             log_level,
             max_extension_distances,
+            None,
+            None,
         ),
         None => centroids,
     }

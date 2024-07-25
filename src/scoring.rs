@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use crate::aggregation::tracing::PseudoSpectrum;
+use crate::aggregation::pseudospectra::PseudoSpectrum;
 use indicatif::ParallelProgressIterator;
 use log::warn;
 
@@ -279,7 +279,7 @@ pub fn score_pseudospectra(
 
     let progbar = indicatif::ProgressBar::new(spectra.len() as u64);
 
-    log::info!("Scoring pseudospectra ...");
+    log::info!("Scoring {} pseudospectra ...", spectra.len());
     let mut features = spectra
         .par_iter()
         .progress_with(progbar)

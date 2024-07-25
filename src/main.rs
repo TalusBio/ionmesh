@@ -18,6 +18,7 @@ extern crate log;
 extern crate pretty_env_logger;
 
 use clap::Parser;
+use log::debug;
 
 use crate::scoring::SageSearchConfig;
 use serde::{Deserialize, Serialize};
@@ -59,7 +60,7 @@ impl Default for OutputConfig {
 struct Config {
     denoise_config: aggregation::ms_denoise::DenoiseConfig,
     tracing_config: aggregation::tracing::TracingConfig,
-    pseudoscan_generation_config: aggregation::tracing::PseudoscanGenerationConfig,
+    pseudoscan_generation_config: aggregation::pseudospectra::PseudoscanGenerationConfig,
     sage_search_config: SageSearchConfig,
     output_config: OutputConfig,
 }
@@ -134,28 +135,38 @@ fn main() {
     let mut traces =
         aggregation::tracing::combine_traces(dia_frames, config.tracing_config, cycle_time);
 
-    let out = match out_traces_path {
-        Some(out_path) => aggregation::tracing::write_trace_csv(&traces, out_path),
-        None => Ok(()),
-    };
-    match out {
-        Ok(_) => {},
-        Err(e) => {
-            log::warn!("Error writing traces: {:?}", e);
-        },
-    }
+    // let out = match out_traces_path {
+    //     Some(out_path) => aggregation::tracing::write_trace_csv(&traces, out_path),
+    //     None => Ok(()),
+    // };
+    // match out {
+    //     Ok(_) => {},
+    //     Err(e) => {
+    //         log::warn!("Error writing traces: {:?}", e);
+    //     },
+    // }
 
-    println!("traces: {:?}", traces.len());
-    traces.retain(|x| x.num_agg > 3);
-    println!("traces: {:?}", traces.len());
-    if traces.len() > 5 {
-        println!("sample_trace: {:?}", traces[traces.len() - 4])
+    let num_traces = traces.len();
+    for (i, trace) in traces.iter_mut().enumerate() {
+        debug!("trace {}/{}: {}", i, num_traces, trace.len());
+        trace.retain(|x| x.num_agg > 3);
+        debug!(
+            "trace {}/{}: {} (after dopping too short)",
+            i,
+            num_traces,
+            trace.len()
+        );
+        if trace.len() > 5 {
+            debug!("sample_trace: {:?}", trace[trace.len() - 4])
+        }
     }
 
     // Maybe reparametrize as 1.1 cycle time
     // TODO add here expansion limits
-    let mut pseudoscans =
-        aggregation::tracing::combine_pseudospectra(traces, config.pseudoscan_generation_config);
+    let mut pseudoscans = aggregation::pseudospectra::combine_pseudospectra(
+        traces,
+        config.pseudoscan_generation_config,
+    );
 
     // Report min/max/average/std and skew for ims and rt
     // This can probably be a macro ...
@@ -189,7 +200,9 @@ fn main() {
     println!("npeaks: {:?}", npeaks);
 
     let out = match out_path_scans {
-        Some(out_path) => aggregation::tracing::write_pseudoscans_json(&pseudoscans, out_path),
+        Some(out_path) => {
+            aggregation::pseudospectra::write_pseudoscans_json(&pseudoscans, out_path)
+        },
         None => Ok(()),
     };
 

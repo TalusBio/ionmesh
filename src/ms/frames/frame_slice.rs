@@ -5,8 +5,7 @@ use timsrust::{Frame, FrameType};
 
 use crate::{
     space::space_generics::{
-        convert_to_bounds_query, AsNDPointsAtIndex, IntenseAtIndex, NDBoundary, NDPoint,
-        QueriableIndexedPoints,
+        AsNDPointsAtIndex, IntenseAtIndex, NDBoundary, NDPoint, QueriableIndexedPoints,
     },
     utils::binary_search_slice,
 };
@@ -724,7 +723,7 @@ impl QueriableIndexedPoints<2> for ExpandedFrameSlice {
         &self,
         point: &NDPoint<2>,
     ) -> Vec<usize> {
-        let query = convert_to_bounds_query(point);
+        let query = self.convert_to_bounds_query(point);
         self.query_ndrange(&query.0, query.1)
     }
 

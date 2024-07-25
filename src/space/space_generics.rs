@@ -79,7 +79,7 @@ impl<const D: usize> NDBoundary<D> {
         NDBoundary::new(starts, ends)
     }
 
-    pub fn expand(
+    pub fn expand_relative(
         &mut self,
         factors: &[f32; D],
     ) {
@@ -95,6 +95,22 @@ impl<const D: usize> NDBoundary<D> {
             self.centers[i] = (self.ends[i] + self.starts[i]) / 2.0;
         }
     }
+    pub fn expand_absolute(
+        &mut self,
+        factors: &[f32; D],
+    ) {
+        for (i, ef) in factors.iter().enumerate() {
+            let new_start = self.starts[i] - ef;
+            let new_end = self.ends[i] + ef;
+            let new_center = (new_start + new_end) / 2.0;
+            let new_width = new_end - new_start;
+
+            self.starts[i] = new_start;
+            self.ends[i] = new_end;
+            self.widths[i] = new_width;
+            self.centers[i] = new_center;
+        }
+    }
 }
 
 // #[derive(Debug, Clone, Copy)]
@@ -108,12 +124,38 @@ pub trait QueriableIndexedPoints<const N: usize> {
     fn query_ndpoint(
         &self,
         point: &NDPoint<N>,
-    ) -> Vec<usize>;
+    ) -> Vec<usize> {
+        let (bounds, reference_point) = self.convert_to_bounds_query(point);
+        self.query_ndrange(&bounds, reference_point)
+    }
     fn query_ndrange(
         &self,
         boundary: &NDBoundary<N>,
         reference_point: Option<&NDPoint<N>>,
     ) -> Vec<usize>;
+    fn convert_to_bounds_query<'a>(
+        &'a self,
+        point: &'a NDPoint<N>,
+    ) -> (NDBoundary<N>, Option<&NDPoint<N>>) {
+        let bounds = NDBoundary::new(
+            point
+                .values
+                .iter()
+                .map(|x| *x - 1.)
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
+            point
+                .values
+                .iter()
+                .map(|x| *x + 1.)
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
+        );
+
+        (bounds, Some(point))
+    }
 }
 
 pub trait AsNDPointsAtIndex<const D: usize> {
@@ -255,27 +297,4 @@ pub trait NDPointConverter<T, const D: usize> {
         let boundary = NDBoundary::from_ndpoints(&points);
         (points, boundary)
     }
-}
-
-pub fn convert_to_bounds_query<'a, const D: usize>(
-    point: &'a NDPoint<D>
-) -> (NDBoundary<D>, Option<&'a NDPoint<D>>) {
-    let bounds = NDBoundary::new(
-        point
-            .values
-            .iter()
-            .map(|x| *x - 1.)
-            .collect::<Vec<_>>()
-            .try_into()
-            .unwrap(),
-        point
-            .values
-            .iter()
-            .map(|x| *x + 1.)
-            .collect::<Vec<_>>()
-            .try_into()
-            .unwrap(),
-    );
-
-    (bounds, Some(point))
 }
