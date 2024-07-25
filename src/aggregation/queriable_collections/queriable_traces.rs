@@ -2,7 +2,6 @@ use log::info;
 use rayon::prelude::*;
 
 use crate::aggregation::tracing::BaseTrace;
-pub use crate::aggregation::tracing::TimeTimsPeak;
 pub use crate::space::space_generics::{
     AsAggregableAtIndex,
     AsNDPointsAtIndex,

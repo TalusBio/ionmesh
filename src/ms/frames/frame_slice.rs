@@ -371,11 +371,8 @@ impl<'a> FrameSlice<'a> {
                 tolerance,
             );
 
-            match tmp {
-                Ok(Some(range_offset)) => {
-                    ranges.ranges.push(range_offset);
-                },
-                _ => (),
+            if let Ok(Some(range_offset)) = tmp {
+                ranges.ranges.push(range_offset);
             }
         }
 
