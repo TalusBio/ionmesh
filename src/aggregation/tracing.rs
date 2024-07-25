@@ -1,27 +1,44 @@
-use crate::aggregation::aggregators::{aggregate_clusters, ClusterAggregator};
-use crate::aggregation::chromatograms::{
-    BTreeChromatogram, ChromatogramArray, NUM_LOCAL_CHROMATOGRAM_BINS,
-};
-
-use crate::aggregation::dbscan::runner::dbscan_label_clusters;
-use crate::aggregation::queriable_collections::queriable_indexed_points::{
-    QueriableTimeTimsPeaks, TimeTimsPeakScaling,
-};
-
-use crate::ms::frames::DenseFrameWindow;
-use crate::space::space_generics::{HasIntensity, TraceLike};
-
-use crate::utils;
-use crate::utils::RollingSDCalculator;
-
-use log::{debug, info, warn};
-use rayon::iter::IntoParallelIterator;
-use rayon::prelude::*;
-use serde::ser::{SerializeStruct, Serializer};
-use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::io::Write;
 use std::path::Path;
+
+use log::{
+    debug,
+    info,
+    warn,
+};
+use rayon::iter::IntoParallelIterator;
+use rayon::prelude::*;
+use serde::ser::{
+    SerializeStruct,
+    Serializer,
+};
+use serde::{
+    Deserialize,
+    Serialize,
+};
+
+use crate::aggregation::aggregators::{
+    aggregate_clusters,
+    ClusterAggregator,
+};
+use crate::aggregation::chromatograms::{
+    BTreeChromatogram,
+    ChromatogramArray,
+    NUM_LOCAL_CHROMATOGRAM_BINS,
+};
+use crate::aggregation::dbscan::runner::dbscan_label_clusters;
+use crate::aggregation::queriable_collections::queriable_indexed_points::{
+    QueriableTimeTimsPeaks,
+    TimeTimsPeakScaling,
+};
+use crate::ms::frames::DenseFrameWindow;
+use crate::space::space_generics::{
+    HasIntensity,
+    TraceLike,
+};
+use crate::utils;
+use crate::utils::RollingSDCalculator;
 
 type QuadLowHigh = (f64, f64);
 

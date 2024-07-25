@@ -1,8 +1,12 @@
 use serde::Serialize;
-pub use timsrust::Frame;
-pub use timsrust::FrameType;
 pub use timsrust::{
-    ConvertableIndex, FileReader, Frame2RtConverter, Scan2ImConverter, Tof2MzConverter,
+    ConvertableIndex,
+    FileReader,
+    Frame,
+    Frame2RtConverter,
+    FrameType,
+    Scan2ImConverter,
+    Tof2MzConverter,
 };
 
 use crate::space::space_generics::HasIntensity;

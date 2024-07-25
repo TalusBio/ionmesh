@@ -1,8 +1,18 @@
 use crate::aggregation::aggregators::TimsPeakAggregator;
-use crate::aggregation::converters::{BypassDenseFrameBackConverter, DenseFrameConverter};
+use crate::aggregation::converters::{
+    BypassDenseFrameBackConverter,
+    DenseFrameConverter,
+};
 use crate::aggregation::dbscan::dbscan::dbscan_generic;
-use crate::ms::frames::{DenseFrame, TimsPeak};
-use crate::space::space_generics::{AsAggregableAtIndex, DistantAtIndex, IntenseAtIndex};
+use crate::ms::frames::{
+    DenseFrame,
+    TimsPeak,
+};
+use crate::space::space_generics::{
+    AsAggregableAtIndex,
+    DistantAtIndex,
+    IntenseAtIndex,
+};
 use crate::utils::within_distance_apply;
 
 // <FF: Send + Sync + Fn(&TimsPeak, &TimsPeak) -> bool>

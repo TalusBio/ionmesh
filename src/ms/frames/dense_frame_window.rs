@@ -1,13 +1,23 @@
+use log::info;
 use serde::Serialize;
-use timsrust::{ConvertableIndex, Frame, Scan2ImConverter, Tof2MzConverter};
-
-use crate::ms::{
-    frames::MsMsFrameSliceWindowInfo,
-    tdf::{DIAFrameInfo, ScanRange},
+use timsrust::{
+    ConvertableIndex,
+    Frame,
+    Scan2ImConverter,
+    Tof2MzConverter,
 };
 
-use super::{frames::SortingOrder, DenseFrame, FrameSlice, TimsPeak};
-use log::info;
+use super::frames::SortingOrder;
+use super::{
+    DenseFrame,
+    FrameSlice,
+    TimsPeak,
+};
+use crate::ms::frames::MsMsFrameSliceWindowInfo;
+use crate::ms::tdf::{
+    DIAFrameInfo,
+    ScanRange,
+};
 
 pub type Converters = (timsrust::Scan2ImConverter, timsrust::Tof2MzConverter);
 fn check_peak_sanity(peak: &TimsPeak) {

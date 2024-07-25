@@ -1,12 +1,16 @@
-pub use crate::{
-    aggregation::tracing::TimeTimsPeak,
-    space::space_generics::{
-        AsAggregableAtIndex, AsNDPointsAtIndex, DistantAtIndex, IntenseAtIndex, NDBoundary,
-        NDPoint, QueriableIndexedPoints,
-    },
-    utils::binary_search_slice,
-};
 use rayon::prelude::*;
+
+pub use crate::aggregation::tracing::TimeTimsPeak;
+pub use crate::space::space_generics::{
+    AsAggregableAtIndex,
+    AsNDPointsAtIndex,
+    DistantAtIndex,
+    IntenseAtIndex,
+    NDBoundary,
+    NDPoint,
+    QueriableIndexedPoints,
+};
+pub use crate::utils::binary_search_slice;
 
 #[derive(Debug)]
 pub struct TimeTimsPeakScaling {
@@ -221,7 +225,8 @@ impl QueriableIndexedPoints<3> for QueriableTimeTimsPeaks {
             {
                 debug_assert!(
                     peak.rt >= rt_range.0 && peak.rt <= rt_range.1,
-                    "RT out of range -> {} {} {}; istart {}, page_starrt {}, j {}; window rts: {:?}",
+                    "RT out of range -> {} {} {}; istart {}, page_starrt {}, j {}; window rts: \
+                     {:?}",
                     peak.rt,
                     rt_range.0,
                     rt_range.1,

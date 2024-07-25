@@ -1,27 +1,32 @@
-use crate::aggregation::aggregators::ClusterAggregator;
-
-use crate::aggregation::dbscan::dbscan::{dbscan_aggregate, reassign_centroid};
-
-use crate::aggregation::queriable_collections::queriable_traces::{
-    BaseTraceDistance, TraceScalings,
-};
-use crate::aggregation::queriable_collections::QueriableTraces;
-
-use crate::space::space_generics::{HasIntensity, NDPoint, NDPointConverter};
-
-use crate::utils;
-use crate::utils::RollingSDCalculator;
-
-use log::info;
-
-use rayon::prelude::*;
-
-use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::io::Write;
 use std::path::Path;
 
+use log::info;
+use rayon::prelude::*;
+use serde::{
+    Deserialize,
+    Serialize,
+};
+
 use super::tracing::BaseTrace;
+use crate::aggregation::aggregators::ClusterAggregator;
+use crate::aggregation::dbscan::dbscan::{
+    dbscan_aggregate,
+    reassign_centroid,
+};
+use crate::aggregation::queriable_collections::queriable_traces::{
+    BaseTraceDistance,
+    TraceScalings,
+};
+use crate::aggregation::queriable_collections::QueriableTraces;
+use crate::space::space_generics::{
+    HasIntensity,
+    NDPoint,
+    NDPointConverter,
+};
+use crate::utils;
+use crate::utils::RollingSDCalculator;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub struct PseudoscanGenerationConfig {

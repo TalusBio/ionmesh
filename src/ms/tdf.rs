@@ -1,13 +1,27 @@
-use log::{debug, info};
-
-use sqlx::Pool;
-use sqlx::{FromRow, Sqlite, SqlitePool};
 use std::path::Path;
-use timsrust::{ConvertableIndex, Frame};
+
+use log::{
+    debug,
+    info,
+};
+use sqlx::{
+    FromRow,
+    Pool,
+    Sqlite,
+    SqlitePool,
+};
+use timsrust::{
+    ConvertableIndex,
+    Frame,
+};
 use tokio;
 use tokio::runtime::Runtime;
 
-use crate::ms::frames::{FrameMsMsWindowInfo, FrameSlice, MsMsFrameSliceWindowInfo};
+use crate::ms::frames::{
+    FrameMsMsWindowInfo,
+    FrameSlice,
+    MsMsFrameSliceWindowInfo,
+};
 
 // Diaframemsmsinfo = vec of frame_id -> windowgroup_id
 // diaframemsmswindows = vec[(windowgroup_id, scanstart, scanend, iso_mz, iso_with, nce)]
@@ -494,7 +508,10 @@ impl FrameInfoBuilder {
             );
             GroupingLevel::WindowGroup
         } else {
-            log::info!("Less than 200 scan ranges detected, using QuadWindowGroup grouping level. (diaPASEF?)");
+            log::info!(
+                "Less than 200 scan ranges detected, using QuadWindowGroup grouping level. \
+                 (diaPASEF?)"
+            );
             GroupingLevel::QuadWindowGroup
         };
 

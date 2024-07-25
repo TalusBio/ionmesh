@@ -1,5 +1,10 @@
-use crate::space::space_generics::{NDBoundary, NDPoint, QueriableIndexedPoints};
 use log::warn;
+
+use crate::space::space_generics::{
+    NDBoundary,
+    NDPoint,
+    QueriableIndexedPoints,
+};
 
 // Implements a kdtree with several minor differences.
 #[derive(Debug, Clone)]

@@ -1,14 +1,18 @@
-use crate::aggregation::tracing::BaseTrace;
-pub use crate::{
-    aggregation::tracing::TimeTimsPeak,
-    space::space_generics::{
-        AsAggregableAtIndex, AsNDPointsAtIndex, DistantAtIndex, IntenseAtIndex, NDBoundary,
-        NDPoint, QueriableIndexedPoints,
-    },
-    utils::binary_search_slice,
-};
 use log::info;
 use rayon::prelude::*;
+
+use crate::aggregation::tracing::BaseTrace;
+pub use crate::aggregation::tracing::TimeTimsPeak;
+pub use crate::space::space_generics::{
+    AsAggregableAtIndex,
+    AsNDPointsAtIndex,
+    DistantAtIndex,
+    IntenseAtIndex,
+    NDBoundary,
+    NDPoint,
+    QueriableIndexedPoints,
+};
+pub use crate::utils::binary_search_slice;
 
 #[derive(Debug)]
 pub struct TraceScalings {

@@ -1,6 +1,12 @@
-use crate::space::space_generics::{NDBoundary, NDPoint, QueriableIndexedPoints};
 use core::panic;
+
 use log::trace;
+
+use crate::space::space_generics::{
+    NDBoundary,
+    NDPoint,
+    QueriableIndexedPoints,
+};
 
 #[derive(Debug, Clone)]
 pub struct RadiusQuadTree<'a, T> {

@@ -1,15 +1,20 @@
-use serde::Serialize;
 use std::fmt;
-use timsrust::{Frame, FrameType};
 
-use crate::{
-    space::space_generics::{
-        AsNDPointsAtIndex, IntenseAtIndex, NDBoundary, NDPoint, QueriableIndexedPoints,
-    },
-    utils::binary_search_slice,
+use serde::Serialize;
+use timsrust::{
+    Frame,
+    FrameType,
 };
 
 use super::FrameMsMsWindowInfo;
+use crate::space::space_generics::{
+    AsNDPointsAtIndex,
+    IntenseAtIndex,
+    NDBoundary,
+    NDPoint,
+    QueriableIndexedPoints,
+};
+use crate::utils::binary_search_slice;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ScanNumberType {

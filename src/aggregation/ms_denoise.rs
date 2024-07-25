@@ -1,31 +1,44 @@
 use core::fmt::Debug;
 use core::panic;
-use serde::{Deserialize, Serialize};
-
-use crate::aggregation::dbscan::denseframe_dbscan::dbscan_denseframe;
-use crate::ms::frames::frame_slice_rt_window::FrameSliceWindow;
-use crate::ms::frames::frame_slice_rt_window::RawWeightedTimsPeakAggregator;
-use crate::ms::frames::Converters;
-use crate::ms::frames::DenseFrame;
-use crate::ms::frames::DenseFrameWindow;
-use crate::ms::frames::ExpandedFrameSlice;
-use crate::ms::frames::FrameSlice;
-use crate::ms::frames::MsMsFrameSliceWindowInfo;
-use crate::ms::frames::TimsPeak;
-use crate::ms::tdf;
-use crate::ms::tdf::DIAFrameInfo;
-use crate::space::space_generics::AsNDPointsAtIndex;
-use crate::space::space_generics::IntenseAtIndex;
-use crate::utils;
-use crate::utils::maybe_save_json_if_debugging;
 
 use indicatif::ParallelProgressIterator;
-use log::{debug, info, trace, warn};
+use log::{
+    debug,
+    info,
+    trace,
+    warn,
+};
 use rayon::prelude::*;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 use timsrust::Frame;
 
 use super::aggregators::aggregate_clusters;
 use super::dbscan::runner::dbscan_label_clusters;
+use crate::aggregation::dbscan::denseframe_dbscan::dbscan_denseframe;
+use crate::ms::frames::frame_slice_rt_window::{
+    FrameSliceWindow,
+    RawWeightedTimsPeakAggregator,
+};
+use crate::ms::frames::{
+    Converters,
+    DenseFrame,
+    DenseFrameWindow,
+    ExpandedFrameSlice,
+    FrameSlice,
+    MsMsFrameSliceWindowInfo,
+    TimsPeak,
+};
+use crate::ms::tdf;
+use crate::ms::tdf::DIAFrameInfo;
+use crate::space::space_generics::{
+    AsNDPointsAtIndex,
+    IntenseAtIndex,
+};
+use crate::utils;
+use crate::utils::maybe_save_json_if_debugging;
 
 // TODO I can probably split the ms1 and ms2 ...
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
@@ -95,8 +108,13 @@ fn _sanity_check_framestats(
     let peak_ratio = frame_stats_end.num_peaks as f64 / frame_stats_start.num_peaks as f64;
 
     trace!(
-        "Denoising frame {} with intensity ratio {:.2}, peak_ratio {:.2}, prior_max {}, curr_max {}",
-        frame_index, intensity_ratio, peak_ratio, frame_stats_start.max_intensity, frame_stats_end.max_intensity,
+        "Denoising frame {} with intensity ratio {:.2}, peak_ratio {:.2}, prior_max {}, curr_max \
+         {}",
+        frame_index,
+        intensity_ratio,
+        peak_ratio,
+        frame_stats_start.max_intensity,
+        frame_stats_end.max_intensity,
     );
     if frame_stats_end.max_intensity < frame_stats_start.max_intensity {
         trace!(

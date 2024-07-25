@@ -1,10 +1,17 @@
-use log::{debug, info, trace, warn};
-use num::cast::AsPrimitive;
-use std::{
-    cmp::Ordering,
-    fmt::Debug,
-    time::{Duration, Instant},
+use std::cmp::Ordering;
+use std::fmt::Debug;
+use std::time::{
+    Duration,
+    Instant,
 };
+
+use log::{
+    debug,
+    info,
+    trace,
+    warn,
+};
+use num::cast::AsPrimitive;
 
 pub struct ContextTimer {
     start: Instant,

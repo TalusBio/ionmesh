@@ -2,15 +2,19 @@ use log::trace;
 use serde::Serialize;
 use timsrust::ConvertableIndex;
 
-use crate::{
-    aggregation::aggregators::ClusterAggregator,
-    space::space_generics::{
-        AsAggregableAtIndex, AsNDPointsAtIndex, DistantAtIndex, IntenseAtIndex, NDPoint,
-        QueriableIndexedPoints,
-    },
+use super::{
+    ExpandedFrameSlice,
+    TimsPeak,
 };
-
-use super::{ExpandedFrameSlice, TimsPeak};
+use crate::aggregation::aggregators::ClusterAggregator;
+use crate::space::space_generics::{
+    AsAggregableAtIndex,
+    AsNDPointsAtIndex,
+    DistantAtIndex,
+    IntenseAtIndex,
+    NDPoint,
+    QueriableIndexedPoints,
+};
 
 #[derive(Debug, Serialize)]
 pub struct FrameSliceWindow<'a> {
@@ -68,9 +72,14 @@ impl FrameSliceWindow<'_> {
         let within_window_index = index - last_cum_length;
 
         if cfg!(debug_assertions) {
-            assert!(self.window[pos].intensities.len() > within_window_index,
-                "Index out of bounds, generated index: {}, within_window_index: {}, pos: {}, cum_lengths: {:?}",
-                index, within_window_index, pos, self.cum_lengths,
+            assert!(
+                self.window[pos].intensities.len() > within_window_index,
+                "Index out of bounds, generated index: {}, within_window_index: {}, pos: {}, \
+                 cum_lengths: {:?}",
+                index,
+                within_window_index,
+                pos,
+                self.cum_lengths,
             );
         }
 

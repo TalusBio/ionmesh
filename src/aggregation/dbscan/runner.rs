@@ -1,16 +1,22 @@
-use crate::space::space_generics::AsAggregableAtIndex;
-use crate::space::space_generics::{
-    AsNDPointsAtIndex, DistantAtIndex, IntenseAtIndex, NDBoundary, NDPoint, QueriableIndexedPoints,
-};
-use crate::utils;
 use core::fmt::Debug;
-use indicatif::ProgressIterator;
-use log::debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use indicatif::ProgressIterator;
+use log::debug;
+
 use crate::aggregation::aggregators::ClusterLabel;
 use crate::aggregation::dbscan::utils::FilterFunCache;
+use crate::space::space_generics::{
+    AsAggregableAtIndex,
+    AsNDPointsAtIndex,
+    DistantAtIndex,
+    IntenseAtIndex,
+    NDBoundary,
+    NDPoint,
+    QueriableIndexedPoints,
+};
+use crate::utils;
 
 /// Density-based spatial clustering of applications with noise (DBSCAN)
 ///

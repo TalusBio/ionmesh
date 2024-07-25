@@ -1,8 +1,12 @@
+use std::collections::BTreeMap;
+use std::ops::{
+    Add,
+    AddAssign,
+    Mul,
+};
+
 use log::warn;
 use num_traits::AsPrimitive;
-
-use std::collections::BTreeMap;
-use std::ops::{Add, AddAssign, Mul};
 
 // Needs to be odd
 pub const NUM_LOCAL_CHROMATOGRAM_BINS: usize = 21;
@@ -205,10 +209,12 @@ impl BTreeChromatogram {
         // array
         if curr_width > max_chr_arr_width * 2. {
             warn!(
-                "Warning: Chromatogram range is larger than 2x the width of the chromatogram array {} vs {} at RT: {}",
+                "Warning: Chromatogram range is larger than 2x the width of the chromatogram \
+                 array {} vs {} at RT: {}",
                 curr_width,
                 max_chr_arr_width,
-                out.rt_bin_offset.unwrap());
+                out.rt_bin_offset.unwrap()
+            );
             let arr_intensities = out.total_intensity();
             let btree_intensities = self.total_intensity() as f32;
             let ratio = arr_intensities / btree_intensities;

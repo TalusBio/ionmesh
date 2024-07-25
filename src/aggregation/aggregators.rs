@@ -1,8 +1,8 @@
-use crate::ms::frames::TimsPeak;
-use crate::space::space_generics::{AsAggregableAtIndex, HasIntensity};
-use crate::utils;
-
 use rayon::prelude::*;
+
+use crate::ms::frames::TimsPeak;
+use crate::space::space_generics::AsAggregableAtIndex;
+use crate::utils;
 
 // I Dont really like having this here but I am not sure where else to
 // define it ... since its needed by the aggregation functions

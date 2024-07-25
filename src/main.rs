@@ -17,13 +17,17 @@ mod utils;
 extern crate log;
 extern crate pretty_env_logger;
 
-use clap::Parser;
-use log::debug;
-
-use crate::scoring::SageSearchConfig;
-use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+
+use clap::Parser;
+use log::debug;
+use serde::{
+    Deserialize,
+    Serialize,
+};
+
+use crate::scoring::SageSearchConfig;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

@@ -1,4 +1,7 @@
-use ionmesh::ms::tdf::{FrameInfoBuilder, GroupingLevel};
+use ionmesh::ms::tdf::{
+    FrameInfoBuilder,
+    GroupingLevel,
+};
 
 #[test]
 fn test_dia_pasef() {

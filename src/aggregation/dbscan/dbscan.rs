@@ -1,16 +1,29 @@
-use crate::aggregation::aggregators::{aggregate_clusters, ClusterAggregator};
-use crate::space::kdtree::RadiusKDTree;
-use crate::space::space_generics::{
-    AsAggregableAtIndex, AsNDPointsAtIndex, DistantAtIndex, HasIntensity, IntenseAtIndex, NDPoint,
-    NDPointConverter, QueriableIndexedPoints,
-};
-use crate::utils::{self, ContextTimer};
-use log::info;
-use rayon::prelude::*;
 use std::fmt::Debug;
 use std::ops::Add;
 
+use log::info;
+use rayon::prelude::*;
+
+use crate::aggregation::aggregators::{
+    aggregate_clusters,
+    ClusterAggregator,
+};
 use crate::aggregation::dbscan::runner::dbscan_label_clusters;
+use crate::space::kdtree::RadiusKDTree;
+use crate::space::space_generics::{
+    AsAggregableAtIndex,
+    AsNDPointsAtIndex,
+    DistantAtIndex,
+    HasIntensity,
+    IntenseAtIndex,
+    NDPoint,
+    NDPointConverter,
+    QueriableIndexedPoints,
+};
+use crate::utils::{
+    self,
+    ContextTimer,
+};
 
 // Pretty simple function ... it uses every passed centroid, converts it to a point
 // and generates a new centroid that aggregates all the points in its range.

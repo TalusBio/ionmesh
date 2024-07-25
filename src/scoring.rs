@@ -1,29 +1,39 @@
-use std::str::FromStr;
-
-use crate::aggregation::pseudospectra::PseudoSpectrum;
-use indicatif::ParallelProgressIterator;
-use log::warn;
-
-use sage_core::database::Parameters as SageDatabaseParameters;
-use sage_core::database::{EnzymeBuilder, IndexedDatabase};
-use sage_core::ion_series::Kind;
-use sage_core::mass::Tolerance;
-use sage_core::ml::linear_discriminant::score_psms;
-use sage_core::modification::ModificationSpecificity;
-use sage_core::scoring::Feature;
-use sage_core::scoring::Scorer;
-use sage_core::spectrum::{Precursor, RawSpectrum, Representation, SpectrumProcessor};
-use serde::ser::SerializeStruct;
-use serde::Deserialize;
-use serde::Serialize;
-use serde::Serializer;
-
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
+use std::str::FromStr;
 
+use indicatif::ParallelProgressIterator;
+use log::warn;
 use rayon::prelude::*;
+use sage_core::database::{
+    EnzymeBuilder,
+    IndexedDatabase,
+    Parameters as SageDatabaseParameters,
+};
+use sage_core::ion_series::Kind;
+use sage_core::mass::Tolerance;
+use sage_core::ml::linear_discriminant::score_psms;
+use sage_core::modification::ModificationSpecificity;
+use sage_core::scoring::{
+    Feature,
+    Scorer,
+};
+use sage_core::spectrum::{
+    Precursor,
+    RawSpectrum,
+    Representation,
+    SpectrumProcessor,
+};
+use serde::ser::SerializeStruct;
+use serde::{
+    Deserialize,
+    Serialize,
+    Serializer,
+};
+
+use crate::aggregation::pseudospectra::PseudoSpectrum;
 
 const PCT_BP_KEEP: f64 = 0.001;
 
@@ -312,7 +322,10 @@ pub fn score_pseudospectra(
     match out_path_features {
         None => {},
         Some(out_path_features) => {
-            warn!("Writing features to features.csv ... and sebastian should delete this b4 publishing...");
+            warn!(
+                "Writing features to features.csv ... and sebastian should delete this b4 \
+                 publishing..."
+            );
             let mut wtr = csv::Writer::from_path(out_path_features)?;
             for feat in &features {
                 let s_feat = SerializableFeature::from_feature(feat, &db);
