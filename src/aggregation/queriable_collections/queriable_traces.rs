@@ -7,7 +7,7 @@ pub use crate::{
     },
     utils::binary_search_slice,
 };
-use log::{debug, info};
+use log::info;
 use rayon::prelude::*;
 
 #[derive(Debug)]
@@ -70,13 +70,11 @@ impl QueriableTraces {
         let page_end = (page_start + self.bucket_size).min(self.traces.len());
         let tmp = &self.traces[page_start..page_end];
 
-        if cfg!(debug_assertions) {
-            if rand::random::<usize>() % 100 == 0 {
-                // Make sure all rts are sorted within the bucket
-                for i in 1..tmp.len() {
-                    if tmp[i - 1].mobility > tmp[i].mobility {
-                        panic!("RTs are not sorted within the bucket");
-                    }
+        if cfg!(debug_assertions) && rand::random::<usize>() % 100 == 0 {
+            // Make sure all rts are sorted within the bucket
+            for i in 1..tmp.len() {
+                if tmp[i - 1].mobility > tmp[i].mobility {
+                    panic!("RTs are not sorted within the bucket");
                 }
             }
         }
@@ -98,10 +96,9 @@ impl AsNDPointsAtIndex<2> for QueriableTraces {
         &self,
         index: usize,
     ) -> NDPoint<2> {
-        let out = NDPoint {
+        NDPoint {
             values: [self.traces[index].rt, self.traces[index].mobility],
-        };
-        out
+        }
     }
     fn num_ndpoints(&self) -> usize {
         self.traces.len()
@@ -221,7 +218,7 @@ impl QueriableIndexedPoints<2> for QueriableTraces {
 
             let (ibstart, ibend) = binary_search_slice(
                 bucket,
-                |a, b| a.mobility.partial_cmp(&b).unwrap(),
+                |a, b| a.mobility.partial_cmp(b).unwrap(),
                 start_ims,
                 end_ims,
             );
@@ -246,7 +243,7 @@ impl QueriableIndexedPoints<2> for QueriableTraces {
             }
         }
 
-        if out.len() == 0 {
+        if out.is_empty() {
             info!(
                 "No traces found for query: \n{:?} -> {:?}\n",
                 boundary, reference_point

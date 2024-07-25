@@ -1,7 +1,6 @@
 use crate::ms::frames::TimsPeak;
-use crate::space::space_generics::{AsAggregableAtIndex, HasIntensity, IntenseAtIndex};
+use crate::space::space_generics::{AsAggregableAtIndex, HasIntensity};
 use crate::utils;
-use std::ops::Index;
 
 use rayon::prelude::*;
 

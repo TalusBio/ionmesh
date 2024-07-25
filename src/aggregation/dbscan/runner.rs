@@ -5,7 +5,7 @@ use crate::space::space_generics::{
 use crate::utils;
 use core::fmt::Debug;
 use indicatif::ProgressIterator;
-use log::{debug, trace};
+use log::debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -181,10 +181,7 @@ impl DBSCANRunnerState {
     {
         let cluster_labels = ClusterLabels::new(nlabels);
 
-        let filter_fun_cache = match usize_filterfun {
-            Some(_) => Some(FilterFunCache::new(nlabels)),
-            None => None,
-        };
+        let filter_fun_cache = usize_filterfun.map(|_| FilterFunCache::new(nlabels));
         //FilterFunCache::new(Box::new(&usize_filterfun), nlabels);
         let timers = DBScanTimers::new();
         let candidate_metrics = CandidateCountMetrics::new();
@@ -374,8 +371,8 @@ where
                 let cl = |a: &usize, b: &usize| {
                     filterfun(&raw_distance_calculator.distance_at_indices(*a, *b))
                 };
-                let bind = Some(cl);
-                bind
+
+                Some(cl)
             },
             None => None,
         };
@@ -388,7 +385,7 @@ where
 
         let points: DBSCANPoints<N, PP, PE, DAI, D, QIP> = DBSCANPoints {
             raw_elements,
-            intensity_sorted_indices: intensity_sorted_indices,
+            intensity_sorted_indices,
             indexed_points,
             projected_elements,
             raw_dist: raw_distance_calculator,
@@ -591,7 +588,7 @@ where
             .map(|i| points.intensity_at_index(*i))
             .sum::<u64>();
         timers.outer_intensity_calculation.stop(false);
-        return neighbor_intensity_total >= self.min_intensity;
+        neighbor_intensity_total >= self.min_intensity
     }
 
     fn main_loop_expand_cluster<PP, PE, DAI, QIP>(
@@ -661,11 +658,7 @@ where
     {
         timers.inner_loop_nn_timer.reset_start();
         let binding = Arc::clone(&points).get_ndpoint(neighbor_index);
-        let local_neighbors: Vec<usize> = points
-            .query_ndpoint(&binding)
-            .iter()
-            .map(|x| *x)
-            .collect::<Vec<_>>();
+        let local_neighbors: Vec<usize> = points.query_ndpoint(&binding).to_vec();
         // Should I warn if nothing is gotten here?
         // every point should have at least itself as a neighbor ...
         debug_assert!(!local_neighbors.is_empty());
@@ -862,18 +855,16 @@ pub fn dbscan_label_clusters<
         min_n,
         min_intensity,
         progress,
-        filter_fun: filter_fun,
+        filter_fun,
         max_extension_distances,
         _phantom: PhantomData::<D>,
     };
 
-    let cluster_labels = runner.run(
+    runner.run(
         raw_elements,
         intensity_sorted_indices,
         indexed_points,
         projected_elements,
         raw_elements,
-    );
-
-    cluster_labels
+    )
 }

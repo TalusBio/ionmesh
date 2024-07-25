@@ -73,11 +73,11 @@ impl QueriableTimeTimsPeaks {
             // Check every 100 random queries ...
             if rand::random::<usize>() % 100 == 0 {
                 let mut last_rt = 0.;
-                for i in 0..tmp.len() {
-                    if tmp[i].rt < last_rt {
+                for item in tmp {
+                    if item.rt < last_rt {
                         panic!("RTs are not sorted within the bucket");
                     }
-                    last_rt = tmp[i].rt;
+                    last_rt = item.rt;
                 }
             }
         }
@@ -91,12 +91,10 @@ impl QueriableTimeTimsPeaks {
         indices.par_sort_unstable_by_key(|&x| x.1);
 
         debug_assert!(indices.len() == self.peaks.len());
-        if cfg!(debug_assertions) {
-            if indices.len() > 1 {
-                for i in 1..indices.len() {
-                    if indices[i - 1].1 > indices[i].1 {
-                        panic!("Indices are not sorted");
-                    }
+        if cfg!(debug_assertions) && indices.len() > 1 {
+            for i in 1..indices.len() {
+                if indices[i - 1].1 > indices[i].1 {
+                    panic!("Indices are not sorted");
                 }
             }
         }
@@ -158,8 +156,8 @@ impl DistantAtIndex<f32> for QueriableTimeTimsPeaks {
         let a = self.peaks[index];
         let b = self.peaks[other];
         let mz = (a.mz - b.mz) as f32 / self.scalings.mz_scaling;
-        let rt = (a.rt - b.rt) as f32 / self.scalings.rt_scaling;
-        let ims = (a.ims - b.ims) as f32 / self.scalings.ims_scaling;
+        let rt = (a.rt - b.rt) / self.scalings.rt_scaling;
+        let ims = (a.ims - b.ims) / self.scalings.ims_scaling;
         (mz * mz + rt * rt + ims * ims).sqrt()
     }
 }
@@ -181,18 +179,18 @@ impl QueriableIndexedPoints<3> for QueriableTimeTimsPeaks {
                 (point.values[2] + self.scalings.ims_scaling) + f32::EPSILON,
             ],
         );
-        let out = self.query_ndrange(&boundary, None);
-        out
+
+        self.query_ndrange(&boundary, None)
     }
 
     fn query_ndrange(
         &self,
         boundary: &NDBoundary<3>,
-        reference_point: Option<&NDPoint<3>>,
+        _reference_point: Option<&NDPoint<3>>,
     ) -> Vec<usize> {
         let mut out = Vec::new();
         let mz_range = (boundary.starts[0], boundary.ends[0]);
-        let mz_range_f64 = (boundary.starts[0] as f64, boundary.ends[0] as f64);
+        let _mz_range_f64 = (boundary.starts[0] as f64, boundary.ends[0] as f64);
         let rt_range = (boundary.starts[1], boundary.ends[1]);
         let ims_range = (boundary.starts[2], boundary.ends[2]);
 
@@ -215,7 +213,7 @@ impl QueriableIndexedPoints<3> for QueriableTimeTimsPeaks {
             let page_start = bnum * self.bucket_size;
 
             let (istart, iend) =
-                binary_search_slice(c_bucket, |a, b| a.rt.total_cmp(&b), rt_range.0, rt_range.1);
+                binary_search_slice(c_bucket, |a, b| a.rt.total_cmp(b), rt_range.0, rt_range.1);
 
             for (j, peak) in self.peaks[(istart + page_start)..(iend + page_start)]
                 .iter()
@@ -236,10 +234,12 @@ impl QueriableIndexedPoints<3> for QueriableTimeTimsPeaks {
                         .map(|x| x.rt)
                         .collect::<Vec<f32>>()
                 );
-                if peak.ims >= ims_range.0 && peak.ims <= ims_range.1 {
-                    if peak.mz as f32 >= mz_range.0 && peak.mz as f32 <= mz_range.1 {
-                        out.push(j + istart + page_start);
-                    }
+                if peak.ims >= ims_range.0
+                    && peak.ims <= ims_range.1
+                    && peak.mz as f32 >= mz_range.0
+                    && peak.mz as f32 <= mz_range.1
+                {
+                    out.push(j + istart + page_start);
                 }
             }
         }

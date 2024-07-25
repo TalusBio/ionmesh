@@ -1,14 +1,14 @@
-use crate::aggregation::aggregators::{aggregate_clusters, ClusterAggregator, ClusterLabel};
+use crate::aggregation::aggregators::{aggregate_clusters, ClusterAggregator};
 use crate::space::kdtree::RadiusKDTree;
 use crate::space::space_generics::{
     AsAggregableAtIndex, AsNDPointsAtIndex, DistantAtIndex, HasIntensity, IntenseAtIndex, NDPoint,
     NDPointConverter, QueriableIndexedPoints,
 };
 use crate::utils::{self, ContextTimer};
-use log::{debug, info, trace};
+use log::info;
 use rayon::prelude::*;
 use std::fmt::Debug;
-use std::ops::{Add, Index};
+use std::ops::Add;
 
 use crate::aggregation::dbscan::runner::dbscan_label_clusters;
 
@@ -64,15 +64,13 @@ pub fn reassign_centroid<
         }
 
         // 1/1000 show the first and last neighbor, as well as the centroid
-        if neighbors.len() > 0 {
-            if rand::random::<f32>() < 0.001 {
-                println!(
-                    "Centroid: {:?}, First: {:?}, Last: {:?}",
-                    centroid,
-                    neighbors[0],
-                    neighbors[neighbors.len() - 1]
-                );
-            }
+        if !neighbors.is_empty() && rand::random::<f32>() < 0.001 {
+            println!(
+                "Centroid: {:?}, First: {:?}, Last: {:?}",
+                centroid,
+                neighbors[0],
+                neighbors[neighbors.len() - 1]
+            );
         }
 
         let mut aggregator = def_aggregator();
@@ -149,7 +147,7 @@ where
     let quad_indices = (0..ndpoints.len()).collect::<Vec<_>>();
 
     for (quad_point, i) in ndpoints.iter().zip(quad_indices.iter()) {
-        tree.insert_ndpoint(quad_point.clone(), i);
+        tree.insert_ndpoint(*quad_point, i);
     }
     i_timer.stop(true);
 
@@ -234,13 +232,12 @@ pub fn dbscan_aggregate<
     );
     i_timer.stop(true);
 
-    let centroids = aggregate_clusters(
+    aggregate_clusters(
         cluster_labels.num_clusters,
         cluster_labels.cluster_labels,
         prefiltered_peaks,
         &def_aggregator,
         log_level,
         keep_unclustered,
-    );
-    centroids
+    )
 }

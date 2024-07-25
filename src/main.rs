@@ -114,7 +114,7 @@ fn main() {
         .debug_scans_json
         .as_ref()
         .map(|path| out_path_dir.join(path).to_path_buf());
-    let out_traces_path = config
+    let _out_traces_path = config
         .output_config
         .debug_traces_csv
         .as_ref()

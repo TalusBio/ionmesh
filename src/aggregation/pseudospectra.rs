@@ -1,30 +1,21 @@
-use crate::aggregation::aggregators::{aggregate_clusters, ClusterAggregator};
-use crate::aggregation::chromatograms::{
-    BTreeChromatogram, ChromatogramArray, NUM_LOCAL_CHROMATOGRAM_BINS,
-};
-use crate::aggregation::dbscan::dbscan::{dbscan_aggregate, dbscan_generic, reassign_centroid};
-use crate::aggregation::dbscan::runner::dbscan_label_clusters;
-use crate::aggregation::queriable_collections::queriable_indexed_points::{
-    QueriableTimeTimsPeaks, TimeTimsPeakScaling,
-};
+use crate::aggregation::aggregators::ClusterAggregator;
+
+use crate::aggregation::dbscan::dbscan::{dbscan_aggregate, reassign_centroid};
+
 use crate::aggregation::queriable_collections::queriable_traces::{
     BaseTraceDistance, TraceScalings,
 };
 use crate::aggregation::queriable_collections::QueriableTraces;
-use crate::ms::frames::DenseFrameWindow;
-use crate::space::space_generics::{
-    AsAggregableAtIndex, AsNDPointsAtIndex, DistantAtIndex, HasIntensity, NDPoint,
-    NDPointConverter, QueriableIndexedPoints, TraceLike,
-};
-use crate::space::space_generics::{IntenseAtIndex, NDBoundary};
-use crate::utils;
-use crate::utils::{binary_search_slice, RollingSDCalculator};
 
-use core::panic;
-use log::{debug, error, info, warn};
-use rayon::iter::IntoParallelIterator;
+use crate::space::space_generics::{HasIntensity, NDPoint, NDPointConverter};
+
+use crate::utils;
+use crate::utils::RollingSDCalculator;
+
+use log::info;
+
 use rayon::prelude::*;
-use serde::ser::{SerializeStruct, Serializer};
+
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::io::Write;
@@ -66,7 +57,7 @@ impl NDPointConverter<PseudoSpectrum, 2> for PseudoscanGenerationConfig {
     ) -> NDPoint<2> {
         // let quad_mid = (elem.quad_low + elem.quad_high) / 2.;
         NDPoint {
-            values: [elem.rt as f32, elem.ims as f32],
+            values: [elem.rt, elem.ims],
         }
     }
 }
@@ -77,8 +68,7 @@ pub fn combine_pseudospectra(
 ) -> Vec<PseudoSpectrum> {
     traces
         .into_iter()
-        .map(|x| combine_single_pseudospectra_window(x, config.clone()))
-        .flatten()
+        .flat_map(|x| combine_single_pseudospectra_window(x, config))
         .collect()
 }
 
@@ -104,7 +94,7 @@ pub fn combine_single_pseudospectra_window(
         let within_iou_tolerance = x.iou > IOU_THRESH;
         let within_cosine_tolerance = x.cosine > COSINE_THRESH;
 
-        return close_in_quad && within_iou_tolerance && within_cosine_tolerance;
+        close_in_quad && within_iou_tolerance && within_cosine_tolerance
     };
 
     let max_extension_distances: [f32; 2] = [
@@ -148,15 +138,15 @@ pub fn combine_single_pseudospectra_window(
         let quad_diff_b = (p.quad_low - b.quad_low).abs();
         let diff = rt_diff + ims_diff + quad_diff;
         let diff_b = rt_diff_b + ims_diff_b + quad_diff_b;
-        let out = diff.total_cmp(&diff_b);
-        out
+
+        diff.total_cmp(&diff_b)
     };
     let agg2 = reassign_centroid(
         agg1,
         &qtt,
-        config.clone(),
+        config,
         &qtt,
-        &PseudoSpectrumAggregator::default,
+        PseudoSpectrumAggregator::default,
         utils::LogLevel::INFO,
         &reassign_max_distances,
         Some(300),
@@ -177,18 +167,18 @@ pub fn write_pseudoscans_json(
         out_path.as_ref().display()
     );
     let mut file = std::fs::File::create(out_path)?;
-    file.write("[".as_bytes())?;
+    file.write_all("[".as_bytes())?;
     let mut is_first = true;
     for x in pseudocscans {
         let json = serde_json::to_string(&x)?;
         if is_first {
             is_first = false;
         } else {
-            file.write(",\n".as_bytes())?;
+            file.write_all(",\n".as_bytes())?;
         }
-        file.write(json.as_bytes())?;
+        file.write_all(json.as_bytes())?;
     }
-    file.write("]".as_bytes())?;
+    file.write_all("]".as_bytes())?;
 
     Ok(())
 }

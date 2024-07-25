@@ -265,7 +265,7 @@ impl<'a, const D: usize> QueriableIndexedPoints<D> for RadiusKDTree<'a, usize, D
         &self,
         point: &NDPoint<D>,
     ) -> Vec<usize> {
-        self.query(point).into_iter().map(|x| *x).collect()
+        self.query(point).into_iter().copied().collect()
     }
 
     fn query_ndrange(
@@ -276,7 +276,7 @@ impl<'a, const D: usize> QueriableIndexedPoints<D> for RadiusKDTree<'a, usize, D
         let candidates = self.query_range(boundary);
         if let Some(point) = reference_point {
             let tmp = self.refine_query(point, candidates);
-            tmp.into_iter().map(|x| *x).collect()
+            tmp.into_iter().copied().collect()
         } else {
             candidates.iter().map(|x| *x.1).collect()
         }

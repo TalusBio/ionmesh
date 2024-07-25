@@ -500,24 +500,22 @@ where
         let freq = std::env::var("IONMESH_DEBUG_JSON_FREQUENCY");
         if let Ok(freq) = freq {
             let freq = freq.parse::<usize>().unwrap();
-            if force || (freq > 0) {
-                if force || (rand::random::<usize>() % freq == 0) {
-                    let json = serde_json::to_string_pretty(obj).unwrap();
-                    let path = std::env::var("IONMESH_DEBUG_JSON_PATH");
-                    let path = if let Ok(path) = path {
-                        if !std::path::Path::new(&path).exists() {
-                            std::fs::create_dir_all(&path).unwrap();
-                        }
-                        std::path::Path::new(&path).join(format!("{}.json", name))
-                    } else {
-                        warn!("IONMESH_DEBUG_JSON_PATH not set, saving to current directory");
-                        std::path::Path::new(".").join(format!("{}.json", name))
-                    };
-                    info!("Saving json to {:?}", path);
+            if (force || (freq > 0)) && (force || (rand::random::<usize>() % freq == 0)) {
+                let json = serde_json::to_string_pretty(obj).unwrap();
+                let path = std::env::var("IONMESH_DEBUG_JSON_PATH");
+                let path = if let Ok(path) = path {
+                    if !std::path::Path::new(&path).exists() {
+                        std::fs::create_dir_all(&path).unwrap();
+                    }
+                    std::path::Path::new(&path).join(format!("{}.json", name))
+                } else {
+                    warn!("IONMESH_DEBUG_JSON_PATH not set, saving to current directory");
+                    std::path::Path::new(".").join(format!("{}.json", name))
+                };
+                info!("Saving json to {:?}", path);
 
-                    std::fs::write(path, json).unwrap();
-                    return true;
-                }
+                std::fs::write(path, json).unwrap();
+                return true;
             }
         }
     }

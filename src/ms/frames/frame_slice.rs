@@ -1,4 +1,3 @@
-use log::info;
 use serde::Serialize;
 use std::fmt;
 use timsrust::{Frame, FrameType};
@@ -379,7 +378,7 @@ impl<'a> FrameSlice<'a> {
             debug_assert!(!ranges.any_overlap());
         }
 
-        if ranges.ranges.len() == 0 {
+        if ranges.ranges.is_empty() {
             None
         } else {
             Some(ranges)
@@ -410,7 +409,7 @@ impl ExpandedFrameSlice {
             .zip(scan_numbers.iter())
             .collect::<Vec<_>>();
 
-        zipped.sort_unstable_by(|a, b| a.0 .0.cmp(&b.0 .0));
+        zipped.sort_unstable_by(|a, b| a.0 .0.cmp(b.0 .0));
 
         let (tof_indices, intensities, scan_numbers) = zipped.into_iter().fold(
             (Vec::new(), Vec::new(), Vec::new()),
@@ -730,7 +729,7 @@ impl QueriableIndexedPoints<2> for ExpandedFrameSlice {
     fn query_ndrange(
         &self,
         boundary: &NDBoundary<2>,
-        reference_point: Option<&NDPoint<2>>,
+        _reference_point: Option<&NDPoint<2>>,
     ) -> Vec<usize> {
         // TODO implement passing information on the mz tolerance ...
         // info!("Querying frame slice with boundary: {:?}", boundary);
@@ -789,7 +788,7 @@ impl<'a> QueriableIndexedPoints<2> for FrameSlice<'a> {
     fn query_ndrange(
         &self,
         boundary: &NDBoundary<2>,
-        reference_point: Option<&NDPoint<2>>,
+        _reference_point: Option<&NDPoint<2>>,
     ) -> Vec<usize> {
         // TODO implement passing information on the mz tolerance ...
         // info!("Querying frame slice with boundary: {:?}", boundary);

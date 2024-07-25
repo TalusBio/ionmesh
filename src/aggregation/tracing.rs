@@ -2,23 +2,19 @@ use crate::aggregation::aggregators::{aggregate_clusters, ClusterAggregator};
 use crate::aggregation::chromatograms::{
     BTreeChromatogram, ChromatogramArray, NUM_LOCAL_CHROMATOGRAM_BINS,
 };
-use crate::aggregation::dbscan::dbscan::dbscan_generic;
+
 use crate::aggregation::dbscan::runner::dbscan_label_clusters;
 use crate::aggregation::queriable_collections::queriable_indexed_points::{
     QueriableTimeTimsPeaks, TimeTimsPeakScaling,
 };
-use crate::aggregation::queriable_collections::queriable_traces::BaseTraceDistance;
-use crate::ms::frames::DenseFrameWindow;
-use crate::space::space_generics::{
-    AsAggregableAtIndex, AsNDPointsAtIndex, DistantAtIndex, HasIntensity, NDPoint,
-    NDPointConverter, QueriableIndexedPoints, TraceLike,
-};
-use crate::space::space_generics::{IntenseAtIndex, NDBoundary};
-use crate::utils;
-use crate::utils::{binary_search_slice, RollingSDCalculator};
 
-use core::panic;
-use log::{debug, error, info, warn};
+use crate::ms::frames::DenseFrameWindow;
+use crate::space::space_generics::{HasIntensity, TraceLike};
+
+use crate::utils;
+use crate::utils::RollingSDCalculator;
+
+use log::{debug, info, warn};
 use rayon::iter::IntoParallelIterator;
 use rayon::prelude::*;
 use serde::ser::{SerializeStruct, Serializer};

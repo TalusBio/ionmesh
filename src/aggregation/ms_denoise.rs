@@ -151,19 +151,19 @@ fn denoise_frame_slice_window(
     frameslice_window: &[ExpandedFrameSlice],
     ims_converter: &timsrust::Scan2ImConverter,
     mz_converter: &timsrust::Tof2MzConverter,
-    dia_frame_info: &DIAFrameInfo,
+    _dia_frame_info: &DIAFrameInfo,
     min_n: usize,
     min_intensity: u64,
-    mz_scaling: f64,
-    max_mz_extension: f64,
-    ims_scaling: f32,
-    max_ims_extension: f32,
+    _mz_scaling: f64,
+    _max_mz_extension: f64,
+    _ims_scaling: f32,
+    _max_ims_extension: f32,
 ) -> DenseFrameWindow {
     let timer = utils::ContextTimer::new("dbscan_dfs", true, utils::LogLevel::TRACE);
     let fsw = FrameSliceWindow::new(frameslice_window);
     let ref_frame_parent_index = fsw.window[fsw.reference_index].parent_frame_index;
     let saved_first =
-        maybe_save_json_if_debugging(&fsw, &*format!("fsw_{}", ref_frame_parent_index), false);
+        maybe_save_json_if_debugging(&fsw, &format!("fsw_{}", ref_frame_parent_index), false);
 
     let mut intensity_sorted_indices = Vec::with_capacity(fsw.num_ndpoints());
     for i in 0..fsw.num_ndpoints() {
@@ -216,11 +216,11 @@ fn denoise_frame_slice_window(
         MsMsFrameSliceWindowInfo::SingleWindow(x) => x.global_quad_row_id,
     };
     let min_mz = match slice_info {
-        MsMsFrameSliceWindowInfo::WindowGroup(x) => 0.0,
+        MsMsFrameSliceWindowInfo::WindowGroup(_x) => 0.0,
         MsMsFrameSliceWindowInfo::SingleWindow(x) => x.mz_start,
     };
     let max_mz = match slice_info {
-        MsMsFrameSliceWindowInfo::WindowGroup(x) => 0.0,
+        MsMsFrameSliceWindowInfo::WindowGroup(_x) => 0.0,
         MsMsFrameSliceWindowInfo::SingleWindow(x) => x.mz_end,
     };
 
@@ -256,11 +256,11 @@ fn denoise_frame_slice_window(
         mz_start: min_mz as f64,
         mz_end: max_mz as f64,
         group_id: quad_group_id,
-        quad_group_id: quad_group_id,
+        quad_group_id,
     };
     maybe_save_json_if_debugging(
         &out,
-        &*format!("dfw_out_{}", ref_frame_parent_index),
+        &format!("dfw_out_{}", ref_frame_parent_index),
         saved_first,
     );
 
@@ -456,7 +456,7 @@ impl<'a> Denoiser<'a, Frame, Vec<DenseFrameWindow>, Converters, Option<usize>>
 
             let mut denoised_elements: Vec<DenseFrameWindow> = if cfg!(feature = "less_parallel") {
                 warn!("Running in less parallel mode");
-                sv.into_iter()
+                sv.iter()
                     .map(|x| ExpandedFrameSlice::from_frame_slice(x))
                     .collect::<Vec<ExpandedFrameSlice>>()
                     .windows(3)

@@ -10,7 +10,7 @@ use crate::{
     },
 };
 
-use super::{ExpandedFrameSlice, FrameSlice, TimsPeak};
+use super::{ExpandedFrameSlice, TimsPeak};
 
 #[derive(Debug, Serialize)]
 pub struct FrameSliceWindow<'a> {
@@ -28,7 +28,7 @@ pub struct MaybeIntenseRawPeak {
 }
 
 impl FrameSliceWindow<'_> {
-    pub fn new<'a>(window: &'a [ExpandedFrameSlice]) -> FrameSliceWindow<'a> {
+    pub fn new(window: &[ExpandedFrameSlice]) -> FrameSliceWindow<'_> {
         let cum_lengths = window
             .iter()
             .map(|x| x.num_ndpoints())
@@ -59,7 +59,7 @@ impl FrameSliceWindow<'_> {
         }
 
         debug_assert!(
-            index < self.cum_lengths.last().unwrap().clone(),
+            index < *self.cum_lengths.last().unwrap(),
             "Index out of bounds, generated index: {}, pos: {}, cum_lengths: {:?}",
             index,
             pos,
@@ -88,17 +88,17 @@ impl AsAggregableAtIndex<MaybeIntenseRawPeak> for FrameSliceWindow<'_> {
         let tof = tmp.tof_indices[within_window_index];
         let int = tmp.intensities[within_window_index];
         let scan = tmp.scan_numbers[within_window_index];
-        let foo = MaybeIntenseRawPeak {
+
+        MaybeIntenseRawPeak {
             intensity: int,
             tof_index: tof,
             scan_index: scan,
             weight_only: pos != self.reference_index,
-        };
-        foo
+        }
     }
 
     fn num_aggregable(&self) -> usize {
-        self.cum_lengths.last().unwrap().clone()
+        *self.cum_lengths.last().unwrap()
     }
 }
 
@@ -124,7 +124,7 @@ impl IntenseAtIndex for FrameSliceWindow<'_> {
     }
 
     fn intensity_index_length(&self) -> usize {
-        self.cum_lengths.last().unwrap().clone()
+        *self.cum_lengths.last().unwrap()
     }
 }
 
@@ -135,7 +135,7 @@ impl<'a> QueriableIndexedPoints<2> for FrameSliceWindow<'a> {
     ) -> Vec<usize> {
         let mut out = Vec::new();
         let mut last_cum_length = 0;
-        for (i, (frame, cum_length)) in self.window.iter().zip(self.cum_lengths.iter()).enumerate()
+        for (_i, (frame, cum_length)) in self.window.iter().zip(self.cum_lengths.iter()).enumerate()
         {
             let local_outs = frame.query_ndpoint(point);
             for ii in local_outs {
@@ -152,7 +152,7 @@ impl<'a> QueriableIndexedPoints<2> for FrameSliceWindow<'a> {
         reference_point: Option<&NDPoint<2>>,
     ) -> Vec<usize> {
         let mut out = Vec::new();
-        let last = self.cum_lengths.last().unwrap().clone();
+        let last = *self.cum_lengths.last().unwrap();
         let mut last_cum_length = 0;
         for (frame, cum_length) in self.window.iter().zip(self.cum_lengths.iter()) {
             let local_outs = frame.query_ndrange(boundary, reference_point);
@@ -174,8 +174,8 @@ impl DistantAtIndex<f32> for FrameSliceWindow<'_> {
         index: usize,
         other: usize,
     ) -> f32 {
-        let (pos, within_window_index) = self.get_window_index(index);
-        let (pos_other, within_window_index_other) = self.get_window_index(other);
+        let (_pos, _within_window_index) = self.get_window_index(index);
+        let (_pos_other, _within_window_index_other) = self.get_window_index(other);
         panic!("unimplemented");
         0.
     }
@@ -191,7 +191,7 @@ impl AsNDPointsAtIndex<2> for FrameSliceWindow<'_> {
     }
 
     fn num_ndpoints(&self) -> usize {
-        self.cum_lengths.last().unwrap().clone()
+        *self.cum_lengths.last().unwrap()
     }
 }
 

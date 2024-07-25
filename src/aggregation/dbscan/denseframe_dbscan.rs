@@ -95,15 +95,15 @@ impl AsAggregableAtIndex<TimsPeak> for Vec<TimsPeak> {
 impl DistantAtIndex<f32> for Vec<TimsPeak> {
     fn distance_at_indices(
         &self,
-        index: usize,
-        other: usize,
+        _index: usize,
+        _other: usize,
     ) -> f32 {
         panic!("I dont think this is called ever ...");
-        let mut sum = 0.0;
-        let diff_mz = (self[index].mz - self[other].mz) as f32;
-        sum += diff_mz * diff_mz;
-        let diff_ims = self[index].mobility - self[other].mobility;
-        sum += diff_ims * diff_ims;
-        sum.sqrt()
+        // let mut sum = 0.0;
+        // let diff_mz = (self[index].mz - self[other].mz) as f32;
+        // sum += diff_mz * diff_mz;
+        // let diff_ims = self[index].mobility - self[other].mobility;
+        // sum += diff_ims * diff_ims;
+        // sum.sqrt()
     }
 }
