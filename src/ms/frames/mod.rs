@@ -9,10 +9,9 @@ pub use dense_frame_window::{
 pub use frame_slice::{
     ExpandedFrameSlice,
     FrameSlice,
-    MsMsFrameSliceWindowInfo,
 };
 pub use frames::{
     DenseFrame,
-    FrameMsMsWindowInfo,
+    SingleQuadrupoleSettings,
     TimsPeak,
 };

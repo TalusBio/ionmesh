@@ -18,6 +18,7 @@ extern crate log;
 extern crate pretty_env_logger;
 
 use std::fs;
+use std::io::Error;
 use std::path::Path;
 
 use clap::Parser;
@@ -77,7 +78,7 @@ impl Config {
     }
 }
 
-fn main() {
+fn main() -> Result<(), std::io::Error> {
     let args = Args::parse();
 
     if args.write_template {
@@ -90,7 +91,7 @@ fn main() {
         } else {
             std::fs::write(out_path.clone(), config_str).unwrap();
             println!("Wrote default config to {}", out_path);
-            return;
+            return Ok(());
         }
     }
 
@@ -130,14 +131,22 @@ fn main() {
         .map(|path| out_path_dir.join(path).to_path_buf());
 
     log::info!("Reading DIA data from: {}", path_use);
-    let (dia_frames, dia_info) =
+    let tmp =
         aggregation::ms_denoise::read_all_dia_denoising(path_use.clone(), config.denoise_config);
 
-    let cycle_time = dia_info.calculate_cycle_time();
+    let (dia_frames, dia_info) = match tmp {
+        Ok(x) => x,
+        Err(e) => {
+            log::error!("Error reading DIA data: {:?}", e);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            ));
+        },
+    };
 
     // TODO add here expansion limits
-    let mut traces =
-        aggregation::tracing::combine_traces(dia_frames, config.tracing_config, cycle_time);
+    let mut traces = aggregation::tracing::combine_traces(dia_frames, config.tracing_config);
 
     // let out = match out_traces_path {
     //     Some(out_path) => aggregation::tracing::write_trace_csv(&traces, out_path),
@@ -225,11 +234,7 @@ fn main() {
         config.sage_search_config,
         out_path_features.clone(),
         1,
-    );
-    match score_out {
-        Ok(_) => {},
-        Err(e) => {
-            log::error!("Error scoring pseudospectra: {:?}", e);
-        },
-    }
+    )?;
+
+    Ok(())
 }

@@ -1,3 +1,9 @@
+use timsrust::{
+    AcquisitionType,
+    MSLevel,
+    QuadrupoleSettings,
+};
+
 use crate::aggregation::aggregators::TimsPeakAggregator;
 use crate::aggregation::converters::{
     BypassDenseFrameBackConverter,
@@ -6,6 +12,7 @@ use crate::aggregation::converters::{
 use crate::aggregation::dbscan::dbscan::dbscan_generic;
 use crate::ms::frames::{
     DenseFrame,
+    SingleQuadrupoleSettings,
     TimsPeak,
 };
 use crate::space::space_generics::{
@@ -25,9 +32,12 @@ pub fn dbscan_denseframe(
     min_n: usize,
     min_intensity: u64,
 ) -> DenseFrame {
-    let out_frame_type: timsrust::FrameType = denseframe.frame_type;
+    let out_acq_type: timsrust::AcquisitionType = denseframe.acquisition_type;
     let out_rt: f64 = denseframe.rt;
     let out_index: usize = denseframe.index;
+    let out_ms_level: MSLevel = denseframe.ms_level;
+    let out_window_group_id = denseframe.window_group_id;
+    let out_correction_factor = denseframe.intensity_correction_factor;
 
     let prefiltered_peaks = {
         denseframe.sort_by_mz();
@@ -72,8 +82,11 @@ pub fn dbscan_denseframe(
         raw_peaks: peak_vec,
         index: out_index,
         rt: out_rt,
-        frame_type: out_frame_type,
+        acquisition_type: out_acq_type,
         sorted: None,
+        ms_level: out_ms_level,
+        window_group_id: out_window_group_id,
+        intensity_correction_factor: out_correction_factor,
     }
 }
 

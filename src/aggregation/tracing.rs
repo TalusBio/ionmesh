@@ -227,10 +227,16 @@ impl TraceLike<f32> for BaseTrace {
     }
 }
 
+pub fn calculate_cycle_time(frames: &[DenseFrameWindow]) -> f64 {
+    let rts = frames.iter().map(|x| x.frame.rt).collect::<Vec<f64>>();
+    let rt_diffs = rts.windows(2).map(|x| x[1] - x[0]).collect::<Vec<f64>>();
+    let cycle_time = rt_diffs.iter().sum::<f64>() / rt_diffs.len() as f64;
+    cycle_time
+}
+
 pub fn combine_traces(
     grouped_denseframe_windows: Vec<Vec<DenseFrameWindow>>,
     config: TracingConfig,
-    rt_binsize: f32,
 ) -> Vec<Vec<BaseTrace>> {
     // mz_scaling: f64,
     // rt_scaling: f64,
@@ -241,12 +247,18 @@ pub fn combine_traces(
 
     let mut timer = utils::ContextTimer::new("Tracing peaks in time", true, utils::LogLevel::INFO);
 
-    let grouped_windows: Vec<Vec<TimeTimsPeak>> = grouped_denseframe_windows
+    // rt_binsize: f32,
+
+    let grouped_windows: Vec<(f64, Vec<TimeTimsPeak>)> = grouped_denseframe_windows
         .into_iter()
-        .map(_flatten_denseframe_vec)
+        .map(|x| {
+            let cycle_time = calculate_cycle_time(&x);
+            let o = _flatten_denseframe_vec(x);
+            (cycle_time, o)
+        })
         .collect();
 
-    let combine_lambda = |x: Vec<TimeTimsPeak>| {
+    let combine_lambda = |cycle_time: f64, x: Vec<TimeTimsPeak>| {
         combine_single_window_traces2(
             x,
             config.mz_scaling.into(),
@@ -257,18 +269,21 @@ pub fn combine_traces(
             config.max_ims_expansion_ratio,
             config.min_n.into(),
             config.min_neighbor_intensity,
-            rt_binsize,
+            cycle_time as f32,
         )
     };
 
     // Combine the traces
     let out: Vec<Vec<BaseTrace>> = if cfg!(feature = "less_parallel") {
         warn!("Running in single-threaded mode");
-        grouped_windows.into_iter().map(combine_lambda).collect()
+        grouped_windows
+            .into_iter()
+            .map(|x| combine_lambda(x.0, x.1))
+            .collect()
     } else {
         grouped_windows
             .into_par_iter()
-            .map(combine_lambda)
+            .map(|x| combine_lambda(x.0, x.1))
             .collect()
     };
 
@@ -381,12 +396,16 @@ fn _flatten_denseframe_vec(denseframe_windows: Vec<DenseFrameWindow>) -> Vec<Tim
         .flat_map(|dfw| {
             let mut out = Vec::new();
             for peak in dfw.frame.raw_peaks {
+                let mz_start = dfw.quadrupole_setting.isolation_mz
+                    - (dfw.quadrupole_setting.isolation_width / 2.);
+                let mz_end = dfw.quadrupole_setting.isolation_mz
+                    + (dfw.quadrupole_setting.isolation_width / 2.);
                 out.push(TimeTimsPeak {
                     mz: peak.mz,
                     intensity: peak.intensity as u64,
                     rt: dfw.frame.rt as f32,
                     ims: peak.mobility,
-                    quad_low_high: (dfw.mz_start, dfw.mz_end),
+                    quad_low_high: (mz_start, mz_end),
                     n_peaks: 1,
                 });
             }

@@ -1,25 +1,26 @@
+use std::sync::Arc;
+
 use log::info;
 use serde::Serialize;
-use timsrust::{
-    ConvertableIndex,
-    Frame,
+use timsrust::converters::{
+    ConvertableDomain,
     Scan2ImConverter,
     Tof2MzConverter,
+};
+use timsrust::{
+    AcquisitionType,
+    Frame,
 };
 
 use super::frames::SortingOrder;
 use super::{
     DenseFrame,
     FrameSlice,
+    SingleQuadrupoleSettings,
     TimsPeak,
 };
-use crate::ms::frames::MsMsFrameSliceWindowInfo;
-use crate::ms::tdf::{
-    DIAFrameInfo,
-    ScanRange,
-};
 
-pub type Converters = (timsrust::Scan2ImConverter, timsrust::Tof2MzConverter);
+pub type Converters = (Scan2ImConverter, Tof2MzConverter);
 fn check_peak_sanity(peak: &TimsPeak) {
     debug_assert!(peak.intensity > 0);
     debug_assert!(peak.mz > 0.);
@@ -32,57 +33,42 @@ pub struct DenseFrameWindow {
     pub frame: DenseFrame,
     pub ims_min: f32,
     pub ims_max: f32,
-    pub mz_start: f64,
-    pub mz_end: f64,
     pub group_id: usize,
-    pub quad_group_id: usize,
+    pub quadrupole_setting: SingleQuadrupoleSettings,
 }
+
 
 impl DenseFrameWindow {
     pub fn from_frame_window(
         frame_window: &FrameSlice,
         ims_converter: &Scan2ImConverter,
         mz_converter: &Tof2MzConverter,
-        dia_info: &DIAFrameInfo,
     ) -> DenseFrameWindow {
-        let (window_group_id, ww_quad_group_id, scan_start) = match frame_window.slice_window_info {
-            None => {
-                panic!("No window info")
-                // This branch points to an error in logic ...
-                // The window info should always be present in this context.
-            },
-            Some(MsMsFrameSliceWindowInfo::WindowGroup(_)) => {
+        let window_group_id = frame_window.window_group_id;
+        let foo = match frame_window.acquisition_type {
+            AcquisitionType::DiagonalDIAPASEF => {
                 // This branch should be easy to implement for things like synchro pasef...
                 // Some details to iron out though ...
                 panic!("Not implemented")
             },
-            Some(MsMsFrameSliceWindowInfo::SingleWindow(ref x)) => {
-                let window_group_id = x.window_group_id;
-                let ww_quad_group_id = x.within_window_quad_group_id;
-                let scan_start = frame_window.scan_start;
-                (window_group_id, ww_quad_group_id, scan_start)
+            AcquisitionType::DIAPASEF => {
+                frame_window.quadrupole_settings.clone()
+
+                // let window_group_id = frame_window.window_group_id;
+                // let ww_quad_group_id = x.within_window_quad_group_id;
+                // let scan_start = frame_window.scan_start;
+                // (window_group_id, ww_quad_group_id, scan_start)
             },
+            _ => panic!("Not implemented"),
         };
 
         // NOTE: I am swapping here the 'scan start' to be the `ims_end` because
         // the first scans have lower 1/k0 values.
-        let ims_max = ims_converter.convert(scan_start as u32) as f32;
+        let ims_max = ims_converter.convert(foo.scan_start as u32) as f32;
         let ims_min =
-            ims_converter.convert((frame_window.scan_offsets.len() + scan_start) as u32) as f32;
+            ims_converter.convert((frame_window.scan_offsets.len() + foo.scan_start) as u32) as f32;
 
         debug_assert!(ims_max <= ims_min);
-
-        let scan_range: Option<&ScanRange> =
-            dia_info.get_quad_windows(window_group_id, ww_quad_group_id);
-        let scan_range = match scan_range {
-            Some(x) => x,
-            None => {
-                panic!(
-                    "No scan range for window_group_id: {}, within_window_quad_group_id: {}",
-                    window_group_id, ww_quad_group_id
-                );
-            },
-        };
 
         let frame = DenseFrame::from_frame_window(frame_window, ims_converter, mz_converter);
 
@@ -90,10 +76,8 @@ impl DenseFrameWindow {
             frame,
             ims_min,
             ims_max,
-            mz_start: scan_range.iso_low as f64,
-            mz_end: scan_range.iso_high as f64,
-            group_id: window_group_id,
-            quad_group_id: ww_quad_group_id,
+            group_id: window_group_id.into(),
+            quadrupole_setting: foo,
         }
     }
 }
@@ -134,14 +118,18 @@ impl DenseFrame {
 
         let index = frame.index;
         let rt = frame.rt;
-        let frame_type = frame.frame_type;
+        let acquisition_type = frame.acquisition_type;
+        let ms_level = frame.ms_level;
 
         DenseFrame {
             raw_peaks: peaks,
             index,
             rt,
-            frame_type,
+            acquisition_type,
+            ms_level,
             sorted: None,
+            intensity_correction_factor: frame.intensity_correction_factor,
+            window_group_id: frame.window_group,
         }
     }
 
@@ -189,14 +177,18 @@ impl DenseFrame {
 
         let index = frame_window.parent_frame_index;
         let rt = frame_window.rt;
-        let frame_type = frame_window.frame_type;
+        let acquisition_type = frame_window.acquisition_type;
+        let ms_level = frame_window.ms_level;
 
         DenseFrame {
             raw_peaks: peaks,
             index,
             rt,
-            frame_type,
+            acquisition_type,
+            ms_level,
             sorted: None,
+            intensity_correction_factor: frame_window.intensity_correction_factor,
+            window_group_id: frame_window.window_group_id,
         }
     }
 

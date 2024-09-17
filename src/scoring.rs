@@ -194,7 +194,7 @@ pub fn score_pseudospectra(
     config: SageSearchConfig,
     out_path_features: Option<PathBuf>,
     num_report_psms: usize,
-) -> Result<Vec<Feature>, Box<dyn Error>> {
+) -> Result<Vec<Feature>, std::io::Error> {
     // 1. Buid raw spectra from the pseudospectra
 
     let take_top_n = 250;
@@ -256,8 +256,18 @@ pub fn score_pseudospectra(
         config.fasta_path.clone(),
         parameters.decoy_tag.clone(),
         parameters.generate_decoys,
-    )
-    .expect("Error reading fasta");
+    );
+
+    let sage_fasta = match sage_fasta {
+        Ok(x) => x,
+        Err(e) => {
+            log::error!("Error reading fasta: {:?}", e);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            ));
+        },
+    };
 
     let db = parameters.clone().build(sage_fasta);
 
