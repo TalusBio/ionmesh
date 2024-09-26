@@ -37,7 +37,6 @@ pub struct DenseFrameWindow {
     pub quadrupole_setting: SingleQuadrupoleSettings,
 }
 
-
 impl DenseFrameWindow {
     pub fn from_frame_window(
         frame_window: &FrameSlice,

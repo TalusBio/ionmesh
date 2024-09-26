@@ -231,6 +231,9 @@ pub fn calculate_cycle_time(frames: &[DenseFrameWindow]) -> f64 {
     let rts = frames.iter().map(|x| x.frame.rt).collect::<Vec<f64>>();
     let rt_diffs = rts.windows(2).map(|x| x[1] - x[0]).collect::<Vec<f64>>();
     let cycle_time = rt_diffs.iter().sum::<f64>() / rt_diffs.len() as f64;
+
+    assert!(cycle_time > 0.);
+
     cycle_time
 }
 
@@ -251,7 +254,8 @@ pub fn combine_traces(
 
     let grouped_windows: Vec<(f64, Vec<TimeTimsPeak>)> = grouped_denseframe_windows
         .into_iter()
-        .map(|x| {
+        .map(|mut x| {
+            x.par_sort_unstable_by(|a, b| a.frame.rt.partial_cmp(&b.frame.rt).unwrap());
             let cycle_time = calculate_cycle_time(&x);
             let o = _flatten_denseframe_vec(x);
             (cycle_time, o)

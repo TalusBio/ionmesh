@@ -20,17 +20,17 @@
 # dependencies not shared by any other crates, would be ignored, as the target
 # list here is effectively saying which targets you are building for.
 targets = [
-    { triple = "aarch64-apple-darwin" },
-    { triple = "x86_64-apple-darwin" },
-    { triple = "i686-pc-windows-gnu" },
-    { triple = "i686-pc-windows-msvc" },
-    { triple = "x86_64-pc-windows-gnu" },
-    { triple = "x86_64-pc-windows-msvc" },
-    { triple = "i686-unknown-linux-gnu" },
-    { triple = "x86_64-unknown-linux-gnu" },
-    { triple = "x86_64-unknown-linux-musl" },
-    # { triple = "wasm32-unknown-unknown" },
-    # { triple = "x86_64-unknown-redox" },
+  { triple = "aarch64-apple-darwin" },
+  { triple = "x86_64-apple-darwin" },
+  { triple = "i686-pc-windows-gnu" },
+  { triple = "i686-pc-windows-msvc" },
+  { triple = "x86_64-pc-windows-gnu" },
+  { triple = "x86_64-pc-windows-msvc" },
+  { triple = "i686-unknown-linux-gnu" },
+  { triple = "x86_64-unknown-linux-gnu" },
+  { triple = "x86_64-unknown-linux-musl" },
+  # { triple = "wasm32-unknown-unknown" },
+  # { triple = "x86_64-unknown-redox" },
 ]
 # When creating the dependency graph used as the source of truth when checks are
 # executed, this field can be used to prune crates from the graph, removing them
@@ -73,8 +73,8 @@ yanked = "warn"
 # A list of advisory IDs to ignore. Note that ignored advisories will still
 # output a note when they are encountered.
 ignore = [
-    #"RUSTSEC-0000-0000",
-    "RUSTSEC-2021-0145",  # atty... potential unaligner when using custom allocators.
+  #"RUSTSEC-0000-0000",
+  "RUSTSEC-2023-0086", # Lexical-core -> arrow issue, updated in main in Sept-2024, unreleased.
 ]
 # Threshold for security vulnerabilities, any vulnerability with a CVSS score
 # lower than the range specified will be ignored. Note that ignored advisories
@@ -101,13 +101,13 @@ version = 2
 # See https://spdx.org/licenses/ for list of possible licenses
 # [possible values: any SPDX 3.11 short identifier (+ optional exception)].
 allow = [
-    "MIT",
-    "Apache-2.0",
-    "Apache-2.0 WITH LLVM-exception",
-    "BSD-3-Clause",
-    "Unicode-DFS-2016",
-    "Zlib",
-    # Thank Jesus for rerun that compiled the following for me...
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-3-Clause",
+  "Unicode-DFS-2016",
+  "Zlib",
+  # Thank Jesus for rerun that compiled the following for me...
 ]
 
 # The confidence threshold for detecting a license from license text.
@@ -146,8 +146,8 @@ license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 # and the crate will be checked normally, which may produce warnings or errors
 # depending on the rest of your configuration
 #license-files = [
-    # Each entry is a crate relative path, and the (opaque) hash of its contents
-    #{ path = "LICENSE", hash = 0xbd0eed23 }
+# Each entry is a crate relative path, and the (opaque) hash of its contents
+#{ path = "LICENSE", hash = 0xbd0eed23 }
 #]
 
 [licenses.private]
@@ -160,7 +160,7 @@ ignore = false
 # is only published to private registries, and ignore is true, the crate will
 # not have its license(s) checked
 registries = [
-    #"https://sekretz.com/registry
+  #"https://sekretz.com/registry
 ]
 
 # This section is considered when running `cargo deny check bans`.
@@ -187,17 +187,17 @@ workspace-default-features = "allow"
 external-default-features = "allow"
 # List of crates that are allowed. Use with care!
 allow = [
-    #{ name = "ansi_term", version = "=0.11.0" },
+  #{ name = "ansi_term", version = "=0.11.0" },
 ]
 # List of crates to deny
 deny = [
-    # Each entry the name of a crate and a version range. If version is
-    # not specified, all versions will be matched.
-    #{ name = "ansi_term", version = "=0.11.0" },
-    #
-    # Wrapper crates can optionally be specified to allow the crate when it
-    # is a direct dependency of the otherwise banned crate
-    #{ name = "ansi_term", version = "=0.11.0", wrappers = [] },
+  # Each entry the name of a crate and a version range. If version is
+  # not specified, all versions will be matched.
+  #{ name = "ansi_term", version = "=0.11.0" },
+  #
+  # Wrapper crates can optionally be specified to allow the crate when it
+  # is a direct dependency of the otherwise banned crate
+  #{ name = "ansi_term", version = "=0.11.0", wrappers = [] },
 ]
 
 # List of features to allow/deny
