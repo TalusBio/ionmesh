@@ -15,6 +15,7 @@ use serde::{
     Serialize,
 };
 use timsrust::converters::{
+    ConvertableDomain,
     Scan2ImConverter,
     Tof2MzConverter,
 };
@@ -179,10 +180,8 @@ fn denoise_frame_slice_window(
     mz_converter: &Tof2MzConverter,
     min_n: usize,
     min_intensity: u64,
-    _mz_scaling: f64,
-    _max_mz_extension: f64,
-    _ims_scaling: f32,
-    _max_ims_extension: f32,
+    max_mz_extension: f64,
+    max_ims_extension: f32,
 ) -> DenseFrameWindow {
     let timer = utils::ContextTimer::new("dbscan_dfs", true, utils::LogLevel::TRACE);
     let fsw = FrameSliceWindow::new(frameslice_window);
@@ -208,6 +207,13 @@ fn denoise_frame_slice_window(
     }
 
     let mut i_timer = timer.start_sub_timer("dbscan");
+    // TODO make this API better ... its kind of dumb having to "know" what each index
+    // means in the tolerances...
+    let max_extensions_use = [
+        (mz_converter.invert(1000.0 + max_mz_extension) - mz_converter.convert(1000.0)).abs()
+            as f32,
+        (ims_converter.invert(1.0 + max_ims_extension) - ims_converter.convert(1.0)).abs() as f32,
+    ];
     let cluster_labels = dbscan_label_clusters(
         &fsw,
         &fsw,
@@ -217,7 +223,7 @@ fn denoise_frame_slice_window(
         intensity_sorted_indices,
         None::<&(dyn Fn(&f32) -> bool + Send + Sync)>,
         false,
-        &[10., 100.],
+        &max_extensions_use,
     );
     i_timer.stop(true);
 
@@ -449,8 +455,6 @@ impl<'a> Denoiser<'a, Frame, Vec<DenseFrameWindow>, Converters, Option<usize>>
         // to have them be not hard-coded I need a way to convert
         // m/z space ranges to tof indices ... which is not exposed
         // by timsrust ...
-        warn!("Using prototype function for denoising, scalings are hard-coded");
-
         let num_windows = break_points.len() - 1;
         let mut out = Vec::with_capacity(num_windows);
         let frame_window_slices: Vec<(usize, &[FrameSlice])> = (0..num_windows)
@@ -468,9 +472,7 @@ impl<'a> Denoiser<'a, Frame, Vec<DenseFrameWindow>, Converters, Option<usize>>
                     &self.mz_converter,
                     self.min_n,
                     self.min_intensity,
-                    self.mz_scaling,
                     self.max_mz_extension,
-                    self.ims_scaling,
                     self.max_ims_extension,
                 )
             };
