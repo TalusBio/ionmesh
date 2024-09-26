@@ -39,7 +39,6 @@ use crate::ms::frames::{
     DenseFrameWindow,
     ExpandedFrameSlice,
     FrameSlice,
-    SingleQuadrupoleSettings,
     TimsPeak,
 };
 use crate::space::space_generics::{

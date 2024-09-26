@@ -18,7 +18,6 @@ extern crate log;
 extern crate pretty_env_logger;
 
 use std::fs;
-use std::io::Error;
 use std::path::Path;
 
 use clap::Parser;

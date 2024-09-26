@@ -1,8 +1,4 @@
-use timsrust::{
-    AcquisitionType,
-    MSLevel,
-    QuadrupoleSettings,
-};
+use timsrust::MSLevel;
 
 use crate::aggregation::aggregators::TimsPeakAggregator;
 use crate::aggregation::converters::{
@@ -12,7 +8,6 @@ use crate::aggregation::converters::{
 use crate::aggregation::dbscan::dbscan::dbscan_generic;
 use crate::ms::frames::{
     DenseFrame,
-    SingleQuadrupoleSettings,
     TimsPeak,
 };
 use crate::space::space_generics::{

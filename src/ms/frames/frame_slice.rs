@@ -1,17 +1,13 @@
 use std::fmt;
-use std::sync::Arc;
 
 use serde::Serialize;
 use timsrust::{
     AcquisitionType,
     Frame,
     MSLevel,
-    QuadrupoleSettings,
 };
 
 use super::SingleQuadrupoleSettings;
-use crate::aggregation::ms_denoise;
-use crate::space::quad;
 use crate::space::space_generics::{
     AsNDPointsAtIndex,
     IntenseAtIndex,
