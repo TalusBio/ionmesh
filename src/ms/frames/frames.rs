@@ -1,5 +1,11 @@
+use std::sync::Arc;
+
 use serde::Serialize;
-pub use timsrust::FrameType;
+pub use timsrust::{
+    AcquisitionType,
+    MSLevel,
+    QuadrupoleSettings,
+};
 
 use crate::space::space_generics::HasIntensity;
 
@@ -56,23 +62,63 @@ pub struct DenseFrame {
     pub raw_peaks: Vec<TimsPeak>,
     pub index: usize,
     pub rt: f64,
+    pub window_group_id: u8,
+    pub intensity_correction_factor: f64,
 
     #[serde(skip_serializing)]
-    pub frame_type: FrameType,
+    pub acquisition_type: AcquisitionType,
+
+    #[serde(skip_serializing)]
+    pub ms_level: MSLevel,
 
     #[serde(skip_serializing)]
     pub sorted: Option<SortingOrder>,
 }
 
-/// Information on the context of a window in a frame.
-///
-/// This adds to a frame slice the context of the what isolation was used
-/// to generate the frame slice.
-#[derive(Debug, Clone, Serialize)]
-pub struct FrameMsMsWindowInfo {
-    pub mz_start: f32,
-    pub mz_end: f32,
-    pub window_group_id: usize,
-    pub within_window_quad_group_id: usize,
-    pub global_quad_row_id: usize,
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct SingleQuadrupoleSettings {
+    pub parent_index: usize,
+    pub scan_start: usize,
+    pub scan_end: usize,
+    pub isolation_mz: f64,
+    pub isolation_max: f64,
+    pub isolation_min: f64,
+    pub isolation_width: f64,
+    pub collision_energy: f64,
+}
+
+impl SingleQuadrupoleSettings {
+    pub fn from_quad_settings(
+        quad_settings: Arc<QuadrupoleSettings>,
+        index: usize,
+    ) -> Self {
+        let isolation_mz = quad_settings.isolation_mz[index];
+        let isolation_width = quad_settings.isolation_width[index];
+        let isolation_max = isolation_mz + (isolation_width / 2.);
+        let isolation_min = isolation_mz - (isolation_width / 2.);
+        let collision_energy = quad_settings.collision_energy[index];
+
+        Self {
+            parent_index: quad_settings.index,
+            scan_start: quad_settings.scan_starts[index],
+            scan_end: quad_settings.scan_ends[index],
+            isolation_mz,
+            isolation_max,
+            isolation_min,
+            isolation_width,
+            collision_energy,
+        }
+    }
+}
+
+impl PartialOrd for SingleQuadrupoleSettings {
+    fn partial_cmp(
+        &self,
+        other: &Self,
+    ) -> Option<std::cmp::Ordering> {
+        match self.parent_index.partial_cmp(&other.parent_index) {
+            Some(std::cmp::Ordering::Equal) => self.scan_start.partial_cmp(&other.scan_start),
+            x => x,
+        }
+    }
 }

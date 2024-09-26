@@ -1,6 +1,10 @@
 use log::trace;
 use serde::Serialize;
-use timsrust::ConvertableIndex;
+use timsrust::converters::{
+    ConvertableDomain,
+    Scan2ImConverter,
+    Tof2MzConverter,
+};
 
 use super::{
     ExpandedFrameSlice,
@@ -225,8 +229,8 @@ pub struct RawScaleTimsPeak {
 impl RawScaleTimsPeak {
     pub fn to_timspeak(
         &self,
-        mz_converter: &timsrust::Tof2MzConverter,
-        ims_converter: &timsrust::Scan2ImConverter,
+        mz_converter: &Tof2MzConverter,
+        ims_converter: &Scan2ImConverter,
     ) -> TimsPeak {
         TimsPeak {
             intensity: self.intensity as u32,

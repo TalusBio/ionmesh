@@ -2,11 +2,12 @@ use std::fmt;
 
 use serde::Serialize;
 use timsrust::{
+    AcquisitionType,
     Frame,
-    FrameType,
+    MSLevel,
 };
 
-use super::FrameMsMsWindowInfo;
+use super::SingleQuadrupoleSettings;
 use crate::space::space_generics::{
     AsNDPointsAtIndex,
     IntenseAtIndex,
@@ -94,26 +95,32 @@ impl fmt::Display for ScanOutOfBoundsError {
 ///
 /// Renamed from the frame:
 ///    - parent_frame_index   34 // renamed from Frame.index for clarity.
+///    - window_group_id   4 // renamed from Frame.window_group for clarity.
 ///
 /// Additions for FrameSlice:
 ///    - scan_start       123  // The scan number of the first scan offset in the current window.
-///    - slice_window_info Some(MsMsFrameSliceWindowInfo::SingleWindow(FrameMsMsWindow))
 #[derive(Debug, Clone, Serialize)]
 pub struct FrameSlice<'a> {
-    // pub scan_offsets: &'a [usize], // Timsrust changed this later ...
-    pub scan_offsets: &'a [u64],
+    pub scan_offsets: &'a [usize],
     pub tof_indices: &'a [u32],
     pub intensities: &'a [u32],
     pub parent_frame_index: usize,
     pub rt: f64,
+    pub window_group_id: u8,
+    pub intensity_correction_factor: f64,
 
     #[serde(skip)]
-    pub frame_type: FrameType,
+    pub ms_level: MSLevel,
+
+    #[serde(skip)]
+    pub acquisition_type: AcquisitionType,
+
+    #[serde(skip)]
+    pub quadrupole_settings: SingleQuadrupoleSettings,
 
     // From this point on they are local implementations
     // Before they are used from the timsrust crate.
     pub scan_start: usize,
-    pub slice_window_info: Option<MsMsFrameSliceWindowInfo>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -123,19 +130,43 @@ pub struct ExpandedFrameSlice {
     pub intensities: Vec<u32>,
     pub parent_frame_index: usize,
     pub rt: f64,
-    pub slice_window_info: Option<MsMsFrameSliceWindowInfo>,
+    pub window_group_id: u8,
+    pub intensity_correction_factor: f64,
 
     #[serde(skip)]
-    pub frame_type: FrameType,
+    pub quadrupole_settings: SingleQuadrupoleSettings,
+
+    #[serde(skip)]
+    pub acquisition_type: AcquisitionType,
+
+    #[serde(skip)]
+    pub ms_level: MSLevel,
 }
 
 impl<'a> FrameSlice<'a> {
-    pub fn slice_frame(
+    pub fn from_frame(frame: &'a Frame) -> Vec<FrameSlice<'a>> {
+        let quad_settings = frame.quadrupole_settings.clone();
+        if quad_settings.len() == 0 {
+            panic!("Runtime error, at this stage at least one quadrupole setting is required");
+        }
+
+        let out = (0..quad_settings.len())
+            .map(|i| {
+                let quad_info =
+                    SingleQuadrupoleSettings::from_quad_settings(quad_settings.clone(), i);
+                FrameSlice::slice_frame(frame, quad_info)
+            })
+            .collect::<Vec<_>>();
+
+        out
+    }
+
+    fn slice_frame(
         frame: &'a Frame,
-        scan_start: usize,
-        scan_end: usize,
-        slice_window_info: Option<MsMsFrameSliceWindowInfo>,
+        quad_info: SingleQuadrupoleSettings,
     ) -> FrameSlice<'a> {
+        let scan_start = quad_info.scan_start;
+        let scan_end = quad_info.scan_end;
         let scan_offsets = &frame.scan_offsets[scan_start..=scan_end];
 
         let indprt_start = scan_offsets[0] as usize;
@@ -151,7 +182,7 @@ impl<'a> FrameSlice<'a> {
             for i in 1..(scan_offsets.len() - 1) {
                 debug_assert!(scan_offsets[i] <= scan_offsets[i + 1]);
                 debug_assert!(
-                    (scan_offsets[i + 1] - init_offset) <= tof_indices.len() as u64,
+                    (scan_offsets[i + 1] - init_offset) <= tof_indices.len(),
                     "scan_offsets[i+1]: {}, init_offset: {}, tof_indices.len(): {}",
                     scan_offsets[i + 1],
                     init_offset,
@@ -166,9 +197,12 @@ impl<'a> FrameSlice<'a> {
             intensities,
             parent_frame_index: frame.index,
             rt: frame.rt,
-            frame_type: frame.frame_type,
+            ms_level: frame.ms_level,
+            acquisition_type: frame.acquisition_type,
             scan_start,
-            slice_window_info,
+            quadrupole_settings: quad_info,
+            window_group_id: frame.window_group,
+            intensity_correction_factor: frame.intensity_correction_factor,
         }
     }
 
@@ -183,7 +217,7 @@ impl<'a> FrameSlice<'a> {
         local_index: usize,
     ) -> usize {
         debug_assert!(local_index < self.tof_indices.len());
-        let search_val = self.scan_offsets[0] + local_index as u64;
+        let search_val = self.scan_offsets[0] + local_index;
         let loc = self
             .scan_offsets
             .binary_search_by(|x| x.partial_cmp(&search_val).unwrap());
@@ -399,8 +433,9 @@ impl ExpandedFrameSlice {
     pub fn from_frame_slice(frame_slice: &FrameSlice) -> ExpandedFrameSlice {
         let parent_frame_index = frame_slice.parent_frame_index;
         let rt = frame_slice.rt;
-        let slice_window_info = frame_slice.slice_window_info.clone();
-        let frame_type = frame_slice.frame_type;
+        let quadrupole_settings = frame_slice.quadrupole_settings.clone();
+        let acquisition_type = frame_slice.acquisition_type;
+        let ms_level = frame_slice.ms_level;
         let scan_numbers = frame_slice.explode_scan_numbers();
 
         // Sort all arrays on the tof indices.
@@ -430,8 +465,11 @@ impl ExpandedFrameSlice {
             intensities,
             parent_frame_index,
             rt,
-            slice_window_info,
-            frame_type,
+            quadrupole_settings,
+            acquisition_type,
+            ms_level,
+            window_group_id: frame_slice.window_group_id.clone(),
+            intensity_correction_factor: frame_slice.intensity_correction_factor.clone(),
         }
     }
 }
@@ -439,37 +477,77 @@ impl ExpandedFrameSlice {
 // Tests for the FrameSlice
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use timsrust::{
+        MSLevel,
+        QuadrupoleSettings,
+    };
+
     use super::*;
 
     fn sample_frame() -> Frame {
+        let ms1_quad_settings = QuadrupoleSettings {
+            index: 0,
+            scan_starts: vec![],
+            scan_ends: vec![],
+            isolation_mz: vec![],
+            isolation_width: vec![],
+            collision_energy: vec![],
+        };
+        let arc_ms1_quad_settings = Arc::new(ms1_quad_settings);
         Frame {
             index: 0,
             scan_offsets: vec![0, 0, 0, 0, 0, 3, 5, 6],
             tof_indices: vec![100, 101, 102, 10, 20, 30],
             intensities: vec![123, 111, 12, 3, 4, 1],
             rt: 65.34,
-            frame_type: FrameType::MS1,
+            ms_level: MSLevel::MS1,
+            acquisition_type: AcquisitionType::DIAPASEF,
+            quadrupole_settings: arc_ms1_quad_settings,
+            window_group: 0,
+            intensity_correction_factor: 1.,
         }
     }
 
     #[test]
     fn test_frame_slice() {
         let frame = sample_frame();
-        let frame_slice = FrameSlice::slice_frame(&frame, 3, 5, None);
+        let quad_setting = SingleQuadrupoleSettings {
+            parent_index: 0,
+            scan_start: 3,
+            scan_end: 5,
+            isolation_mz: 100.,
+            isolation_max: 100.,
+            isolation_min: 100.,
+            isolation_width: 25.,
+            collision_energy: 10.,
+        };
+        let frame_slice = FrameSlice::slice_frame(&frame, quad_setting);
 
         assert_eq!(frame_slice.scan_offsets, &[0, 0, 3]);
         assert_eq!(frame_slice.tof_indices, &[100, 101, 102]);
         assert_eq!(frame_slice.intensities, &[123, 111, 12]);
         assert_eq!(frame_slice.parent_frame_index, 0);
         assert_eq!(frame_slice.rt, 65.34);
-        assert_eq!(frame_slice.frame_type, FrameType::MS1);
+        assert_eq!(frame_slice.ms_level, MSLevel::MS1);
         assert_eq!(frame_slice.scan_start, 3);
     }
 
     #[test]
     fn test_global_scan_at_index() {
         let frame = sample_frame();
-        let frame_slice = FrameSlice::slice_frame(&frame, 3, 5, None);
+        let quad_setting = SingleQuadrupoleSettings {
+            parent_index: 0,
+            scan_start: 3,
+            scan_end: 5,
+            isolation_mz: 100.,
+            isolation_max: 100.,
+            isolation_min: 100.,
+            isolation_width: 25.,
+            collision_energy: 10.,
+        };
+        let frame_slice = FrameSlice::slice_frame(&frame, quad_setting);
 
         assert_eq!(frame_slice.tof_indices, &[100, 101, 102]);
         assert_eq!(frame_slice.global_scan_at_index(0), 4);
@@ -482,7 +560,17 @@ mod tests {
     fn test_global_scan_at_index_oob_fails() {
         // these should fail ... test that it fails.
         let frame = sample_frame();
-        let frame_slice = FrameSlice::slice_frame(&frame, 3, 5, None);
+        let quad_setting = SingleQuadrupoleSettings {
+            parent_index: 0,
+            scan_start: 3,
+            scan_end: 5,
+            isolation_mz: 100.,
+            isolation_max: 100.,
+            isolation_min: 100.,
+            isolation_width: 25.,
+            collision_energy: 10.,
+        };
+        let frame_slice = FrameSlice::slice_frame(&frame, quad_setting);
         assert_eq!(frame_slice.tof_indices, &[100, 101, 102]);
         frame_slice.global_scan_at_index(3);
     }
@@ -490,7 +578,17 @@ mod tests {
     #[test]
     fn test_explode_scan_numbers() {
         let frame = sample_frame();
-        let frame_slice = FrameSlice::slice_frame(&frame, 3, 5, None);
+        let quad_setting = SingleQuadrupoleSettings {
+            parent_index: 0,
+            scan_start: 3,
+            scan_end: 5,
+            isolation_mz: 100.,
+            isolation_max: 100.,
+            isolation_min: 100.,
+            isolation_width: 25.,
+            collision_energy: 10.,
+        };
+        let frame_slice = FrameSlice::slice_frame(&frame, quad_setting);
         assert_eq!(frame_slice.tof_indices, &[100, 101, 102]);
         assert_eq!(frame_slice.scan_offsets, &[0, 0, 3]);
         assert_eq!(frame_slice.explode_scan_numbers(), vec![4, 4, 4]);
@@ -499,7 +597,17 @@ mod tests {
     #[test]
     fn test_tof_intensities_at_scan() {
         let frame = sample_frame();
-        let frame_slice = FrameSlice::slice_frame(&frame, 3, 5, None);
+        let quad_setting = SingleQuadrupoleSettings {
+            parent_index: 0,
+            scan_start: 3,
+            scan_end: 5,
+            isolation_mz: 100.,
+            isolation_max: 100.,
+            isolation_min: 100.,
+            isolation_width: 25.,
+            collision_energy: 10.,
+        };
+        let frame_slice = FrameSlice::slice_frame(&frame, quad_setting);
 
         assert_eq!(frame_slice.tof_indices, &[100, 101, 102]);
         assert_eq!(frame_slice.scan_offsets, &[0, 0, 3]);
@@ -547,7 +655,17 @@ mod tests {
     #[test]
     fn test_tof_range_in_tolerance_at_scan() {
         let frame = sample_frame();
-        let frame_slice = FrameSlice::slice_frame(&frame, 3, 7, None);
+        let quad_setting = SingleQuadrupoleSettings {
+            parent_index: 0,
+            scan_start: 3,
+            scan_end: 7,
+            isolation_mz: 100.,
+            isolation_max: 100.,
+            isolation_min: 100.,
+            isolation_width: 25.,
+            collision_energy: 10.,
+        };
+        let frame_slice = FrameSlice::slice_frame(&frame, quad_setting);
 
         assert_eq!(frame_slice.tof_indices, &[100, 101, 102, 10, 20, 30]);
         assert_eq!(frame_slice.scan_offsets, &[0, 0, 3, 5, 6]);
@@ -617,13 +735,26 @@ mod tests {
     }
 
     fn sample_ms2_frame() -> Frame {
+        let ms2_quad_settings = QuadrupoleSettings {
+            index: 0,
+            scan_starts: vec![2, 6],
+            scan_ends: vec![5, 9],
+            isolation_mz: vec![100., 101.],
+            isolation_width: vec![25., 25.],
+            collision_energy: vec![10., 10.],
+        };
+        let arc_ms2_quad_settings = Arc::new(ms2_quad_settings);
         Frame {
             index: 0,
             scan_offsets: vec![0, 0, 3, 5, 6],
             tof_indices: vec![100, 101, 102, 10, 20, 30],
             intensities: vec![123, 111, 12, 3, 4, 1],
             rt: 65.34,
-            frame_type: FrameType::MS2(timsrust::AcquisitionType::DIAPASEF),
+            ms_level: MSLevel::MS2,
+            acquisition_type: AcquisitionType::DIAPASEF,
+            quadrupole_settings: arc_ms2_quad_settings,
+            window_group: 1,
+            intensity_correction_factor: 1.,
         }
     }
 }
@@ -911,10 +1042,4 @@ impl RangeSet {
         }
         false
     }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub enum MsMsFrameSliceWindowInfo {
-    WindowGroup(usize),
-    SingleWindow(FrameMsMsWindowInfo),
 }

@@ -1,5 +1,6 @@
 use core::fmt::Debug;
 use core::panic;
+use std::path::Path;
 
 use indicatif::ParallelProgressIterator;
 use log::{
@@ -13,7 +14,17 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use timsrust::Frame;
+use timsrust::converters::{
+    Scan2ImConverter,
+    Tof2MzConverter,
+};
+use timsrust::{
+    AcquisitionType,
+    Frame,
+    MSLevel,
+    QuadrupoleSettings,
+    TimsRustError,
+};
 
 use super::aggregators::aggregate_clusters;
 use super::dbscan::runner::dbscan_label_clusters;
@@ -28,11 +39,8 @@ use crate::ms::frames::{
     DenseFrameWindow,
     ExpandedFrameSlice,
     FrameSlice,
-    MsMsFrameSliceWindowInfo,
     TimsPeak,
 };
-use crate::ms::tdf;
-use crate::ms::tdf::DIAFrameInfo;
 use crate::space::space_generics::{
     AsNDPointsAtIndex,
     IntenseAtIndex,
@@ -167,9 +175,8 @@ fn _denoise_denseframe(
 
 fn denoise_frame_slice_window(
     frameslice_window: &[ExpandedFrameSlice],
-    ims_converter: &timsrust::Scan2ImConverter,
-    mz_converter: &timsrust::Tof2MzConverter,
-    _dia_frame_info: &DIAFrameInfo,
+    ims_converter: &Scan2ImConverter,
+    mz_converter: &Tof2MzConverter,
     min_n: usize,
     min_intensity: u64,
     _mz_scaling: f64,
@@ -224,23 +231,7 @@ fn denoise_frame_slice_window(
     );
 
     let ref_frame = &frameslice_window[frameslice_window.len() / 2];
-    if ref_frame.slice_window_info.is_none() {
-        panic!("No slice window info found");
-    }
-
-    let slice_info = ref_frame.slice_window_info.as_ref().unwrap();
-    let quad_group_id = match slice_info {
-        MsMsFrameSliceWindowInfo::WindowGroup(x) => *x,
-        MsMsFrameSliceWindowInfo::SingleWindow(x) => x.global_quad_row_id,
-    };
-    let min_mz = match slice_info {
-        MsMsFrameSliceWindowInfo::WindowGroup(_x) => 0.0,
-        MsMsFrameSliceWindowInfo::SingleWindow(x) => x.mz_start,
-    };
-    let max_mz = match slice_info {
-        MsMsFrameSliceWindowInfo::WindowGroup(_x) => 0.0,
-        MsMsFrameSliceWindowInfo::SingleWindow(x) => x.mz_end,
-    };
+    let quad_settings = ref_frame.quadrupole_settings.clone();
 
     let mut raw_peaks: Vec<TimsPeak> = centroids
         .into_iter()
@@ -266,15 +257,16 @@ fn denoise_frame_slice_window(
             raw_peaks,
             index: ref_frame.parent_frame_index,
             rt: ref_frame.rt,
-            frame_type: timsrust::FrameType::MS2(timsrust::AcquisitionType::DIAPASEF),
+            acquisition_type: ref_frame.acquisition_type,
+            ms_level: ref_frame.ms_level,
             sorted: None,
+            window_group_id: ref_frame.window_group_id,
+            intensity_correction_factor: ref_frame.intensity_correction_factor,
         },
         ims_max: max_ims,
         ims_min: min_ims,
-        mz_start: min_mz as f64,
-        mz_end: max_mz as f64,
-        group_id: quad_group_id,
-        quad_group_id,
+        group_id: ref_frame.window_group_id.into(),
+        quadrupole_setting: quad_settings,
     };
     maybe_save_json_if_debugging(
         &out,
@@ -287,9 +279,8 @@ fn denoise_frame_slice_window(
 
 fn denoise_frame_slice(
     frame_window: &FrameSlice,
-    ims_converter: &timsrust::Scan2ImConverter,
-    mz_converter: &timsrust::Tof2MzConverter,
-    dia_frame_info: &DIAFrameInfo,
+    ims_converter: &Scan2ImConverter,
+    mz_converter: &Tof2MzConverter,
     min_n: usize,
     min_intensity: u64,
     mz_scaling: f64,
@@ -297,12 +288,8 @@ fn denoise_frame_slice(
     ims_scaling: f32,
     max_ims_extension: f32,
 ) -> DenseFrameWindow {
-    let denseframe_window = DenseFrameWindow::from_frame_window(
-        frame_window,
-        ims_converter,
-        mz_converter,
-        dia_frame_info,
-    );
+    let denseframe_window =
+        DenseFrameWindow::from_frame_window(frame_window, ims_converter, mz_converter);
     let denoised_frame = _denoise_denseframe(
         denseframe_window.frame,
         min_n,
@@ -317,10 +304,8 @@ fn denoise_frame_slice(
         frame: denoised_frame,
         ims_min: denseframe_window.ims_min,
         ims_max: denseframe_window.ims_max,
-        mz_start: denseframe_window.mz_start,
-        mz_end: denseframe_window.mz_end,
         group_id: denseframe_window.group_id,
-        quad_group_id: denseframe_window.quad_group_id,
+        quadrupole_setting: denseframe_window.quadrupole_setting,
     }
 }
 
@@ -365,8 +350,8 @@ struct FrameDenoiser {
     ims_scaling: f32,
     max_mz_extension: f64,
     max_ims_extension: f32,
-    ims_converter: timsrust::Scan2ImConverter,
-    mz_converter: timsrust::Tof2MzConverter,
+    ims_converter: Scan2ImConverter,
+    mz_converter: Tof2MzConverter,
 }
 
 impl<'a> Denoiser<'a, Frame, DenseFrame, Converters, Option<usize>> for FrameDenoiser {
@@ -394,9 +379,8 @@ struct DIAFrameDenoiser {
     max_mz_extension: f64,
     ims_scaling: f32,
     max_ims_extension: f32,
-    dia_frame_info: DIAFrameInfo,
-    ims_converter: timsrust::Scan2ImConverter,
-    mz_converter: timsrust::Tof2MzConverter,
+    ims_converter: Scan2ImConverter,
+    mz_converter: Tof2MzConverter,
 }
 
 // impl DIAFrameDenoiser {
@@ -433,7 +417,23 @@ impl<'a> Denoiser<'a, Frame, Vec<DenseFrameWindow>, Converters, Option<usize>>
     {
         info!("Denoising (centroiding) {} frames", elems.len());
 
-        let mut frame_window_slices = self.dia_frame_info.split_frame_windows(&elems);
+        let mut flat_windows: Vec<FrameSlice<'_>> = elems
+            .par_iter()
+            .flat_map(|x: &Frame| FrameSlice::from_frame(x))
+            .collect();
+
+        flat_windows.par_sort_unstable_by(|a, b| {
+            a.quadrupole_settings
+                .partial_cmp(&b.quadrupole_settings)
+                .unwrap()
+        });
+
+        let mut break_points = vec![0];
+        for i in 1..flat_windows.len() {
+            if flat_windows[i].quadrupole_settings != flat_windows[i - 1].quadrupole_settings {
+                break_points.push(i);
+            }
+        }
 
         // If profiling and having the "IONMESH_PROFILE_NUM_WINDOWS" env variable set
         // then only process the first N slices of windows.
@@ -441,7 +441,8 @@ impl<'a> Denoiser<'a, Frame, Vec<DenseFrameWindow>, Converters, Option<usize>>
         if let Ok(num_windows) = std::env::var("IONMESH_PROFILE_NUM_WINDOWS") {
             let num_windows: usize = num_windows.parse().unwrap();
             log::warn!("Profiling: Only processing {} windows", num_windows);
-            frame_window_slices.truncate(num_windows);
+            flat_windows.truncate(break_points[num_windows]);
+            break_points.truncate(num_windows);
         }
 
         // This warning reders to denoise_frame_slice_window.
@@ -450,9 +451,12 @@ impl<'a> Denoiser<'a, Frame, Vec<DenseFrameWindow>, Converters, Option<usize>>
         // by timsrust ...
         warn!("Using prototype function for denoising, scalings are hard-coded");
 
-        let mut out = Vec::with_capacity(frame_window_slices.len());
-        let num_windows = frame_window_slices.len();
-        for (i, sv) in frame_window_slices.iter().enumerate() {
+        let num_windows = break_points.len() - 1;
+        let mut out = Vec::with_capacity(num_windows);
+        let frame_window_slices: Vec<(usize, &[FrameSlice])> = (0..num_windows)
+            .map(|i| (i, &flat_windows[break_points[i]..break_points[i + 1]]))
+            .collect();
+        for (i, sv) in frame_window_slices.iter() {
             info!("Denoising window {}/{}", i + 1, num_windows);
             let start_tot_peaks = sv.iter().map(|x| x.num_ndpoints() as u64).sum::<u64>();
             let progbar = indicatif::ProgressBar::new(sv.len() as u64);
@@ -462,7 +466,6 @@ impl<'a> Denoiser<'a, Frame, Vec<DenseFrameWindow>, Converters, Option<usize>>
                     x,
                     &self.ims_converter,
                     &self.mz_converter,
-                    &self.dia_frame_info,
                     self.min_n,
                     self.min_intensity,
                     self.mz_scaling,
@@ -481,7 +484,7 @@ impl<'a> Denoiser<'a, Frame, Vec<DenseFrameWindow>, Converters, Option<usize>>
                     .map(lambda_denoise)
                     .collect::<Vec<_>>()
             } else {
-                sv.into_par_iter()
+                sv.par_iter()
                     .map(|x| ExpandedFrameSlice::from_frame_slice(x))
                     .collect::<Vec<ExpandedFrameSlice>>()
                     .par_windows(3)
@@ -518,18 +521,22 @@ pub fn read_all_ms1_denoising(
     max_mz_extension: f64,
     ims_scaling: f32,
     max_ims_extension: f32,
-) -> Vec<DenseFrame> {
-    let reader = timsrust::FileReader::new(path).unwrap();
+) -> Result<Vec<DenseFrame>, TimsRustError> {
+    let metadata_path = Path::new(&path.clone()).join("analysis.tdf");
+    let reader = timsrust::readers::FrameReader::new(path).unwrap();
+    let metadata = timsrust::readers::MetadataReader::new(metadata_path).unwrap();
 
     let mut timer = utils::ContextTimer::new("Reading all MS1 frames", true, utils::LogLevel::INFO);
 
-    let mut frames = reader.read_all_ms1_frames();
+    let frames: Result<Vec<Frame>, _> = reader.get_all_ms1().into_iter().collect();
     timer.stop(true);
 
-    let ims_converter = reader.get_scan_converter().unwrap();
-    let mz_converter = reader.get_tof_converter().unwrap();
+    let mut frames = frames?;
 
-    frames.retain(|frame| matches!(frame.frame_type, timsrust::FrameType::MS1));
+    let ims_converter = metadata.im_converter;
+    let mz_converter = metadata.mz_converter;
+
+    frames.retain(|frame| matches!(frame.ms_level, MSLevel::MS1));
 
     // let min_intensity = 100u64;
     // let min_n: usize = 3;
@@ -548,29 +555,32 @@ pub fn read_all_ms1_denoising(
         utils::ContextTimer::new("Denoising all MS1 frames", true, utils::LogLevel::INFO);
     let out = ms1_denoiser.par_denoise_slice(frames);
     timer.stop(true);
-    out
+    Ok(out)
 }
 
 // This could probably be a macro ...
 pub fn read_all_dia_denoising(
     path: String,
     config: DenoiseConfig,
-) -> (Vec<Vec<DenseFrameWindow>>, DIAFrameInfo) {
+) -> Result<(Vec<Vec<DenseFrameWindow>>, Vec<QuadrupoleSettings>), TimsRustError> {
     let mut timer = utils::ContextTimer::new("Reading all DIA frames", true, utils::LogLevel::INFO);
-    let reader = timsrust::FileReader::new(path.clone()).unwrap();
+    let metadata_path = Path::new(&path.clone()).join("analysis.tdf");
+    let reader = timsrust::readers::FrameReader::new(path)?;
+    let metadata = timsrust::readers::MetadataReader::new(metadata_path.clone())?;
+    let quad_settings = timsrust::readers::QuadrupoleSettingsReader::new(metadata_path)?;
 
-    let dia_info = tdf::read_dia_frame_info(path.clone()).unwrap();
-    let mut frames = reader.read_all_ms2_frames();
+    let frames: Result<Vec<Frame>, _> = reader.get_all_ms2().into_iter().collect();
 
-    let ims_converter = reader.get_scan_converter().unwrap();
-    let mz_converter = reader.get_tof_converter().unwrap();
+    let ims_converter = metadata.im_converter;
+    let mz_converter = metadata.mz_converter;
     timer.stop(true);
 
-    frames.retain(|frame| {
-        matches!(
-            frame.frame_type,
-            timsrust::FrameType::MS2(timsrust::AcquisitionType::DIAPASEF)
-        )
+    let mut frames = frames?;
+
+    frames.retain(|frame| match (frame.ms_level, frame.acquisition_type) {
+        (MSLevel::MS2, AcquisitionType::DIAPASEF) => true,
+        (MSLevel::MS2, AcquisitionType::DiagonalDIAPASEF) => true,
+        _ => false,
     });
 
     let denoiser = DIAFrameDenoiser {
@@ -580,7 +590,6 @@ pub fn read_all_dia_denoising(
         max_mz_extension: config.max_mz_expansion_ratio.into(),
         ims_scaling: config.ims_scaling,
         max_ims_extension: config.max_ims_expansion_ratio,
-        dia_frame_info: dia_info.clone(),
         ims_converter,
         mz_converter,
     };
@@ -589,5 +598,5 @@ pub fn read_all_dia_denoising(
     let split_frames = denoiser.par_denoise_slice(frames);
     timer.stop(true);
 
-    (split_frames, dia_info)
+    Ok((split_frames, quad_settings))
 }
