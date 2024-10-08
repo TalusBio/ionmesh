@@ -1,0 +1,11 @@
+
+fn_params_layout = "Vertical"
+match_block_trailing_comma = true
+newline_style = "Unix"
+
+## Unstable features :( require nightly toolchain
+group_imports = "StdExternalCrate"
+imports_granularity = "Module"
+imports_layout = "Vertical"
+format_strings = true
+struct_lit_single_line = false

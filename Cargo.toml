@@ -1,41 +1,46 @@
 [package]
 name = "ionmesh"
-version = "0.1.0"
+version = "0.5.0"
 edition = "2021"
 license = "Apache-2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-timsrust = "0.2.2"
-rusqlite = { version = "0.29.0", features = ["bundled"] }
+timsrust = "= 0.4.1"
 
 # Serialization
-serde = { version = "1.0.193", features = ["derive"] }
-serde_json = "1.0.108"
-apache-avro = "0.16.0"
-rayon = "1.8.0"
-indicatif = {version = "*", features = ["rayon"]}
+serde = { version = "1.0.210", features = ["derive"] }
+serde_json = "1.0.128"
+clap = { version = "4.4.17", features = ["derive"] }
+csv = "1.3.0"
 
-# for viz feature
-rerun = "0.12.0"
+# Random ...
 rand = "0.8.5"
 
-log = "0.4"
-pretty_env_logger = "0.4"
+# Paralellization
+rayon = "1.10.0"
+
+# Logging/ Messaging
+indicatif = { version = "*", features = ["rayon"] }
+log = "0.4.22"
+pretty_env_logger = "0.5"
+
+# Q: Not sure if I still use this
 num = "0.4.1"
-num-traits = "0.2.18"
-clap = "4.4.17"
-csv = "1.3.0"
+num-traits = "0.2.19"
 
 # Sage
 sage-core = { git = "https://github.com/lazear/sage.git", rev = "9e870429889b341c4773df32b65e553283301a93" }
-toml = "0.8.8"
+toml = "0.8.19"
 
 [features]
-viz = []
-f64 = []
 par_dataprep = []
+less_parallel = [
+] # Mostly for profiling reasons ... looking at flamegraphs is hard with rayon...
 
-# [profile.release]
+[profile.release]
+lto = "thin"
+panic = "abort"
+# codegen-units = 1
 # debug = true

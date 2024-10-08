@@ -2,7 +2,10 @@
 // MIT licensed
 trait SortExt<T> {
     fn argsort(&self) -> Vec<usize>;
-    fn sort_by_indices(&mut self, indices: &mut Vec<usize>);
+    fn sort_by_indices(
+        &mut self,
+        indices: &mut Vec<usize>,
+    );
 }
 
 impl<T: Ord + Clone> SortExt<T> for Vec<T> {
@@ -12,7 +15,10 @@ impl<T: Ord + Clone> SortExt<T> for Vec<T> {
         indices
     }
 
-    fn sort_by_indices(&mut self, indices: &mut Vec<usize>) {
+    fn sort_by_indices(
+        &mut self,
+        indices: &mut Vec<usize>,
+    ) {
         for idx in 0..self.len() {
             if indices[idx] != usize::MAX {
                 let mut current_idx = idx;

@@ -1,14 +1,17 @@
-use crate::mod_types::Float;
-use crate::space::space_generics::{IndexedPoints, NDBoundary, NDPoint};
 use log::warn;
 
-const EPSILON: Float = Float::EPSILON;
+use crate::space::space_generics::{
+    NDBoundary,
+    NDPoint,
+    QueriableIndexedPoints,
+};
+
 // Implements a kdtree with several minor differences.
 #[derive(Debug, Clone)]
 pub struct RadiusKDTree<'a, T, const DIMENSIONALITY: usize> {
     boundary: NDBoundary<DIMENSIONALITY>,
     capacity: usize,
-    radius: Float,
+    radius: f32,
     points: Vec<(NDPoint<DIMENSIONALITY>, &'a T)>,
     high_split: Option<Box<RadiusKDTree<'a, T, DIMENSIONALITY>>>,
     low_split: Option<Box<RadiusKDTree<'a, T, DIMENSIONALITY>>>,
@@ -17,7 +20,7 @@ pub struct RadiusKDTree<'a, T, const DIMENSIONALITY: usize> {
     // Since ranges are [closed, open) by convention,
     // I could think of the splits to be [low_bounds, division_value)
     // and [division_value, high_bounds).
-    division_value: Option<Float>,
+    division_value: Option<f32>,
     count: usize,
     level: usize,
 }
@@ -28,7 +31,7 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
     pub fn new_empty(
         boundary: NDBoundary<D>,
         capacity: usize,
-        radius: Float,
+        radius: f32,
     ) -> RadiusKDTree<'a, T, D> {
         RadiusKDTree {
             boundary,
@@ -44,7 +47,11 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
         }
     }
 
-    pub fn insert_ndpoint(&mut self, point: NDPoint<D>, value: &'a T) {
+    pub fn insert_ndpoint(
+        &mut self,
+        point: NDPoint<D>,
+        value: &'a T,
+    ) {
         if cfg!(debug_assertions) && !self.boundary.contains(&point) {
             panic!(
                 "Point {:?} is not contained in the boundary of this tree ({:?})",
@@ -88,7 +95,7 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
         let _low_bounds = self.boundary.starts;
         let _high_bounds = self.boundary.ends;
         let mut longest_axis: Option<usize> = None;
-        let mut longest_axis_length: Option<Float> = None;
+        let mut longest_axis_length: Option<f32> = None;
 
         for i in 0..D {
             let axis_length = self.boundary.widths[i];
@@ -103,7 +110,7 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
                 let mut keep = false;
                 for point in self.points.iter() {
                     let diff = (point.0.values[i] - axis_val_first).abs();
-                    if diff > EPSILON {
+                    if diff > f32::EPSILON {
                         keep = true;
                         break;
                     }
@@ -177,20 +184,23 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
         Ok(())
     }
 
-    pub fn query(&'a self, point: &NDPoint<D>) -> Vec<&'a T> {
+    pub fn query(
+        &'a self,
+        point: &NDPoint<D>,
+    ) -> Vec<&'a T> {
         let candidates: Vec<(&NDPoint<D>, &T)> = self.query_range(&NDBoundary::new(
             point
                 .values
                 .iter()
                 .map(|x| x - self.radius)
-                .collect::<Vec<Float>>()
+                .collect::<Vec<f32>>()
                 .try_into()
                 .unwrap(),
             point
                 .values
                 .iter()
                 .map(|x| x + self.radius)
-                .collect::<Vec<Float>>()
+                .collect::<Vec<f32>>()
                 .try_into()
                 .unwrap(),
         ));
@@ -199,7 +209,10 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
         out
     }
 
-    pub fn query_range(&'a self, boundary: &NDBoundary<D>) -> Vec<(&NDPoint<D>, &'a T)> {
+    pub fn query_range(
+        &'a self,
+        boundary: &NDBoundary<D>,
+    ) -> Vec<(&NDPoint<D>, &'a T)> {
         let mut result = Vec::new();
         if !self.boundary.intersects(boundary) {
             return result;
@@ -243,7 +256,7 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
                         .iter()
                         .zip(point.values.iter())
                         .map(|(x, y)| (x - y).abs())
-                        .sum::<Float>();
+                        .sum::<f32>();
                 dist < self.radius
             })
             .map(|x| x.1)
@@ -252,21 +265,25 @@ impl<'a, const D: usize, T> RadiusKDTree<'a, T, D> {
     }
 }
 
-impl<'a, T, const D: usize> IndexedPoints<'a, D, T> for RadiusKDTree<'a, T, D> {
-    fn query_ndpoint(&'a self, point: &NDPoint<D>) -> Vec<&'a T> {
-        self.query(point)
+impl<'a, const D: usize> QueriableIndexedPoints<D> for RadiusKDTree<'a, usize, D> {
+    fn query_ndpoint(
+        &self,
+        point: &NDPoint<D>,
+    ) -> Vec<usize> {
+        self.query(point).into_iter().copied().collect()
     }
 
     fn query_ndrange(
-        &'a self,
+        &self,
         boundary: &NDBoundary<D>,
         reference_point: Option<&NDPoint<D>>,
-    ) -> Vec<&'a T> {
+    ) -> Vec<usize> {
         let candidates = self.query_range(boundary);
         if let Some(point) = reference_point {
-            self.refine_query(point, candidates)
+            let tmp = self.refine_query(point, candidates);
+            tmp.into_iter().copied().collect()
         } else {
-            candidates.iter().map(|x| x.1).collect()
+            candidates.iter().map(|x| *x.1).collect()
         }
     }
 }

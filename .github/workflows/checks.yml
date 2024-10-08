@@ -18,5 +18,7 @@ jobs:
       - uses: actions/checkout@v3
       - name: Build
         run: cargo build --verbose
+      - name: Build Test Data
+        run: cd tests/data && bash build.bash
       - name: Run tests
         run: cargo test --verbose

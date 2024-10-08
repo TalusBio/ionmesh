@@ -1,29 +1,39 @@
-use std::str::FromStr;
-
-use crate::aggregation::tracing::PseudoSpectrum;
-use indicatif::ParallelProgressIterator;
-use log::warn;
-
-use sage_core::database::Parameters as SageDatabaseParameters;
-use sage_core::database::{EnzymeBuilder, IndexedDatabase};
-use sage_core::ion_series::Kind;
-use sage_core::mass::Tolerance;
-use sage_core::ml::linear_discriminant::score_psms;
-use sage_core::modification::ModificationSpecificity;
-use sage_core::scoring::Feature;
-use sage_core::scoring::Scorer;
-use sage_core::spectrum::{Precursor, RawSpectrum, Representation, SpectrumProcessor};
-use serde::ser::SerializeStruct;
-use serde::Deserialize;
-use serde::Serialize;
-use serde::Serializer;
-
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
+use std::str::FromStr;
 
+use indicatif::ParallelProgressIterator;
+use log::warn;
 use rayon::prelude::*;
+use sage_core::database::{
+    EnzymeBuilder,
+    IndexedDatabase,
+    Parameters as SageDatabaseParameters,
+};
+use sage_core::ion_series::Kind;
+use sage_core::mass::Tolerance;
+use sage_core::ml::linear_discriminant::score_psms;
+use sage_core::modification::ModificationSpecificity;
+use sage_core::scoring::{
+    Feature,
+    Scorer,
+};
+use sage_core::spectrum::{
+    Precursor,
+    RawSpectrum,
+    Representation,
+    SpectrumProcessor,
+};
+use serde::ser::SerializeStruct;
+use serde::{
+    Deserialize,
+    Serialize,
+    Serializer,
+};
+
+use crate::aggregation::pseudospectra::PseudoSpectrum;
 
 const PCT_BP_KEEP: f64 = 0.001;
 
@@ -68,7 +78,10 @@ struct SerializableFeature<'a> {
 }
 
 impl<'a> SerializableFeature<'a> {
-    fn from_feature(feat: &'a sage_core::scoring::Feature, db: &IndexedDatabase) -> Self {
+    fn from_feature(
+        feat: &'a sage_core::scoring::Feature,
+        db: &IndexedDatabase,
+    ) -> Self {
         let peptide = db[feat.peptide_idx].to_string().clone();
         SerializableFeature {
             peptide,
@@ -78,7 +91,10 @@ impl<'a> SerializableFeature<'a> {
 }
 
 impl Serialize for SerializableFeature<'_> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(
+        &self,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -124,7 +140,10 @@ impl Serialize for SerializableFeature<'_> {
 
 //
 
-fn pseudospectrum_to_spec(pseudo: PseudoSpectrum, scan_id: String) -> RawSpectrum {
+fn pseudospectrum_to_spec(
+    pseudo: PseudoSpectrum,
+    scan_id: String,
+) -> RawSpectrum {
     let file_id = 0;
     let ms_level = 2;
 
@@ -175,7 +194,7 @@ pub fn score_pseudospectra(
     config: SageSearchConfig,
     out_path_features: Option<PathBuf>,
     num_report_psms: usize,
-) -> Result<Vec<Feature>, Box<dyn Error>> {
+) -> Result<Vec<Feature>, std::io::Error> {
     // 1. Buid raw spectra from the pseudospectra
 
     let take_top_n = 250;
@@ -237,8 +256,18 @@ pub fn score_pseudospectra(
         config.fasta_path.clone(),
         parameters.decoy_tag.clone(),
         parameters.generate_decoys,
-    )
-    .expect("Error reading fasta");
+    );
+
+    let sage_fasta = match sage_fasta {
+        Ok(x) => x,
+        Err(e) => {
+            log::error!("Error reading fasta: {:?}", e);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            ));
+        },
+    };
 
     let db = parameters.clone().build(sage_fasta);
 
@@ -270,7 +299,7 @@ pub fn score_pseudospectra(
 
     let progbar = indicatif::ProgressBar::new(spectra.len() as u64);
 
-    log::info!("Scoring pseudospectra ...");
+    log::info!("Scoring {} pseudospectra ...", spectra.len());
     let mut features = spectra
         .par_iter()
         .progress_with(progbar)
@@ -301,9 +330,12 @@ pub fn score_pseudospectra(
 
     // Serialize to a csv for debugging
     match out_path_features {
-        None => {}
+        None => {},
         Some(out_path_features) => {
-            warn!("Writing features to features.csv ... and sebastian should delete this b4 publishing...");
+            warn!(
+                "Writing features to features.csv ... and sebastian should delete this b4 \
+                 publishing..."
+            );
             let mut wtr = csv::Writer::from_path(out_path_features)?;
             for feat in &features {
                 let s_feat = SerializableFeature::from_feature(feat, &db);
@@ -311,7 +343,7 @@ pub fn score_pseudospectra(
             }
             wtr.flush()?;
             drop(wtr);
-        }
+        },
     }
 
     println!("Number of psms at 0.01 FDR: {}", num_q_001);

@@ -1,6 +1,17 @@
-use log::{debug, info, trace};
+use std::cmp::Ordering;
+use std::fmt::Debug;
+use std::time::{
+    Duration,
+    Instant,
+};
+
+use log::{
+    debug,
+    info,
+    trace,
+    warn,
+};
 use num::cast::AsPrimitive;
-use std::time::{Duration, Instant};
 
 pub struct ContextTimer {
     start: Instant,
@@ -18,7 +29,11 @@ pub enum LogLevel {
 }
 
 impl ContextTimer {
-    pub fn new(name: &str, report_start: bool, level: LogLevel) -> ContextTimer {
+    pub fn new(
+        name: &str,
+        report_start: bool,
+        level: LogLevel,
+    ) -> ContextTimer {
         let out = ContextTimer {
             start: Instant::now(),
             name: name.to_string(),
@@ -44,7 +59,10 @@ impl ContextTimer {
         }
     }
 
-    pub fn stop(&mut self, report: bool) -> Duration {
+    pub fn stop(
+        &mut self,
+        report: bool,
+    ) -> Duration {
         let duration = self.start.elapsed();
         self.cumtime += duration;
         if report {
@@ -75,7 +93,10 @@ impl ContextTimer {
         }
     }
 
-    pub fn start_sub_timer(&self, name: &str) -> ContextTimer {
+    pub fn start_sub_timer(
+        &self,
+        name: &str,
+    ) -> ContextTimer {
         ContextTimer::new(
             &format!("{}::{}", self.name, name),
             self.report_start,
@@ -84,6 +105,12 @@ impl ContextTimer {
     }
 }
 
+/// Applies a function to all elements within a certain distance of each element.
+///
+/// Provided a slice of elements (assumed to be sorted by the key function),
+/// a key function. For every element in the slice, a function will be applied
+/// with the indices of the first and last element within the distance of the
+/// current element.
 pub fn within_distance_apply<T, R: Clone, W>(
     elems: &[T],
     key: &dyn Fn(&T) -> R,
@@ -95,6 +122,8 @@ where
     T: Copy,
     W: Default + Copy,
 {
+    // TODO: rename all internal variables ... they made sense before this
+    // was a generic function.
     let mut prefiltered_peaks_bool: Vec<W> = vec![W::default(); elems.len()];
 
     let mut i_left = 0;
@@ -223,7 +252,11 @@ where
     u64: AsPrimitive<T>,
     f64: AsPrimitive<T>,
 {
-    pub fn add(&mut self, x: T, w: W) {
+    pub fn add(
+        &mut self,
+        x: T,
+        w: W,
+    ) {
         // Check for overflows
         self.merge(&Self {
             n: 1,
@@ -281,7 +314,10 @@ where
         self.max
     }
 
-    pub fn merge(&mut self, other: &Self) {
+    pub fn merge(
+        &mut self,
+        other: &Self,
+    ) {
         // There is for sure some optimization to be done here.
         // But right now the math is the hard part ...  would definitely pay off
         let a = *self;
@@ -369,6 +405,130 @@ pub fn get_stats(data: &[f64]) -> Stats {
     }
 }
 
+/// This has been shamelessly copied and very minorly modified from sage.
+/// https://github.com/lazear/sage/blob/93a9a8a7c9f717238fc6c582c0dd501a56159be7/crates/sage/src/database.rs#L498
+/// Althought it really feels like this should be in the standard lib.
+///
+/// Usage:
+/// ```rust
+/// use ionmesh::utils::binary_search_slice;
+/// let data: [f64; 11]= [1.0, 1.5, 1.5, 1.5, 1.5, 2.0, 2.5, 3.0, 3.0, 3.5, 4.0];
+/// let (left, right) = binary_search_slice(&data, |a: &f64, b| a.total_cmp(b), 1.5, 3.25);
+/// assert!(data[left] == 1.5);
+/// assert!(data[right] > 3.25);
+/// assert_eq!(
+///     &data[left..right],
+///     &[1.5, 1.5, 1.5, 1.5, 2.0, 2.5, 3.0, 3.0]
+/// );
+/// let empty: [f64; 0] = [];
+/// let (left, right) = binary_search_slice(&empty, |a: &f64, b| a.total_cmp(b), 1.5, 3.25);
+/// assert_eq!(left, 0);
+/// assert_eq!(right, 0);
+/// let (left, right) = binary_search_slice(&data, |a: &f64, b| a.total_cmp(b), -100., -99.);
+/// assert_eq!(left, 0);
+/// assert_eq!(right, 0);
+/// assert_eq!(&data[left..right], &empty);
+/// let (left, right) = binary_search_slice(&data, |a: &f64, b| a.total_cmp(b), 100., 101.);
+/// assert_eq!(left, data.len());
+/// assert_eq!(right, data.len());
+/// assert_eq!(&data[left..right], &empty);
+/// let data: [f64; 7]= [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0];
+/// let (left, right) = binary_search_slice(&data, |a: &f64, b| a.total_cmp(b), 1.5, 3.25);
+/// assert!(data[left] == 1.5);
+/// assert!(data[right] > 3.25);
+/// assert!(data[right-1] < 3.25);
+/// assert_eq!(
+///     &data[left..right],
+///     &[1.5, 2.0, 2.5, 3.0]
+/// );
+/// ```
+///
+#[inline]
+pub fn binary_search_slice<T, F, S>(
+    slice: &[T],
+    key: F,
+    low: S,
+    high: S,
+) -> (usize, usize)
+where
+    F: Fn(&T, &S) -> Ordering,
+    T: Debug,
+{
+    let left_idx = match slice.binary_search_by(|a| key(a, &low)) {
+        Ok(mut idx) | Err(mut idx) => {
+            if idx == slice.len() {
+                // This is very non-elegant ... pretty sure I need to split
+                // the ok-err cases to make a more elegant solution.
+                return (idx, idx);
+            }
+            let mut any_nonless = false;
+            while idx != 0 && key(&slice[idx], &low) != Ordering::Less {
+                any_nonless = true;
+                idx -= 1;
+            }
+            if any_nonless {
+                idx = idx.saturating_add(1);
+            }
+            idx
+        },
+    };
+
+    let right_idx = match slice[left_idx..].binary_search_by(|a| key(a, &high)) {
+        Ok(idx) | Err(idx) => {
+            let mut idx = idx + left_idx;
+            while idx < slice.len() && key(&slice[idx], &high) != Ordering::Greater {
+                idx = idx.saturating_add(1);
+            }
+            idx.min(slice.len())
+        },
+    };
+    if cfg!(debug_assertions) {
+        // This makes sure the slice is indexable by the indices.
+        let _foo = &slice[left_idx..right_idx];
+    };
+    (left_idx, right_idx)
+}
+
+/// Serializes to json the object if debug assertions are
+/// enabled and an env variable with the frequency is set.
+/// the env variable should be named `IONMESH_DEBUG_JSON_FREQUENCY`
+/// Also derive the bath to ave to from the env variable `IONMESH_DEBUG_JSON_PATH`
+/// which is created if it does not exist.
+/// The object is serialized to a file named `{name}.json`
+pub fn maybe_save_json_if_debugging<T>(
+    obj: &T,
+    name: &str,
+    force: bool,
+) -> bool
+where
+    T: serde::Serialize,
+{
+    if cfg!(debug_assertions) {
+        let freq = std::env::var("IONMESH_DEBUG_JSON_FREQUENCY");
+        if let Ok(freq) = freq {
+            let freq = freq.parse::<usize>().unwrap();
+            if (force || (freq > 0)) && (force || (rand::random::<usize>() % freq == 0)) {
+                let json = serde_json::to_string_pretty(obj).unwrap();
+                let path = std::env::var("IONMESH_DEBUG_JSON_PATH");
+                let path = if let Ok(path) = path {
+                    if !std::path::Path::new(&path).exists() {
+                        std::fs::create_dir_all(&path).unwrap();
+                    }
+                    std::path::Path::new(&path).join(format!("{}.json", name))
+                } else {
+                    warn!("IONMESH_DEBUG_JSON_PATH not set, saving to current directory");
+                    std::path::Path::new(".").join(format!("{}.json", name))
+                };
+                info!("Saving json to {:?}", path);
+
+                std::fs::write(path, json).unwrap();
+                return true;
+            }
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod test_rolling_sd {
     use super::*;
@@ -405,7 +565,10 @@ mod test_rolling_sd {
         6.58, 5.76, 7.71, 8.84, 8.47, 7.04, 5.25, 12.50, 5.56, 7.91, 6.89,
     ];
 
-    fn assert_close(a: f64, b: f64) {
+    fn assert_close(
+        a: f64,
+        b: f64,
+    ) {
         assert!((a - b).abs() < 1e-3, "{} != {}", a, b);
     }
 

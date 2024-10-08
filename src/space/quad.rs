@@ -1,14 +1,18 @@
-use crate::mod_types::Float;
-
-use crate::space::space_generics::{IndexedPoints, NDBoundary, NDPoint};
 use core::panic;
+
 use log::trace;
+
+use crate::space::space_generics::{
+    NDBoundary,
+    NDPoint,
+    QueriableIndexedPoints,
+};
 
 #[derive(Debug, Clone)]
 pub struct RadiusQuadTree<'a, T> {
     boundary: NDBoundary<2>,
     capacity: usize,
-    radius: Float,
+    radius: f32,
     points: Vec<(NDPoint<2>, &'a T)>,
     northeast: Option<Box<RadiusQuadTree<'a, T>>>,
     northwest: Option<Box<RadiusQuadTree<'a, T>>>,
@@ -23,7 +27,7 @@ impl<'a, T> RadiusQuadTree<'a, T> {
     pub fn new_empty(
         boundary: NDBoundary<2>,
         capacity: usize,
-        radius: Float,
+        radius: f32,
     ) -> RadiusQuadTree<'a, T> {
         RadiusQuadTree {
             boundary,
@@ -40,11 +44,19 @@ impl<'a, T> RadiusQuadTree<'a, T> {
         }
     }
 
-    pub fn insert_ndpoint(&mut self, point: NDPoint<2>, data: &'a T) {
+    pub fn insert_ndpoint(
+        &mut self,
+        point: NDPoint<2>,
+        data: &'a T,
+    ) {
         self.insert(point, data);
     }
 
-    pub fn insert(&mut self, point: NDPoint<2>, data: &'a T) {
+    pub fn insert(
+        &mut self,
+        point: NDPoint<2>,
+        data: &'a T,
+    ) {
         if cfg!(debug_assertions) && !self.boundary.contains(&point) {
             println!(
                 "(Error??) Point outside of boundary {:?} {:?}",
@@ -75,7 +87,7 @@ impl<'a, T> RadiusQuadTree<'a, T> {
 
             // This means any sub-division will be smaller than the radius
             let query_contained = radius_squared > distance_squared;
-            if (self.points.len() < self.capacity) || query_contained  {
+            if (self.points.len() < self.capacity) || query_contained {
                 self.points.push((point, data));
             } else {
                 self.subdivide();
@@ -178,7 +190,10 @@ impl<'a, T> RadiusQuadTree<'a, T> {
         self.points.clear();
     }
 
-    pub fn query(&'a self, point: &NDPoint<2>) -> Vec<(&'a NDPoint<2>, &'a T)> {
+    pub fn query(
+        &'a self,
+        point: &NDPoint<2>,
+    ) -> Vec<(&'a NDPoint<2>, &'a T)> {
         let mut result = Vec::new();
         let range = NDBoundary::new(
             [point.values[0] - self.radius, point.values[1] - self.radius],
@@ -210,7 +225,11 @@ impl<'a, T> RadiusQuadTree<'a, T> {
     }
 
     // This function is used a lot so any optimization here will have a big impact.
-    pub fn query_range(&'a self, range: &NDBoundary<2>, result: &mut Vec<(&'a NDPoint<2>, &'a T)>) {
+    pub fn query_range(
+        &'a self,
+        range: &NDBoundary<2>,
+        result: &mut Vec<(&'a NDPoint<2>, &'a T)>,
+    ) {
         if !self.boundary.intersects(range) || self.count == 0 {
             return;
         }
@@ -242,19 +261,22 @@ impl<'a, T> RadiusQuadTree<'a, T> {
 // TODO: rename count_neigh_monotonocally_increasing
 // because it can do more than just count neighbors....
 
-impl<'a, T> IndexedPoints<'a, 2, T> for RadiusQuadTree<'a, T> {
-    fn query_ndpoint(&'a self, point: &NDPoint<2>) -> Vec<&'a T> {
+impl<'a> QueriableIndexedPoints<2> for RadiusQuadTree<'a, usize> {
+    fn query_ndpoint(
+        &self,
+        point: &NDPoint<2>,
+    ) -> Vec<usize> {
         self.query(point)
             .into_iter()
-            .map(|x| x.1)
+            .map(|x| *x.1)
             .collect::<Vec<_>>()
     }
 
     fn query_ndrange(
-        &'a self,
+        &self,
         boundary: &NDBoundary<2>,
         reference_point: Option<&NDPoint<2>>,
-    ) -> Vec<&'a T> {
+    ) -> Vec<usize> {
         let mut result = Vec::new();
         self.query_range(boundary, &mut result);
 
@@ -263,7 +285,7 @@ impl<'a, T> IndexedPoints<'a, 2, T> for RadiusQuadTree<'a, T> {
             None => result,
         }
         .into_iter()
-        .map(|x| x.1)
+        .map(|x| *x.1)
         .collect::<Vec<_>>()
     }
 }
